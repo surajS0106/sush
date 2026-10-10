@@ -1,0 +1,74 @@
+name: Release
+
+# Push a tag like v0.1.0 (matching the version in tauri.conf.json) to build
+# installers for every platform and publish them as a GitHub release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bun_target: bun-windows-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bun_target: bun-darwin-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bun_target: bun-darwin-x64
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bun_target: bun-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev pkg-config
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - run: bun install --frozen-lockfile
+
+      # The auth server ships as a Tauri sidecar named sush-auth-<target-triple>.
+      - name: Compile auth server sidecar
+        shell: bash
+        working-directory: apps/server
+        run: |
+          ext=""
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
+            --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          VITE_AUTH_URL: http://localhost:47321
+        with:
+          projectPath: apps/desktop
+          tauriScript: bun tauri
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseName: Sush ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
+          releaseBody: See the assets below to download the installer for your platform.
+          releaseDraft: false
+          prerelease: false
