@@ -41,6 +41,13 @@ pub async fn read_folder(path: String) -> AppResult<Folder> {
         .map_err(|e| AppError::Invalid(e.to_string()))?
 }
 
+/// Write an artifact to the path the user picked in a save dialog.
+#[tauri::command]
+pub async fn save_text_file(path: String, contents: String) -> AppResult<()> {
+    tokio::fs::write(path, contents).await?;
+    Ok(())
+}
+
 fn walk(root: &Path) -> AppResult<Folder> {
     if !root.is_dir() {
         return Err(AppError::NotFound(format!("{} is not a folder", root.display())));

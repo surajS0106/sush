@@ -4,6 +4,7 @@
 import { ScrollTextIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { hasMentions, mentionSegments } from "@/lib/mentions";
 import { leadingCommand, slashCommands, type SlashCommand } from "@/lib/skills";
 import { cn } from "@/lib/utils";
 
@@ -114,8 +115,12 @@ export function SlashMenu({ commands, active, onHover, onPick }: SlashMenuProps)
   );
 }
 
+// Box-shadow pads the chip without shifting the text against the caret. No font-weight
+// change either: bolder glyphs are wider, which drifts the text ahead of the caret.
+const CHIP = "rounded-[5px] bg-brand/12 text-brand shadow-[0_0_0_3px] shadow-brand/12";
+
 /**
- * Paints a leading `/command` as a chip behind the composer textarea, which can't
+ * Paints a leading `/command` and `@connector` mentions as chips behind the composer textarea, which can't
  * style part of its own text. It mirrors the textarea's text and box exactly; while
  * a command is present the textarea's own glyphs go transparent (caret and selection
  * stay), so what shows is this copy.
@@ -130,21 +135,29 @@ export function SlashHighlight({
   className: string;
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
-  const command = leadingCommand(value);
-  if (!command) return null;
+  const command = leadingCommand(value) ?? "";
+  if (!command && !hasMentions(value)) return null;
   return (
     <div
       ref={scrollRef}
       aria-hidden
       className={cn("pointer-events-none absolute inset-0 overflow-hidden break-words whitespace-pre-wrap", className)}
     >
-      {/* Box-shadow pads the chip without shifting the text against the caret. */}
-      <span className="rounded-[5px] bg-brand/12 font-medium text-brand shadow-[0_0_0_3px] shadow-brand/12">{command}</span>
-      {value.slice(command.length)}
+      {command && <span className={CHIP}>{command}</span>}
+      {mentionSegments(value.slice(command.length)).map((s, i) =>
+        s.connector ? (
+          <span key={i} className={CHIP}>
+            {s.text}
+          </span>
+        ) : (
+          s.text
+        ),
+      )}
       {/* A trailing newline needs content after it to take up a line, as in the textarea. */}
       {"\u200b"}
     </div>
   );
 }
 
-export const hasLeadingCommand = (value: string) => leadingCommand(value) !== null;
+/** Whether `SlashHighlight` paints anything, in which case the textarea hides its own glyphs. */
+export const hasHighlight = (value: string) => leadingCommand(value) !== null || hasMentions(value);

@@ -1,20 +1,27 @@
-//! Minimal Model Context Protocol client for local (stdio) servers: start the
-//! server, list its tools, call them. JSON-RPC 2.0, one message per line.
+//! Minimal Model Context Protocol client: connect to a server, list its tools,
+//! call them. JSON-RPC 2.0 either over a local process's stdio (one message per
+//! line) or over HTTP to a remote server (see `http`); sign-in for remote
+//! servers lives in `oauth`.
 //!
 //! Only the tool surface is implemented. Requests the server makes of us
 //! (roots, sampling, elicitation) are answered with "not supported", except
 //! `ping` and an empty `roots/list`.
 
+pub mod http;
+pub mod oauth;
+
 use std::collections::{BTreeMap, HashMap};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::sync::{mpsc, oneshot, Mutex as AsyncMutex};
+
+pub use http::{AuthChallenge, RemoteServer, TokenSource};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 /// First start can include `npx` downloading the server package.
@@ -32,6 +39,15 @@ pub enum McpError {
     Timeout(Duration),
     #[error("connector error {code}: {message}")]
     Rpc { code: i64, message: String },
+    /// The remote server wants credentials (HTTP 401); sign in and reconnect.
+    #[error("this connector needs you to sign in")]
+    Unauthorized(AuthChallenge),
+    #[error("couldn't reach the connector: {0}")]
+    Request(#[from] reqwest::Error),
+    #[error("connector returned HTTP {status}{}", tail(.body))]
+    Http { status: u16, body: String },
+    #[error("connector sent something unexpected: {0}")]
+    Protocol(String),
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
@@ -41,6 +57,14 @@ pub enum McpError {
 fn tail(stderr: &str) -> String {
     let s = stderr.trim();
     if s.is_empty() { String::new() } else { format!(": {s}") }
+}
+
+/// Where a connector's server lives: a local process or a URL.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum ServerSpec {
+    Stdio(ServerCommand),
+    Http(RemoteServer),
 }
 
 /// How to launch a stdio server, e.g. `npx -y @modelcontextprotocol/server-filesystem C:\notes`.
@@ -62,6 +86,9 @@ pub struct McpTool {
     pub description: Option<String>,
     #[serde(default = "empty_schema")]
     pub input_schema: Value,
+    /// Hints like `readOnlyHint` and `destructiveHint`, passed through for the UI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<Value>,
 }
 
 fn empty_schema() -> Value {
@@ -79,11 +106,95 @@ pub struct ToolOutput {
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, McpError>>>>>;
 type Writer = Arc<AsyncMutex<Box<dyn AsyncWrite + Send + Unpin>>>;
 
-pub struct McpClient {
-    writer: Writer,
+/// Where messages from the server go: responses to the request waiting on
+/// them, server requests to an auto-reply sent back through the transport.
+#[derive(Clone)]
+pub(crate) struct Inbox {
     pending: Pending,
+    replies: mpsc::UnboundedSender<Value>,
+}
+
+impl Inbox {
+    pub(crate) fn deliver(&self, msg: Value) {
+        if let Value::Array(batch) = msg {
+            batch.into_iter().for_each(|m| self.deliver(m));
+            return;
+        }
+        let id = msg.get("id").cloned();
+        match (msg.get("method").and_then(Value::as_str), id) {
+            // A request from the server.
+            (Some(method), Some(id)) => {
+                let reply = match method {
+                    "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
+                    "roots/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "roots": [] } }),
+                    _ => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "not supported by Sush" } }),
+                };
+                let _ = self.replies.send(reply);
+            }
+            // A notification (logging, list_changed, progress): nothing to do yet.
+            (Some(_), None) => {}
+            // A response to one of ours.
+            (None, Some(id)) => {
+                let Some(id) = id.as_u64() else { return };
+                let Some(tx) = self.pending.lock().unwrap().remove(&id) else { return };
+                let result = match msg.get("error") {
+                    Some(err) => Err(McpError::Rpc {
+                        code: err["code"].as_i64().unwrap_or(0),
+                        message: err["message"].as_str().unwrap_or("unknown error").to_string(),
+                    }),
+                    None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
+                };
+                let _ = tx.send(result);
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// Fail one request if it's still waiting (its stream ended without a reply).
+    pub(crate) fn fail(&self, id: u64, err: McpError) {
+        if let Some(tx) = self.pending.lock().unwrap().remove(&id) {
+            let _ = tx.send(Err(err));
+        }
+    }
+
+    /// The connection is gone: fail everything still waiting.
+    pub(crate) fn fail_all(&self, err: impl Fn() -> McpError) {
+        for (_, tx) in self.pending.lock().unwrap().drain() {
+            let _ = tx.send(Err(err()));
+        }
+    }
+}
+
+enum Outbound {
+    Stdio { writer: Writer, stderr: Arc<Mutex<String>> },
+    Http(Box<http::HttpTransport>),
+}
+
+impl Outbound {
+    /// Send one message. `inbox` receives anything the server answers with
+    /// inline; replies to server requests pass `None` and ignore answers.
+    async fn send(&self, msg: &Value, inbox: Option<&Inbox>) -> Result<(), McpError> {
+        match self {
+            Outbound::Stdio { writer, stderr } => write_msg(writer, msg)
+                .await
+                // The server is gone; its stderr usually says why.
+                .map_err(|_| McpError::Closed(stderr.lock().unwrap().clone())),
+            Outbound::Http(t) => t.send(msg, inbox).await,
+        }
+    }
+
+    fn stderr(&self) -> String {
+        match self {
+            Outbound::Stdio { stderr, .. } => stderr.lock().unwrap().clone(),
+            Outbound::Http(_) => String::new(),
+        }
+    }
+}
+
+pub struct McpClient {
+    out: Arc<Outbound>,
+    inbox: Inbox,
     next_id: AtomicU64,
-    stderr: Arc<Mutex<String>>,
     /// Keeps the server alive; `kill_on_drop` stops it with the client.
     _child: Option<tokio::process::Child>,
     pub server_name: Option<String>,
@@ -137,24 +248,41 @@ impl McpClient {
         writer: impl AsyncWrite + Send + Unpin + 'static,
         stderr: Arc<Mutex<String>>,
     ) -> Result<Self, McpError> {
-        let pending: Pending = Arc::default();
+        let (inbox, replies) = new_inbox();
+        tokio::spawn(read_loop(reader, inbox.clone(), stderr.clone()));
         let writer: Writer = Arc::new(AsyncMutex::new(Box::new(writer)));
-        let mut client = Self {
-            writer,
-            pending: pending.clone(),
-            next_id: AtomicU64::new(1),
-            stderr: stderr.clone(),
-            _child: None,
-            server_name: None,
-            tools: vec![],
-        };
+        Self::start(Outbound::Stdio { writer, stderr }, inbox, replies).await
+    }
 
-        // Replies to server-initiated requests go out through this channel.
-        let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
-        tokio::spawn(read_loop(reader, pending, reply_tx, stderr));
+    /// Connect to a remote server at `url`. `auth` supplies bearer tokens; a
+    /// server that wants one we don't have fails with `McpError::Unauthorized`.
+    pub async fn connect_http(
+        http: reqwest::Client,
+        url: &str,
+        auth: Option<Arc<dyn TokenSource>>,
+    ) -> Result<Self, McpError> {
+        let transport = http::HttpTransport::new(http, url, auth)?;
+        let (inbox, replies) = new_inbox();
+        Self::start(Outbound::Http(Box::new(transport)), inbox, replies).await
+    }
 
+    async fn start(out: Outbound, inbox: Inbox, mut replies: mpsc::UnboundedReceiver<Value>) -> Result<Self, McpError> {
+        let out = Arc::new(out);
+        // Answer server requests in the background. Weak, so dropping the
+        // client still tears the transport down.
+        let relay: Weak<Outbound> = Arc::downgrade(&out);
+        tokio::spawn(async move {
+            while let Some(reply) = replies.recv().await {
+                let Some(out) = relay.upgrade() else { break };
+                if out.send(&reply, None).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let mut client = Self { out, inbox, next_id: AtomicU64::new(1), _child: None, server_name: None, tools: vec![] };
         let init = client
-            .request_with_replies(
+            .request(
                 "initialize",
                 json!({
                     "protocolVersion": PROTOCOL_VERSION,
@@ -162,11 +290,16 @@ impl McpClient {
                     "clientInfo": { "name": "sush", "version": env!("CARGO_PKG_VERSION") },
                 }),
                 INIT_TIMEOUT,
-                &mut reply_rx,
             )
             .await?;
         client.server_name = init["serverInfo"]["name"].as_str().map(str::to_owned);
-        write_msg(&client.writer, &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await?;
+        if let (Outbound::Http(t), Some(v)) = (&*client.out, init["protocolVersion"].as_str()) {
+            t.set_protocol_version(v);
+        }
+        client
+            .out
+            .send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }), Some(&client.inbox))
+            .await?;
 
         let mut cursor: Option<String> = None;
         loop {
@@ -174,7 +307,7 @@ impl McpClient {
                 Some(c) => json!({ "cursor": c }),
                 None => json!({}),
             };
-            let page = client.request_with_replies("tools/list", params, INIT_TIMEOUT, &mut reply_rx).await?;
+            let page = client.request("tools/list", params, INIT_TIMEOUT).await?;
             let tools: Vec<McpTool> = serde_json::from_value(page["tools"].clone()).unwrap_or_default();
             client.tools.extend(tools);
             cursor = page["nextCursor"].as_str().map(str::to_owned);
@@ -182,16 +315,6 @@ impl McpClient {
                 break;
             }
         }
-
-        // From here on, answer server requests in the background.
-        let writer = client.writer.clone();
-        tokio::spawn(async move {
-            while let Some(reply) = reply_rx.recv().await {
-                if write_msg(&writer, &reply).await.is_err() {
-                    break;
-                }
-            }
-        });
         Ok(client)
     }
 
@@ -203,42 +326,48 @@ impl McpClient {
     async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, McpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.inbox.pending.lock().unwrap().insert(id, tx);
+        // Runs on every exit, including the caller dropping this future (Stop).
+        let _unanswered = Unanswered { out: &self.out, inbox: &self.inbox, id, cancellable: method != "initialize" };
         let msg = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        if write_msg(&self.writer, &msg).await.is_err() {
-            // The server is gone; its stderr usually says why.
-            self.pending.lock().unwrap().remove(&id);
-            return Err(McpError::Closed(self.stderr.lock().unwrap().clone()));
-        }
-        match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(McpError::Closed(self.stderr.lock().unwrap().clone())),
-            Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
-                Err(McpError::Timeout(timeout))
-            }
+        let exchange = async {
+            self.out.send(&msg, Some(&self.inbox)).await?;
+            rx.await.map_err(|_| McpError::Closed(self.out.stderr()))?
+        };
+        match tokio::time::timeout(timeout, exchange).await {
+            Ok(result) => result,
+            Err(_) => Err(McpError::Timeout(timeout)),
         }
     }
+}
 
-    /// `request`, while also relaying replies to server requests that arrive
-    /// before the background relay exists (some servers ask for roots during init).
-    async fn request_with_replies(
-        &self,
-        method: &str,
-        params: Value,
-        timeout: Duration,
-        replies: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
-    ) -> Result<Value, McpError> {
-        let fut = self.request(method, params, timeout);
-        tokio::pin!(fut);
-        loop {
-            tokio::select! {
-                result = &mut fut => return result,
-                Some(reply) = replies.recv() => write_msg(&self.writer, &reply).await?,
-            }
+/// A request we stopped waiting on (timed out or dropped) before its reply:
+/// forget it and ask the server to stop working on it.
+struct Unanswered<'a> {
+    out: &'a Arc<Outbound>,
+    inbox: &'a Inbox,
+    id: u64,
+    cancellable: bool,
+}
+
+impl Drop for Unanswered<'_> {
+    fn drop(&mut self) {
+        // Gone from `pending` means the reply (or a failure) already arrived.
+        if self.inbox.pending.lock().unwrap().remove(&self.id).is_none() || !self.cancellable {
+            return;
         }
+        let Ok(rt) = tokio::runtime::Handle::try_current() else { return };
+        let out = self.out.clone();
+        let msg = json!({ "jsonrpc": "2.0", "method": "notifications/cancelled", "params": { "requestId": self.id, "reason": "cancelled by the user" } });
+        rt.spawn(async move {
+            let _ = out.send(&msg, None).await;
+        });
     }
+}
 
+fn new_inbox() -> (Inbox, mpsc::UnboundedReceiver<Value>) {
+    let (replies, rx) = mpsc::unbounded_channel();
+    (Inbox { pending: Arc::default(), replies }, rx)
 }
 
 async fn write_msg(writer: &Writer, msg: &Value) -> Result<(), McpError> {
@@ -250,51 +379,17 @@ async fn write_msg(writer: &Writer, msg: &Value) -> Result<(), McpError> {
     Ok(())
 }
 
-async fn read_loop(
-    reader: impl AsyncRead + Unpin,
-    pending: Pending,
-    replies: tokio::sync::mpsc::UnboundedSender<Value>,
-    stderr: Arc<Mutex<String>>,
-) {
+async fn read_loop(reader: impl AsyncRead + Unpin, inbox: Inbox, stderr: Arc<Mutex<String>>) {
     let mut lines = BufReader::new(reader).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let Ok(msg) = serde_json::from_str::<Value>(line.trim()) else {
             continue; // servers sometimes log to stdout; skip non-JSON lines
         };
-        let id = msg.get("id").cloned();
-        match (msg.get("method").and_then(Value::as_str), id) {
-            // A request from the server.
-            (Some(method), Some(id)) => {
-                let reply = match method {
-                    "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
-                    "roots/list" => json!({ "jsonrpc": "2.0", "id": id, "result": { "roots": [] } }),
-                    _ => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32601, "message": "not supported by Sush" } }),
-                };
-                let _ = replies.send(reply);
-            }
-            // A notification (logging, list_changed, progress): nothing to do yet.
-            (Some(_), None) => {}
-            // A response to one of ours.
-            (None, Some(id)) => {
-                let Some(id) = id.as_u64() else { continue };
-                let Some(tx) = pending.lock().unwrap().remove(&id) else { continue };
-                let result = match msg.get("error") {
-                    Some(err) => Err(McpError::Rpc {
-                        code: err["code"].as_i64().unwrap_or(0),
-                        message: err["message"].as_str().unwrap_or("unknown error").to_string(),
-                    }),
-                    None => Ok(msg.get("result").cloned().unwrap_or(Value::Null)),
-                };
-                let _ = tx.send(result);
-            }
-            (None, None) => {}
-        }
+        inbox.deliver(msg);
     }
     // Server exited: fail everything still waiting.
     let tail = stderr.lock().unwrap().clone();
-    for (_, tx) in pending.lock().unwrap().drain() {
-        let _ = tx.send(Err(McpError::Closed(tail.clone())));
-    }
+    inbox.fail_all(|| McpError::Closed(tail.clone()));
 }
 
 /// Text content joined; other content types are summarised so the model knows
@@ -393,6 +488,41 @@ mod tests {
         assert_eq!(out, ToolOutput { text: "hi\n[image content omitted]".into(), is_error: false });
         let out = client.call_tool("fail", json!({})).await.unwrap();
         assert!(out.is_error);
+    }
+
+    #[tokio::test]
+    async fn dropping_a_call_tells_the_server_to_cancel_it() {
+        let (ours, theirs) = duplex(64 * 1024);
+        let (cancelled_tx, cancelled_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            let (r, mut w) = split(theirs);
+            let mut lines = BufReader::new(r).lines();
+            let mut cancelled_tx = Some(cancelled_tx);
+            while let Ok(Some(line)) = lines.next_line().await {
+                let msg: Value = serde_json::from_str(&line).unwrap();
+                let result = match msg["method"].as_str() {
+                    Some("initialize") => json!({ "protocolVersion": PROTOCOL_VERSION, "serverInfo": { "name": "slow" } }),
+                    Some("tools/list") => json!({ "tools": [{ "name": "slow" }] }),
+                    Some("notifications/cancelled") => {
+                        if let Some(tx) = cancelled_tx.take() {
+                            let _ = tx.send(msg["params"]["requestId"].clone());
+                        }
+                        continue;
+                    }
+                    _ => continue, // never answer tools/call
+                };
+                let reply = json!({ "jsonrpc": "2.0", "id": msg["id"], "result": result });
+                w.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            }
+        });
+        let (r, w) = split(ours);
+        let client = McpClient::connect(r, w, Arc::default()).await.unwrap();
+
+        let call = client.call_tool("slow", json!({}));
+        assert!(tokio::time::timeout(Duration::from_millis(50), call).await.is_err());
+        let id = tokio::time::timeout(Duration::from_secs(5), cancelled_rx).await.unwrap().unwrap();
+        assert_eq!(id, json!(3)); // after initialize (1) and tools/list (2)
+        assert!(client.inbox.pending.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

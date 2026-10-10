@@ -113,6 +113,9 @@ pub enum ChatEvent {
     ServerToolCall { id: String, name: String, input: Value },
     /// Pages a server tool returned (search results, a fetched page).
     WebSources { call_id: String, sources: Vec<WebSource> },
+    /// The text streamed since the previous citation (or text start) is backed
+    /// by this page. Arrives right after the cited text.
+    Citation { url: String, title: Option<String> },
     Finish { reason: FinishReason },
     Error { message: String },
 }

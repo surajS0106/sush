@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 sush-core.workspace = true
+async-trait.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
@@ -25,7 +26,9 @@ keyring = { version = "3", features = ["windows-native", "apple-native", "sync-s
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-util.workspace = true
+url = "2"
 whisper-rs = "0.16"

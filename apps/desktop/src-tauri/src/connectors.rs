@@ -1,42 +1,86 @@
-//! Connectors: MCP servers the UI starts on demand and calls tools on.
-//! Configs live in the UI; Rust keeps the running processes, keyed by id.
+//! Connectors: MCP servers the UI starts on demand and calls tools on, either
+//! local processes or remote URLs. Configs live in the UI; Rust keeps the
+//! running clients, keyed by id. Sign-in for remote ones is in connector_auth.
 
 use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
-use sush_core::mcp::{McpClient, McpTool, ServerCommand, ToolOutput};
+use sush_core::mcp::{McpClient, McpError, McpTool, ServerSpec, ToolOutput};
 use tauri::State;
+use tokio_util::sync::CancellationToken;
 
+use crate::connector_auth::{self, StoredTokens};
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectorInfo {
-    server_name: Option<String>,
-    tools: Vec<McpTool>,
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum ConnectOutcome {
+    #[serde(rename_all = "camelCase")]
+    Ready { server_name: Option<String>, tools: Vec<McpTool> },
+    /// A remote server wants a sign-in (or a fresh one) before it'll talk.
+    NeedsAuth,
 }
 
-/// Start the connector (or reuse it if it's already running with the same
-/// command) and return its tools. A changed command restarts it.
+fn ready(client: &McpClient) -> ConnectOutcome {
+    ConnectOutcome::Ready { server_name: client.server_name.clone(), tools: client.tools.clone() }
+}
+
+/// Start the connector (or reuse it if it's already running for the same
+/// server) and return its tools. A changed server restarts it.
 #[tauri::command]
-pub async fn connector_connect(state: State<'_, AppState>, id: String, command: ServerCommand) -> AppResult<ConnectorInfo> {
+pub async fn connector_connect(state: State<'_, AppState>, id: String, server: ServerSpec) -> AppResult<ConnectOutcome> {
     let mut running = state.connectors.lock().await;
-    if let Some((cmd, client)) = running.get(&id) {
-        if *cmd == command {
-            return Ok(ConnectorInfo { server_name: client.server_name.clone(), tools: client.tools.clone() });
+    if let Some((spec, client)) = running.get(&id) {
+        if *spec == server {
+            return Ok(ready(client));
         }
     }
-    running.remove(&id); // dropping the client stops the old process
-    let client = McpClient::spawn(&command).await?;
-    let info = ConnectorInfo { server_name: client.server_name.clone(), tools: client.tools.clone() };
-    running.insert(id, (command, Arc::new(client)));
-    Ok(info)
+    running.remove(&id); // dropping the client stops the old process or session
+    let client = match &server {
+        ServerSpec::Stdio(command) => McpClient::spawn(command).await?,
+        ServerSpec::Http(remote) => {
+            let tokens = StoredTokens::new(&id, &remote.url, state.http.clone());
+            match McpClient::connect_http(state.http.clone(), &remote.url, Some(tokens)).await {
+                Err(McpError::Unauthorized(_)) => return Ok(ConnectOutcome::NeedsAuth),
+                result => result?,
+            }
+        }
+    };
+    let outcome = ready(&client);
+    running.insert(id, (server, Arc::new(client)));
+    Ok(outcome)
+}
+
+/// Call a tool. `call_id` lets `connector_cancel_call` stop it midway.
+#[tauri::command]
+pub async fn connector_call(
+    state: State<'_, AppState>,
+    id: String,
+    tool: String,
+    arguments: Value,
+    call_id: String,
+) -> AppResult<ToolOutput> {
+    let cancel = CancellationToken::new();
+    state.tool_calls.lock().unwrap().insert(call_id.clone(), cancel.clone());
+    // Dropping the call on cancel tells the server to stop too (see `McpClient::request`).
+    let result = tokio::select! {
+        result = call(&state, id, tool, arguments) => result,
+        _ = cancel.cancelled() => Err(AppError::Invalid("Stopped by the user.".into())),
+    };
+    state.tool_calls.lock().unwrap().remove(&call_id);
+    result
 }
 
 #[tauri::command]
-pub async fn connector_call(state: State<'_, AppState>, id: String, tool: String, arguments: Value) -> AppResult<ToolOutput> {
+pub fn connector_cancel_call(state: State<'_, AppState>, call_id: String) {
+    if let Some(token) = state.tool_calls.lock().unwrap().remove(&call_id) {
+        token.cancel();
+    }
+}
+
+async fn call(state: &AppState, id: String, tool: String, arguments: Value) -> AppResult<ToolOutput> {
     // Don't hold the map lock across a long tool call.
     let client = state
         .connectors
@@ -45,11 +89,25 @@ pub async fn connector_call(state: State<'_, AppState>, id: String, tool: String
         .get(&id)
         .map(|(_, c)| c.clone())
         .ok_or_else(|| AppError::NotFound("connector isn't running; reconnect it in Customize → Connectors".into()))?;
-    Ok(client.call_tool(&tool, arguments).await?)
+    match client.call_tool(&tool, arguments).await {
+        // Signed out or revoked mid-session: drop it so the next connect asks to sign in.
+        Err(e @ McpError::Unauthorized(_)) => {
+            state.connectors.lock().await.remove(&id);
+            Err(e.into())
+        }
+        result => Ok(result?),
+    }
 }
 
 #[tauri::command]
 pub async fn connector_disconnect(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.connectors.lock().await.remove(&id);
     Ok(())
+}
+
+/// Disconnect and delete stored credentials: for sign-out and deleted connectors.
+#[tauri::command]
+pub async fn connector_forget(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.connectors.lock().await.remove(&id);
+    connector_auth::forget(&id)
 }

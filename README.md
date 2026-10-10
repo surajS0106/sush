@@ -14,6 +14,7 @@ A desktop AI harness: chat with any model (OpenAI, Anthropic, Azure Foundry, Bed
 - Bun
 - Windows: Visual Studio 2022 Build Tools with the "Desktop development with C++" workload (WebView2 ships with Windows 11)
 - macOS: Xcode Command Line Tools
+- CMake and libclang, to build the built-in Whisper dictation model (whisper.cpp). On Windows, CMake ships with the VS Build Tools (set `CMAKE` to its `cmake.exe` if it is not on PATH), and `pip install libclang` provides `libclang.dll` (point `LIBCLANG_PATH` at its `clang/native` folder) if LLVM is not installed.
 
 ## Develop
 

@@ -1,4 +1,5 @@
-// Settings sections for skills, design systems, connectors and plugins.
+// Settings sections for skills, design systems and plugins (connectors are in
+// connectors-section.tsx), plus the building blocks they share.
 // Rendered by the settings dialog; the composer's `+` menu opens them via openSettings.
 
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -14,27 +15,21 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   availableDesignSystems,
-  connect,
   createSkillInChat,
-  deleteConnector,
   deleteDesignSystem,
   deleteSkill,
   installPlugin,
   removePlugin,
-  saveConnector,
   saveDesignSystem,
   saveSkill,
   setPrefs,
-  toggleConnector,
   togglePlugin,
   toggleSkill,
   useConnectors,
-  useConnectorStatus,
   useDesignSystems,
   usePlugins,
   usePrefs,
   useSkills,
-  type Connector,
   type DesignSystem,
   type Skill,
 } from "@/lib/library";
@@ -43,7 +38,7 @@ import { errorMessage } from "@/lib/tauri";
 
 // --- shared bits -------------------------------------------------------------------
 
-function SectionHeader({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
+export function SectionHeader({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-4 border-b py-4 pr-14 pl-6">
       <div>
@@ -55,7 +50,7 @@ function SectionHeader({ title, description, action }: { title: string; descript
   );
 }
 
-function Row({
+export function Row({
   title,
   subtitle,
   badge,
@@ -84,11 +79,11 @@ function Row({
   );
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
+export function Empty({ children }: { children: React.ReactNode }) {
   return <p className="px-6 py-10 text-center text-sm text-muted-foreground">{children}</p>;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label>{label}</Label>
@@ -98,7 +93,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function usePluginName() {
+export function usePluginName() {
   const plugins = usePlugins();
   return (id?: string) => plugins.find((p) => p.id === id)?.name;
 }
@@ -187,7 +182,7 @@ export function SkillsSection() {
   );
 }
 
-function Editor({
+export function Editor({
   title,
   children,
   onCancel,
@@ -309,146 +304,6 @@ export function DesignSection() {
         ))}
       </div>
       {designs.length === 0 && <Empty>No design systems yet.</Empty>}
-    </>
-  );
-}
-
-// --- connectors --------------------------------------------------------------------------
-
-interface ConnectorEdit {
-  id?: string;
-  name: string;
-  command: string;
-  args: string;
-  env: string;
-  enabled: boolean;
-}
-
-function toEdit(c: Connector): ConnectorEdit {
-  return {
-    id: c.id,
-    name: c.name,
-    command: c.command.command,
-    args: c.command.args.join("\n"),
-    env: Object.entries(c.command.env).map(([k, v]) => `${k}=${v}`).join("\n"),
-    enabled: c.enabled,
-  };
-}
-
-function fromEdit(e: ConnectorEdit): Omit<Connector, "id"> & { id?: string } {
-  const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
-  return {
-    id: e.id,
-    name: e.name.trim(),
-    enabled: e.enabled,
-    command: {
-      command: e.command.trim(),
-      args: lines(e.args),
-      env: Object.fromEntries(
-        lines(e.env)
-          .filter((l) => l.includes("="))
-          .map((l) => [l.slice(0, l.indexOf("=")).trim(), l.slice(l.indexOf("=") + 1).trim()]),
-      ),
-    },
-  };
-}
-
-export function ConnectorsSection() {
-  const connectors = useConnectors();
-  const status = useConnectorStatus();
-  const pluginName = usePluginName();
-  const [editing, setEditing] = useState<ConnectorEdit | null>(null);
-
-  if (editing) {
-    return (
-      <Editor
-        title={editing.id ? "Edit connector" : "New connector"}
-        onCancel={() => setEditing(null)}
-        onSave={() => {
-          saveConnector(fromEdit(editing));
-          setEditing(null);
-        }}
-        canSave={!!editing.name.trim() && !!editing.command.trim()}
-      >
-        <p className="text-sm text-muted-foreground">
-          Connectors are MCP servers that run on this computer and give the model tools. Sush asks before each tool
-          call unless you choose “Always allow”.
-        </p>
-        <Field label="Name">
-          <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} placeholder="Files" />
-        </Field>
-        <Field label="Command">
-          <Input
-            value={editing.command}
-            onChange={(e) => setEditing({ ...editing, command: e.target.value })}
-            placeholder="npx"
-            className="font-mono"
-          />
-        </Field>
-        <Field label="Arguments" hint="One per line.">
-          <Textarea
-            value={editing.args}
-            onChange={(e) => setEditing({ ...editing, args: e.target.value })}
-            placeholder={"-y\n@modelcontextprotocol/server-filesystem\nC:\\Users\\me\\notes"}
-            className="min-h-24 font-mono text-[13px]"
-          />
-        </Field>
-        <Field label="Environment" hint="KEY=value, one per line. Stored on this device in plain text.">
-          <Textarea
-            value={editing.env}
-            onChange={(e) => setEditing({ ...editing, env: e.target.value })}
-            placeholder="GITHUB_TOKEN=ghp_…"
-            className="min-h-20 font-mono text-[13px]"
-          />
-        </Field>
-      </Editor>
-    );
-  }
-
-  return (
-    <>
-      <SectionHeader
-        title="Connectors"
-        description="Local MCP servers that give the model tools: files, GitHub, databases and more."
-        action={
-          <Button size="sm" onClick={() => setEditing({ name: "", command: "", args: "", env: "", enabled: true })}>
-            <PlusIcon /> Add connector
-          </Button>
-        }
-      />
-      <div className="divide-y">
-        {connectors.map((c) => {
-          const s = status[c.id];
-          const subtitle = !c.enabled
-            ? "Off"
-            : s?.state === "ready"
-              ? `${s.tools.length} tools · ${s.tools.map((t) => t.name).join(", ")}`
-              : s?.state === "error"
-                ? <span className="text-destructive">{s.error}</span>
-                : "Connecting…";
-          return (
-            <Row key={c.id} title={c.name} subtitle={subtitle} badge={pluginName(c.pluginId)}>
-              {c.enabled && s?.state === "error" && (
-                <Button size="icon-sm" variant="ghost" aria-label={`Reconnect ${c.name}`} onClick={() => void connect(c)}>
-                  <RefreshCwIcon />
-                </Button>
-              )}
-              {!c.pluginId && (
-                <>
-                  <Button size="icon-sm" variant="ghost" aria-label={`Edit ${c.name}`} onClick={() => setEditing(toEdit(c))}>
-                    <PencilIcon />
-                  </Button>
-                  <Button size="icon-sm" variant="ghost" aria-label={`Delete ${c.name}`} onClick={() => deleteConnector(c.id)}>
-                    <Trash2Icon />
-                  </Button>
-                </>
-              )}
-              <Switch checked={c.enabled} onCheckedChange={(on) => toggleConnector(c.id, on)} aria-label={`Use ${c.name}`} />
-            </Row>
-          );
-        })}
-      </div>
-      {connectors.length === 0 && <Empty>No connectors yet.</Empty>}
     </>
   );
 }

@@ -13,6 +13,7 @@ const LOGOS: Record<string, string> = Object.fromEntries(
 /** Logos shown in their brand color instead of the surrounding text color. */
 const BRAND_COLORS: Record<string, string> = {
   anthropic: "#D97757",
+  azure: "#0078D4",
 };
 
 const COLOR_BY_URL = new Map(
@@ -38,6 +39,8 @@ const MODEL_FAMILIES: [RegExp, string][] = [
 /** Hosts / provider names → logo slug. */
 const PROVIDERS: [RegExp, string][] = [
   [/anthropic|claude/i, "anthropic"],
+  // Before OpenAI: Azure hosts look like {resource}.openai.azure.com.
+  [/azure|foundry/i, "azure"],
   [/openai/i, "openai"],
   [/ollama|:11434/i, "ollama"],
   [/lm ?studio|:1234/i, "lmstudio"],

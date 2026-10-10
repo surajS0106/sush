@@ -6,8 +6,11 @@ import { useSyncExternalStore } from "react";
 import { createStore } from "@/lib/store";
 import type { ProviderView, TranscribeApi } from "@/lib/tauri";
 
+/** The built-in Whisper model, which isn't a configured provider. */
+export const BUILTIN = "builtin";
+
 export interface SpeechSettings {
-  /** null: use a local Ollama provider if there is one. */
+  /** null or BUILTIN: the built-in Whisper model. Otherwise a provider id. */
   providerId: string | null;
   model: string;
   api: TranscribeApi;
@@ -31,34 +34,36 @@ export const canTranscribe = (p: ProviderView) => p.format === "openai-chat";
 /** The API a provider most likely speaks for audio. */
 export const defaultApi = (p: ProviderView): TranscribeApi => (isOllama(p) ? "ollama-chat" : "transcriptions");
 
-export interface SpeechTarget {
-  provider: ProviderView;
-  model: string;
-  api: TranscribeApi;
-}
+export type SpeechTarget =
+  | { kind: "builtin" }
+  | { kind: "provider"; provider: ProviderView; model: string; api: TranscribeApi };
 
-/** The configured speech target, falling back to local Ollama when none is picked. */
+/** The configured speech target; the built-in model unless a provider is picked. */
 export function resolveSpeechTarget(settings: SpeechSettings, providers: ProviderView[]): SpeechTarget | null {
-  if (settings.providerId) {
-    // An explicit choice never silently falls back to something else.
-    const picked = providers.find((p) => p.id === settings.providerId);
-    return picked && canTranscribe(picked) && settings.model.trim()
-      ? { provider: picked, model: settings.model.trim(), api: settings.api }
-      : null;
-  }
-  const ollama = providers.find(isOllama);
-  return ollama ? { provider: ollama, model: DEFAULT_OLLAMA_MODEL, api: "ollama-chat" } : null;
+  if (!settings.providerId || settings.providerId === BUILTIN) return { kind: "builtin" };
+  // An explicit choice never silently falls back to something else.
+  const picked = providers.find((p) => p.id === settings.providerId);
+  return picked && canTranscribe(picked) && settings.model.trim()
+    ? { kind: "provider", provider: picked, model: settings.model.trim(), api: settings.api }
+    : null;
 }
 
 /** Longest clip sent in one request. Gemma's audio encoder takes short clips;
  *  transcription endpoints cap uploads at 25 MB (about 13 minutes here). */
-export const chunkSeconds = (api: TranscribeApi) => (api === "ollama-chat" ? 30 : 600);
+export const chunkSeconds = (t: SpeechTarget) => (t.kind === "provider" && t.api === "ollama-chat" ? 30 : 600);
+
+/** Whether to transcribe while recording. Live dictation re-sends the open
+ *  segment every second or so, so it's only on for models that run locally
+ *  and cost nothing per request. */
+export const isLive = (t: SpeechTarget) => t.kind === "builtin" || isOllama(t.provider);
 
 // --- recording -----------------------------------------------------------------------
 
 export const SAMPLE_RATE = 16_000;
 
 export interface Recording {
+  /** The samples recorded so far from index `from` on, without stopping. */
+  peek(from?: number): Float32Array;
   /** Stop and return the samples recorded so far. */
   stop(): Float32Array;
   /** Stop and discard. */
@@ -85,16 +90,22 @@ export async function startRecording(): Promise<Recording> {
     stream.getTracks().forEach((t) => t.stop());
     void ctx.close();
   };
+  const peek = (from = 0) => {
+    const total = chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Float32Array(Math.max(0, total - from));
+    let start = 0;
+    for (const c of chunks) {
+      const end = start + c.length;
+      if (end > from) out.set(c.subarray(Math.max(0, from - start)), Math.max(0, start - from));
+      start = end;
+    }
+    return out;
+  };
   return {
+    peek,
     stop() {
       close();
-      const out = new Float32Array(chunks.reduce((n, c) => n + c.length, 0));
-      let offset = 0;
-      for (const c of chunks) {
-        out.set(c, offset);
-        offset += c.length;
-      }
-      return out;
+      return peek();
     },
     cancel: close,
   };

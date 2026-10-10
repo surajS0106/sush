@@ -65,6 +65,7 @@ export type ChatEvent =
   | { type: "usage"; inputTokens?: number | null; outputTokens?: number | null }
   | { type: "server-tool-call"; id: string; name: string; input: unknown }
   | { type: "web-sources"; callId: string; sources: { url: string; title?: string | null }[] }
+  | { type: "citation"; url: string; title?: string | null }
   | { type: "finish"; reason: FinishReason }
   | { type: "error"; message: string };
 
@@ -74,16 +75,25 @@ export interface ServerCommand {
   env: Record<string, string>;
 }
 
+/** Where a connector's MCP server lives: a local process or a URL. */
+export type ServerSpec =
+  | ({ type: "stdio" } & ServerCommand)
+  | { type: "http"; url: string; oauthClientId?: string | null };
+
 export interface McpTool {
   name: string;
   description?: string | null;
   inputSchema: unknown;
+  /** The server's hints about what the tool does (MCP tool annotations). */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } | null;
 }
 
-export interface ConnectorInfo {
-  serverName?: string | null;
-  tools: McpTool[];
-}
+export type ConnectOutcome =
+  | { state: "ready"; serverName?: string | null; tools: McpTool[] }
+  | { state: "needs-auth" };
+
+/** Redirect port for user-supplied OAuth clients (connector_auth.rs). */
+export const CUSTOM_CLIENT_REDIRECT = "http://localhost:33418/callback";
 
 export interface ToolOutput {
   text: string;
@@ -129,13 +139,29 @@ export const api = {
     invoke<void>("chat_stream", { streamId, providerId, request, onEvent }),
   cancelStream: (streamId: string) => invoke<void>("cancel_stream", { streamId }),
   readFolder: (path: string) => invoke<Folder>("read_folder", { path }),
+  saveTextFile: (path: string, contents: string) => invoke<void>("save_text_file", { path, contents }),
   loadPlugin: (path: string) => invoke<Plugin>("load_plugin", { path }),
-  connectorConnect: (id: string, command: ServerCommand) => invoke<ConnectorInfo>("connector_connect", { id, command }),
-  connectorCall: (id: string, tool: string, args: unknown) =>
-    invoke<ToolOutput>("connector_call", { id, tool, arguments: args }),
+  connectorConnect: (id: string, server: ServerSpec) => invoke<ConnectOutcome>("connector_connect", { id, server }),
+  /** `callId` lets `connectorCancelCall` stop it. */
+  connectorCall: (id: string, tool: string, args: unknown, callId: string) =>
+    invoke<ToolOutput>("connector_call", { id, tool, arguments: args, callId }),
+  connectorCancelCall: (callId: string) => invoke<void>("connector_cancel_call", { callId }),
   connectorDisconnect: (id: string) => invoke<void>("connector_disconnect", { id }),
+  /** Disconnect and delete the connector's stored credentials. */
+  connectorForget: (id: string) => invoke<void>("connector_forget", { id }),
+  /** Sign in through the browser; resolves when the browser comes back. */
+  connectorAuthorize: (id: string, url: string, clientId?: string | null) =>
+    invoke<void>("connector_authorize", { id, url, clientId: clientId || null }),
+  connectorCancelAuthorize: (id: string) => invoke<void>("connector_cancel_authorize", { id }),
+  /** `undefined` keeps a stored value, `""` clears it. */
+  connectorSaveSecrets: (id: string, url: string, secrets: { token?: string; clientSecret?: string }) =>
+    invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),
   transcribe: (providerId: string, model: string, api: TranscribeApi, audioBase64Wav: string) =>
     invoke<string>("transcribe", { providerId, model, api, audioBase64Wav }),
+  whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
+  whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
+    invoke<void>("whisper_model_download", { onProgress }),
+  transcribeLocal: (audioBase64Wav: string) => invoke<string>("transcribe_local", { audioBase64Wav }),
 };
 
 /** Commands reject with the Rust error's message string. */

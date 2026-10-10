@@ -7,6 +7,7 @@ import ReactDOM from "react-dom/client";
 
 import App from "./App";
 import { AuthGate } from "./components/auth-gate";
+import { WindowControls } from "./components/window-controls";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
       <AuthGate>
         <App />
       </AuthGate>
+      <WindowControls />
     </ThemeProvider>
   </React.StrictMode>,
 );

@@ -15,7 +15,9 @@ import {
 import { ComposerMenu } from "@/components/composer-menu";
 import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
-import { hasLeadingCommand, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } from "@/components/slash-menu";
+import { MENTION_MENU_ID, MentionMenu, useMentionMenu } from "@/components/mention-menu";
+import { PermissionModePicker } from "@/components/permission-mode-picker";
+import { hasHighlight, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } from "@/components/slash-menu";
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -78,7 +80,8 @@ export function Composer({
   const listening = dictation.status === "recording";
   const dictating = dictation.status !== "idle";
   const slash = useSlashMenu(textInput.value, textInput.setInput);
-  const highlighted = hasLeadingCommand(textInput.value);
+  const mention = useMentionMenu(textInput.value, textInput.setInput);
+  const highlighted = hasHighlight(textInput.value);
   const highlightRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -86,9 +89,9 @@ export function Composer({
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
         e.preventDefault();
         attachments.openFileDialog();
-      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === "Space") {
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "d") {
         e.preventDefault();
-        dictation.toggle();
+        if (!e.repeat) dictation.toggle();
       } else if (e.key === "Escape" && listening) {
         e.preventDefault();
         dictation.cancel();
@@ -98,9 +101,9 @@ export function Composer({
     return () => window.removeEventListener("keydown", onKey);
   }, [attachments, dictation.toggle, dictation.cancel, listening]);
 
-  // Sending mid-recording discards the recording rather than dictating into the next message.
+  // Sending mid-recording sends what's been transcribed so far and drops the rest.
   const submit = (msg: PromptInputMessage) => {
-    dictation.cancel();
+    dictation.cancel(false);
     onSubmit(msg);
   };
 
@@ -115,6 +118,14 @@ export function Composer({
     <div className="group/composer relative isolate flex flex-col gap-2">
       {slash.open && (
         <SlashMenu commands={slash.commands} active={slash.active} onHover={slash.setActive} onPick={slash.pick} />
+      )}
+      {mention.open && !slash.open && (
+        <MentionMenu
+          connectors={mention.connectors}
+          active={mention.active}
+          onHover={mention.setActive}
+          onPick={mention.pick}
+        />
       )}
       <motion.div
         aria-hidden
@@ -182,11 +193,19 @@ export function Composer({
               onScroll={(e) => {
                 if (highlightRef.current) highlightRef.current.scrollTop = e.currentTarget.scrollTop;
               }}
-              onKeyDown={slash.onKeyDown}
-              aria-expanded={slash.open}
-              aria-controls={slash.open ? SLASH_MENU_ID : undefined}
-              aria-activedescendant={slash.activeId}
-              className={cn("relative min-h-14", TEXT_BOX, highlighted && "text-transparent caret-foreground")}
+              onKeyDown={(e) => (slash.open ? slash.onKeyDown(e) : mention.onKeyDown(e))}
+              onSelect={mention.onSelect}
+              aria-expanded={slash.open || mention.open}
+              aria-controls={slash.open ? SLASH_MENU_ID : mention.open ? MENTION_MENU_ID : undefined}
+              aria-activedescendant={slash.activeId ?? mention.activeId}
+              // Live dictation rewrites the field as you speak, so typing meanwhile would be lost.
+              readOnly={listening}
+              className={cn(
+                "relative min-h-14",
+                TEXT_BOX,
+                highlighted && "text-transparent caret-foreground",
+                listening && "cursor-default",
+              )}
             />
             {empty && (
               <div aria-hidden className="pointer-events-none absolute inset-x-4 top-3.5 overflow-hidden">
@@ -199,7 +218,13 @@ export function Composer({
                     transition={{ duration: 0.35, ease: EASE_OUT }}
                     className="block truncate text-[15px] text-muted-foreground"
                   >
-                    {listening ? "Listening… press Esc to cancel" : dictating ? "Transcribing…" : PLACEHOLDERS[promptIndex]}
+                    {listening
+                      ? "Listening… speak, then press Ctrl+D to finish or Esc to cancel"
+                      : dictation.status === "downloading"
+                        ? `Downloading speech model… ${Math.round(dictation.progress * 100)}%`
+                        : dictating
+                          ? "Transcribing…"
+                          : PLACEHOLDERS[promptIndex]}
                   </motion.span>
                 </AnimatePresence>
               </div>
@@ -215,6 +240,7 @@ export function Composer({
             onSend={(text) => submit({ text, files: [] })}
           />
           <div className="flex items-center gap-1.5">
+            <PermissionModePicker />
             <div className="[&_button]:h-7 [&_button]:rounded-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.02] [&_button]:px-2.5 [&_button]:text-xs [&_button]:font-medium dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5">
               <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
             </div>
@@ -222,9 +248,9 @@ export function Composer({
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  aria-label={listening ? "Stop and transcribe" : "Dictate"}
+                  aria-label={listening ? "Stop dictating" : "Dictate"}
                   aria-pressed={listening}
-                  disabled={dictation.status === "transcribing"}
+                  disabled={dictating && !listening}
                   onClick={dictation.toggle}
                   className={cn(
                     "relative flex size-8 items-center justify-center rounded-full transition-colors",
@@ -241,11 +267,11 @@ export function Composer({
                       transition={{ duration: 1.1, repeat: Infinity, ease: "easeOut" }}
                     />
                   )}
-                  {dictation.status === "transcribing" ? <Spinner /> : <MicIcon className="size-4" />}
+                  {dictating && !listening ? <Spinner /> : <MicIcon className="size-4" />}
                 </button>
               </TooltipTrigger>
               <TooltipContent>
-                {listening ? "Stop and transcribe" : "Dictate"} <span className="ml-1 text-muted-foreground">Ctrl+Shift+Space</span>
+                {listening ? "Stop dictating" : "Dictate"} <span className="ml-1 text-muted-foreground">Ctrl+D</span>
               </TooltipContent>
             </Tooltip>
             <div className="relative">
@@ -294,7 +320,8 @@ export function Composer({
         <kbd className="rounded border px-1 py-0.5 font-sans">Enter</kbd> to send ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">Shift+Enter</kbd> for new line ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">/</kbd> for skills ·{" "}
-        <kbd className="rounded border px-1 py-0.5 font-sans">Ctrl+Shift+Space</kbd> to dictate
+        <kbd className="rounded border px-1 py-0.5 font-sans">@</kbd> for connectors ·{" "}
+        <kbd className="rounded border px-1 py-0.5 font-sans">Ctrl+D</kbd> to dictate
       </p>
       <DictationErrorDialog
         failure={dictation.failure}

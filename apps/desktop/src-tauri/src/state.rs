@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 
-use sush_core::mcp::{McpClient, ServerCommand};
+use sush_core::mcp::{McpClient, ServerSpec};
 use sush_core::ProviderConfig;
 use tokio_util::sync::CancellationToken;
 
@@ -14,8 +14,12 @@ pub struct AppState {
     /// In-flight chat streams by id, so the UI can cancel them.
     pub streams: Mutex<HashMap<String, CancellationToken>>,
     pub http: reqwest::Client,
-    /// Running connector processes by id, with the command they were started with.
-    pub connectors: tokio::sync::Mutex<HashMap<String, (ServerCommand, std::sync::Arc<McpClient>)>>,
+    /// Running connectors by id, with the server they were started for.
+    pub connectors: tokio::sync::Mutex<HashMap<String, (ServerSpec, std::sync::Arc<McpClient>)>>,
+    /// Connector tool calls in flight by call id, so Stop can cancel them.
+    pub tool_calls: Mutex<HashMap<String, CancellationToken>>,
+    /// Browser sign-ins in progress by connector id, so a new attempt or Cancel can stop one.
+    pub authorizing: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl AppState {
@@ -32,6 +36,8 @@ impl AppState {
             providers: RwLock::new(providers),
             streams: Mutex::new(HashMap::new()),
             connectors: Default::default(),
+            tool_calls: Default::default(),
+            authorizing: Default::default(),
             http: reqwest::Client::builder().user_agent(concat!("Sush/", env!("CARGO_PKG_VERSION"))).build()
                 .map_err(sush_core::ProviderError::from)?,
         })

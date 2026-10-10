@@ -1,12 +1,14 @@
 #[cfg(not(debug_assertions))]
 mod auth_server;
 mod commands;
+mod connector_auth;
 mod connectors;
 mod error;
 mod library;
 mod secrets;
 mod speech;
 mod state;
+mod whisper;
 
 use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::Manager;
@@ -24,6 +26,7 @@ pub fn run() {
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             app.manage(state::AppState::load(config_dir)?);
+            app.manage(whisper::Whisper::default());
             #[cfg(not(debug_assertions))]
             {
                 let server = auth_server::AuthServer::default();
@@ -41,11 +44,20 @@ pub fn run() {
             commands::chat_stream,
             commands::cancel_stream,
             library::read_folder,
+            library::save_text_file,
             library::load_plugin,
             connectors::connector_connect,
             connectors::connector_call,
+            connectors::connector_cancel_call,
             connectors::connector_disconnect,
+            connectors::connector_forget,
+            connector_auth::connector_authorize,
+            connector_auth::connector_cancel_authorize,
+            connector_auth::connector_save_secrets,
             speech::transcribe,
+            whisper::whisper_model_status,
+            whisper::whisper_model_download,
+            whisper::transcribe_local,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sush")

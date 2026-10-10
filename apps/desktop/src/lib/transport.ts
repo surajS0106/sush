@@ -7,6 +7,8 @@ import type { ChatTransport, UIMessage, UIMessageChunk } from "ai";
 
 import { api, errorMessage, type ChatEvent, type CoreMessage, type CorePart, type FinishReason, type StreamFrame } from "@/lib/tauri";
 import type { RequestContext } from "@/lib/agent";
+import { citationMarker, stripCitations } from "@/lib/citations";
+import { expandMentions } from "@/lib/mentions";
 import { expandSlash } from "@/lib/skills";
 
 export interface ModelTarget {
@@ -160,6 +162,10 @@ class PartTracker {
         this.emit({ type: "data-web", id: ev.callId, data: { ...activity } });
         break;
       }
+      case "citation":
+        // Cited text always comes first, so a text part is open; the marker goes right after it.
+        if (this.text) this.emit({ type: "text-delta", id: this.text, delta: citationMarker(ev.url, ev.title) });
+        break;
       case "usage":
         this.usage = { inputTokens: ev.inputTokens ?? undefined, outputTokens: ev.outputTokens ?? undefined };
         break;
@@ -230,8 +236,14 @@ export function toCoreMessages(messages: SushUIMessage[]): CoreMessage[] {
       const parts: CorePart[] = [];
       for (const p of m.parts) {
         if (p.type === "text") {
-          // `/skill args` reaches the model as the skill's instructions plus the arguments.
-          const text = m.role === "user" && p === m.parts.find((x) => x.type === "text") ? expandSlash(p.text) : p.text;
+          // `/skill args` reaches the model as the skill's instructions plus the arguments,
+          // and `@connector` with a note to use that connector.
+          const text =
+            m.role === "user" && p === m.parts.find((x) => x.type === "text")
+              ? expandMentions(expandSlash(p.text), p.text)
+              : m.role === "assistant"
+                ? stripCitations(p.text)
+                : p.text;
           if (text) parts.push({ type: "text", text });
         } else if (p.type === "reasoning") {
           parts.push({ type: "reasoning", text: p.text });

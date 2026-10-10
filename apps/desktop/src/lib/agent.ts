@@ -8,8 +8,12 @@
 //   chat_read       run immediately against saved chats
 //   skill           runs immediately: returns a skill's instructions (skills.ts)
 //   skill_save      saves a skill, after the user approves
+//   artifact_write  runs immediately: the chat shows it as a versioned artifact (artifacts.ts)
 //   <connector>__*  sent to an MCP connector, after the user approves
 
+import { useSyncExternalStore } from "react";
+
+import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { activeConnectors, activeDesignSystem, isToolAllowed, library, type Connector } from "@/lib/library";
 import {
@@ -25,7 +29,8 @@ import {
   writeMemory,
 } from "@/lib/memory";
 import { loadSkill, SKILL, SKILL_SAVE, skillSaveTool, skillsPrompt, skillTool } from "@/lib/skills";
-import { api, type ToolSpec } from "@/lib/tauri";
+import { createStore } from "@/lib/store";
+import { api, type McpTool, type ToolSpec } from "@/lib/tauri";
 
 export const MEMORY_WRITE = "memory_write";
 export const MEMORY_DELETE = "memory_delete";
@@ -80,10 +85,14 @@ const chatTools: ToolSpec[] = [
 
 // --- connectors ---------------------------------------------------------------
 
+/** What every model-facing tool name of a connector starts with, e.g. `github__`. */
+export function connectorToolPrefix(connector: Connector) {
+  return `${connector.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "connector"}__`;
+}
+
 /** Model-facing tool names: `<connector>__<tool>`, within the 64-char limit providers enforce. */
 function toolName(connector: Connector, tool: string) {
-  const slug = connector.name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "connector";
-  return `${slug}__${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+  return `${connectorToolPrefix(connector)}${tool}`.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
 export interface ConnectorTool {
@@ -91,6 +100,7 @@ export interface ConnectorTool {
   connector: Connector;
   tool: string;
   spec: ToolSpec;
+  annotations?: McpTool["annotations"];
 }
 
 /** Tools of every active connector that's connected. */
@@ -105,6 +115,7 @@ export function connectorTools(): ConnectorTool[] {
         name,
         connector,
         tool: t.name,
+        annotations: t.annotations,
         spec: {
           name,
           description: `[${connector.name}] ${t.description ?? t.name}`,
@@ -160,6 +171,7 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     ...(askUser ? [askUserTool] : []),
     ...(skills ? [skillTool] : []),
     skillSaveTool,
+    artifactTool,
     ...(prefs.memory ? memoryTools : []),
     ...(prefs.referenceChats ? chatTools : []),
     ...connectorTools().map((t) => t.spec),
@@ -172,7 +184,7 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
 
 export type ToolResult = { output: unknown } | { errorText: string };
 
-export type ToolKind = "ask-user" | "memory" | "chats" | "skill" | "skill-save" | "connector" | "unknown";
+export type ToolKind = "ask-user" | "memory" | "chats" | "skill" | "skill-save" | "artifact" | "connector" | "unknown";
 
 export function toolKind(name: string): ToolKind {
   if (name === ASK_USER) return "ask-user";
@@ -180,21 +192,48 @@ export function toolKind(name: string): ToolKind {
   if (name === CHATS_SEARCH || name === CHAT_READ) return "chats";
   if (name === SKILL) return "skill";
   if (name === SKILL_SAVE) return "skill-save";
+  if (name === ARTIFACT_WRITE) return "artifact";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
+}
+
+// Verbs of tools that delete, overwrite, or act for the user outside the app.
+const RISKY = /(^|_|-)(delete|remove|destroy|drop|purge|erase|wipe|revoke|reset|force|overwrite|merge|transfer|pay|charge|refund|send|publish|post|invite|archive|close|cancel|ban|kick)(?=$|[_-])/i;
+
+/**
+ * Whether Auto mode should still ask: the server says the tool is destructive, or it
+ * doesn't say it's harmless and its name sounds risky.
+ */
+export function looksUnsafe(t: ConnectorTool): boolean {
+  const a = t.annotations ?? {};
+  if (a.readOnlyHint === true) return false;
+  if (a.destructiveHint === true) return true;
+  return RISKY.test(t.tool);
 }
 
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
-  return isToolAllowed(t.connector.id, t.tool);
+  if (isToolAllowed(t.connector.id, t.tool)) return true;
+  return library.prefs().permissionMode === "auto" && !looksUnsafe(t);
 }
 
-/** Run a memory, chats, skill or connector tool. Never throws; failures become error results the model can read. */
-export async function runTool(name: string, input: unknown): Promise<ToolResult> {
+export const STOPPED = "Stopped by the user.";
+
+/** Connector calls in flight, by tool call id, so Stop can cancel them. */
+const runningCalls = createStore<ReadonlySet<string>>("sush.running-tool-calls", new Set(), false);
+export const useRunningToolCalls = () => useSyncExternalStore(runningCalls.subscribe, runningCalls.get);
+
+/** Stop connector calls in flight; each one's `runTool` then resolves with `STOPPED`. */
+export function cancelToolCalls(ids: Iterable<string>) {
+  for (const id of ids) if (runningCalls.get().has(id)) void api.connectorCancelCall(id);
+}
+
+/** Run a memory, chats, skill, artifact or connector tool. Never throws; failures become error results the model can read. */
+export async function runTool(name: string, input: unknown, callId: string): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
     if (name === MEMORY_WRITE) {
@@ -227,9 +266,20 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
       return { output: `# ${chat.title}\n\n${chat.transcript}` };
     }
     if (name === SKILL) return loadSkill(String(args.name ?? ""));
+    if (name === ARTIFACT_WRITE) {
+      const invalid = validateArtifact(args);
+      return invalid ? { errorText: invalid } : { output: `Showed ${args.filename} to the user as an artifact.` };
+    }
     const t = findConnectorTool(name);
     if (t) {
-      const out = await api.connectorCall(t.connector.id, t.tool, input ?? {});
+      runningCalls.set((prev) => new Set(prev).add(callId));
+      const out = await api.connectorCall(t.connector.id, t.tool, input ?? {}, callId).finally(() =>
+        runningCalls.set((prev) => {
+          const next = new Set(prev);
+          next.delete(callId);
+          return next;
+        }),
+      );
       return out.isError ? { errorText: out.text || "The tool reported an error." } : { output: out.text };
     }
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };

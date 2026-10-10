@@ -8,9 +8,18 @@ import { useEffect, useRef, useState } from "react";
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
 import { SkillSaveCard, ToolApprovalCard, ToolResultRow } from "@/components/tool-approval-card";
 import { LoadingState } from "@/components/ui/loading-state";
-import { CHATS_SEARCH, findConnectorTool, MEMORY_DELETE, runTool, toolKind, type ToolResult } from "@/lib/agent";
+import {
+  CHATS_SEARCH,
+  findConnectorTool,
+  MEMORY_DELETE,
+  runTool,
+  STOPPED,
+  toolKind,
+  useRunningToolCalls,
+  type ToolResult,
+} from "@/lib/agent";
 import { parseAskUserInput, type AskUserOutput } from "@/lib/ask-user";
-import { allowTool, library } from "@/lib/library";
+import { allowTool } from "@/lib/library";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
 import { FOLDER_MEDIA_TYPE, type WebActivity } from "@/lib/transport";
@@ -202,6 +211,7 @@ export const DENIED = "The user denied this tool call.";
 
 function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
   const [running, setRunning] = useState(false);
+  const inFlight = useRunningToolCalls().has(part.toolCallId);
   const found = findConnectorTool(part.toolName);
   // Saved chats can reference connectors that are gone; fall back to the raw name.
   const [connectorName, toolName] = found
@@ -224,19 +234,21 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
     case "output-error":
       return (
         <ToolResultRow
-          error={part.errorText !== DENIED}
+          error={part.errorText !== DENIED && part.errorText !== STOPPED}
           label={
             <>
               {label}
-              <span className="opacity-70">· {part.errorText === DENIED ? "denied" : "failed"}</span>
+              <span className="opacity-70">
+                · {part.errorText === DENIED ? "denied" : part.errorText === STOPPED ? "stopped" : "failed"}
+              </span>
             </>
           }
-          detail={part.errorText === DENIED ? undefined : part.errorText}
+          detail={part.errorText === DENIED || part.errorText === STOPPED ? undefined : part.errorText}
         />
       );
     default:
-      // Pre-approved calls are already running (started from useChat's onToolCall).
-      if (running || (canAnswer && found && library.allowedTools().includes(`${found.connector.id}/${found.tool}`))) {
+      // Calls that need no approval are started from useChat's onToolCall.
+      if (running || inFlight) {
         return <LoadingState label={`Running ${toolName}`} />;
       }
       if (!canAnswer || !found) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
@@ -250,7 +262,7 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
           onAllow={(always) => {
             if (always) allowTool(found.connector.id, found.tool);
             setRunning(true);
-            void runTool(part.toolName, part.input).then(onResult);
+            void runTool(part.toolName, part.input, part.toolCallId).then(onResult);
           }}
         />
       );

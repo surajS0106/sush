@@ -196,6 +196,8 @@ pub(crate) struct AnthropicDecoder {
     tool_blocks: HashMap<u64, u32>,
     /// Content-block index -> (id, name, input JSON so far) for server-run tools.
     server_blocks: HashMap<u64, (String, String, String)>,
+    /// Content-block index -> pages a text block cites, emitted when it closes.
+    citations: HashMap<u64, Vec<WebSource>>,
     finished: bool,
     done: bool,
 }
@@ -248,9 +250,13 @@ impl Decoder for AnthropicDecoder {
                 }
             }
             "content_block_stop" => {
-                if let Some((id, name, input)) = self.server_blocks.remove(&v["index"].as_u64().unwrap_or(0)) {
+                let index = v["index"].as_u64().unwrap_or(0);
+                if let Some((id, name, input)) = self.server_blocks.remove(&index) {
                     let input = serde_json::from_str(&input).unwrap_or(Value::Object(Default::default()));
                     out.push(ChatEvent::ServerToolCall { id, name, input });
+                }
+                for WebSource { url, title } in self.citations.remove(&index).unwrap_or_default() {
+                    out.push(ChatEvent::Citation { url, title });
                 }
             }
             "content_block_delta" => {
@@ -278,7 +284,17 @@ impl Decoder for AnthropicDecoder {
                             });
                         }
                     }
-                    _ => {} // signature_delta, citations, ...
+                    // Only web results carry a URL; document citations are skipped.
+                    Some("citations_delta") => {
+                        let c = &delta["citation"];
+                        if let Some(url) = c["url"].as_str() {
+                            let cited = self.citations.entry(v["index"].as_u64().unwrap_or(0)).or_default();
+                            if !cited.iter().any(|s| s.url == url) {
+                                cited.push(WebSource { url: url.to_string(), title: c["title"].as_str().map(str::to_owned) });
+                            }
+                        }
+                    }
+                    _ => {} // signature_delta, ...
                 }
             }
             "message_delta" => {
@@ -583,5 +599,35 @@ data: {"type":"message_stop"}
             }
         );
         assert!(!evs.iter().any(|e| matches!(e, ChatEvent::ToolCallDelta { .. })));
+    }
+
+    #[test]
+    fn emits_web_citations_after_the_cited_text() {
+        let body = r#"event: content_block_start
+data: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":"","citations":[]}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://a.dev","title":"A","cited_text":"x","encrypted_index":"e"}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"web_search_result_location","url":"https://a.dev","title":"A","cited_text":"y","encrypted_index":"f"}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"citations_delta","citation":{"type":"char_location","document_title":"Doc","cited_text":"z"}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":2,"delta":{"type":"text_delta","text":"Cited claim."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":2}
+"#;
+        let evs = decode_all(AnthropicDecoder::default(), body);
+        assert_eq!(
+            &evs[..2],
+            [
+                ChatEvent::TextDelta { delta: "Cited claim.".into() },
+                ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()) },
+            ]
+        );
     }
 }

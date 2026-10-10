@@ -1,4 +1,4 @@
-import { BoxIcon, CheckIcon, ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
+import { BoxIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 
 import {
@@ -43,10 +43,26 @@ export function Logo({ src, className }: { src?: string; className?: string }) {
 
 export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // While searching, show every group so matches are never hidden behind a collapsed header.
+  const isCollapsed = (id: string) => !search && collapsed.has(id);
+  const toggle = (id: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   const current = catalog.find((c) => c.provider.id === value?.providerId)?.provider;
 
   return (
-    <ModelSelector open={open} onOpenChange={setOpen}>
+    <ModelSelector
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setSearch("");
+      }}
+    >
       <ModelSelectorTrigger asChild>
         <PromptInputButton
           className="max-w-56 gap-1.5 rounded-full text-muted-foreground"
@@ -64,30 +80,43 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
         </PromptInputButton>
       </ModelSelectorTrigger>
       <ModelSelectorContent title="Select a model">
-        <ModelSelectorInput placeholder="Search models…" />
-        <ModelSelectorList>
+        <ModelSelectorInput placeholder="Search models…" value={search} onValueChange={setSearch} />
+        <ModelSelectorList
+          data-lenis-prevent
+          className="max-h-[min(28rem,60vh)] [scrollbar-width:thin]! [scrollbar-gutter:stable]"
+        >
           <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
           {catalog.map(({ provider, models, error }, i) => {
             const pLogo = providerLogo(provider);
+            const folded = isCollapsed(provider.id);
             return (
               <Fragment key={provider.id}>
                 {i > 0 && <ModelSelectorSeparator />}
                 <ModelSelectorGroup
                   heading={
-                    <span className="flex w-full items-center gap-1.5">
+                    <button
+                      type="button"
+                      aria-expanded={!folded}
+                      disabled={!!search}
+                      onClick={() => toggle(provider.id)}
+                      className="-mx-1 flex w-[calc(100%+0.5rem)] items-center gap-1.5 rounded-sm px-1 hover:bg-accent/60 hover:text-foreground disabled:pointer-events-none"
+                    >
+                      <ChevronRightIcon
+                        className={cn("size-3 shrink-0 transition-transform", !folded && "rotate-90", search && "invisible")}
+                      />
                       <Logo className="size-3" src={pLogo} />
                       {provider.name}
                       <span className="ml-auto tabular-nums opacity-60">{models.length || ""}</span>
-                    </span>
+                    </button>
                   }
                 >
-                  {error && models.length === 0 && (
+                  {!folded && error && models.length === 0 && (
                     <div className="flex items-center gap-2 px-2 py-1.5 text-xs text-destructive">
                       <TriangleAlertIcon className="size-3.5 shrink-0" />
                       <span className="line-clamp-2">{error}</span>
                     </div>
                   )}
-                  {models.map((m) => {
+                  {!folded && models.map((m) => {
                     const selected = value?.providerId === provider.id && value.model === m.id;
                     return (
                       <ModelSelectorItem

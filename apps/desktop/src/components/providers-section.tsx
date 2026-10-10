@@ -4,6 +4,7 @@ import { KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { Logo } from "@/components/model-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -12,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { providerLogo } from "@/lib/logos";
 import { api, errorMessage, type ProviderConfig, type ProviderView, type WireFormat } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
@@ -42,47 +44,54 @@ export function ProvidersSection({ providers, onChanged }: ProvidersSectionProps
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b py-4 pr-14 pl-6">
-        <h2 className="text-base font-semibold">Providers</h2>
-        <p className="mt-0.5 text-sm text-muted-foreground">
+      <div className="mx-6 border-b pt-6 pr-8 pb-5">
+        <h2 className="text-lg font-semibold tracking-tight">Providers</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
           Connect model providers. API keys are stored in your OS keychain.
         </p>
       </div>
       <div className="flex min-h-0 flex-1">
-        <div className="flex w-52 shrink-0 flex-col border-r">
+        <div className="flex w-64 shrink-0 flex-col border-r">
           <ScrollArea className="min-h-0 flex-1">
-            <div className="flex flex-col gap-0.5 p-2">
-              {providers.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setDraft(p)}
-                  className={cn(
-                    "flex items-center justify-between gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-accent",
-                    draft?.id === p.id && "bg-accent",
-                  )}
-                >
-                  <span className="truncate">{p.name}</span>
-                  {p.auth.type === "api-key" && !p.hasKey && (
-                    <KeyRoundIcon className="size-3.5 shrink-0 text-destructive" aria-label="No API key" />
-                  )}
-                </button>
-              ))}
+            <div className="flex flex-col gap-1 p-3">
+              {providers.map((p) => {
+                const missingKey = p.auth.type === "api-key" && !p.hasKey;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setDraft(p)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent/60",
+                      draft?.id === p.id && "bg-accent font-medium hover:bg-accent",
+                    )}
+                  >
+                    <ProviderTile provider={p} />
+                    <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                    {missingKey ? (
+                      <KeyRoundIcon className="size-4 shrink-0 text-destructive" aria-label="No API key" />
+                    ) : (
+                      <span className="mr-1 size-2 shrink-0 rounded-full bg-emerald-500" aria-label="Ready" />
+                    )}
+                  </button>
+                );
+              })}
               {providers.length === 0 && (
                 <p className="px-2.5 py-2 text-sm text-muted-foreground">No providers yet.</p>
               )}
             </div>
           </ScrollArea>
-          <div className="border-t p-2">
+          <div className="p-3">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="w-full">
+                <Button variant="outline" className="h-10 w-full">
                   <PlusIcon /> Add provider
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-64">
                 {presets.map((preset) => (
                   <DropdownMenuItem key={preset.id} onSelect={() => addFromPreset(preset)}>
+                    <Logo src={providerLogo(preset)} />
                     {preset.name}
                   </DropdownMenuItem>
                 ))}
@@ -180,24 +189,27 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
 
   return (
     <form
-      className="flex flex-col gap-5 p-6"
+      className="flex flex-col gap-5 px-8 py-6"
       onSubmit={(e) => {
         e.preventDefault();
         void save();
       }}
     >
-      <div className="flex items-center gap-2">
-        <h3 className="font-medium">{isNew ? "New provider" : form.name}</h3>
-        <Badge variant="secondary">{FORMAT_LABELS[form.format]}</Badge>
+      <div className="flex items-center gap-3 border-b pb-5">
+        <ProviderTile provider={form} size="lg" />
+        <h3 className="truncate text-base font-semibold">{isNew ? "New provider" : form.name}</h3>
+        <Badge variant="secondary" className="rounded-full px-2.5 font-normal">
+          {FORMAT_LABELS[form.format]}
+        </Badge>
       </div>
 
       <Field label="Name">
-        <Input value={form.name} onChange={(e) => set("name", e.target.value)} />
+        <Input className="h-10" value={form.name} onChange={(e) => set("name", e.target.value)} />
       </Field>
 
       <Field label="API format">
         <Select value={form.format} onValueChange={(v) => set("format", v as WireFormat)}>
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full data-[size=default]:h-10">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -212,6 +224,7 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
 
       <Field label="Base URL" hint="Requests go to {base}/chat/completions or {base}/messages.">
         <Input
+          className="h-10"
           value={form.baseUrl}
           placeholder="https://api.example.com/v1"
           onChange={(e) => set("baseUrl", e.target.value)}
@@ -224,7 +237,7 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
           value={form.auth.type}
           onValueChange={(v) => set("auth", v === "none" ? { type: "none" } : { type: "api-key", header: null })}
         >
-          <SelectTrigger className="w-full">
+          <SelectTrigger className="w-full data-[size=default]:h-10">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -238,6 +251,7 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
         <div className="grid grid-cols-[1fr_10rem] gap-3">
           <Field label="API key">
             <Input
+              className="h-10"
               type="password"
               value={apiKey}
               autoComplete="off"
@@ -247,6 +261,7 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
           </Field>
           <Field label="Header" hint="Blank = default">
             <Input
+              className="h-10"
               value={form.auth.header ?? ""}
               placeholder="default"
               spellCheck={false}
@@ -262,6 +277,7 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
       >
         <Textarea
           rows={3}
+          className="min-h-20 font-mono text-sm"
           value={models}
           spellCheck={false}
           placeholder="gpt-4.1-deployment"
@@ -269,15 +285,21 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
         />
       </Field>
 
-      <div className="flex justify-between gap-2 pt-2">
+      <div className="mt-2 flex items-center justify-between gap-2">
         {!isNew ? (
-          <Button type="button" variant="ghost" className="text-destructive" disabled={busy} onClick={remove}>
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={busy}
+            onClick={remove}
+          >
             <Trash2Icon /> Delete
           </Button>
         ) : (
           <span />
         )}
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" className="h-10 px-5" disabled={busy}>
           {busy ? "Saving…" : "Save & test"}
         </Button>
       </div>
@@ -288,9 +310,29 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <Label>{label}</Label>
+      <Label className="font-semibold">{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
     </div>
+  );
+}
+
+/** The provider's logo in a soft rounded tile, like an app icon. */
+function ProviderTile({
+  provider,
+  size = "md",
+}: {
+  provider: { id: string; name: string; baseUrl: string };
+  size?: "md" | "lg";
+}) {
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-lg border bg-muted/60 text-foreground shadow-xs",
+        size === "lg" ? "size-10 rounded-xl" : "size-8",
+      )}
+    >
+      <Logo src={providerLogo(provider)} className={size === "lg" ? "size-5" : "size-4"} />
+    </span>
   );
 }

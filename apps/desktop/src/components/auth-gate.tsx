@@ -10,7 +10,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (isPending) {
     return (
-      <div className="flex h-svh items-center justify-center bg-background">
+      <div data-tauri-drag-region className="flex h-svh items-center justify-center bg-background">
         <Spinner className="size-6 text-muted-foreground" />
       </div>
     );

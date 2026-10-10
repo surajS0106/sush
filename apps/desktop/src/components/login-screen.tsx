@@ -41,7 +41,7 @@ export function LoginScreen() {
   };
 
   return (
-    <div className="flex h-svh items-center justify-center bg-background p-4">
+    <div data-tauri-drag-region className="flex h-svh items-center justify-center bg-background p-4">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <div className="flex flex-col items-center gap-3 text-center">
           <img src="/sush-mark.png" alt="Sush" className="size-12 rounded-xl" />

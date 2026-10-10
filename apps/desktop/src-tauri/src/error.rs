@@ -15,6 +15,8 @@ pub enum AppError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Connector(#[from] sush_core::mcp::McpError),
+    #[error(transparent)]
+    OAuth(#[from] sush_core::mcp::oauth::OAuthError),
     #[error("{0}")]
     NotFound(String),
     #[error("{0}")]

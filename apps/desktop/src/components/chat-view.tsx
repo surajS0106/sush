@@ -1,18 +1,6 @@
 import { useChat } from "@ai-sdk/react";
 import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
-import {
-  ArrowDownIcon,
-  ArrowUpIcon,
-  CodeIcon,
-  CopyIcon,
-  FileTextIcon,
-  LightbulbIcon,
-  PencilIcon,
-  PenLineIcon,
-  RefreshCcwIcon,
-  SettingsIcon,
-  WrenchIcon,
-} from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, CopyIcon, PencilIcon, RefreshCcwIcon, SettingsIcon, WrenchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -21,8 +9,9 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
-import { usePromptInputController, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
 import { Composer } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
@@ -31,12 +20,25 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LoadingState } from "@/components/ui/loading-state";
+import { SourcesProvider } from "@/components/ui/Sources";
+import { Suggestion } from "@/components/ui/Suggestion";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ProviderModels } from "@/hooks/use-providers";
-import { buildContext, runsWithoutApproval, runTool, toolKind, type ToolResult } from "@/lib/agent";
+import {
+  buildContext,
+  cancelToolCalls,
+  runsWithoutApproval,
+  runTool,
+  toolKind,
+  useRunningToolCalls,
+  type ToolResult,
+} from "@/lib/agent";
+import { ARTIFACT_WRITE, artifactViews, type ArtifactView } from "@/lib/artifacts";
+import { citedSources, stripCitations } from "@/lib/citations";
 import { usePrefs } from "@/lib/library";
 import { modelLogo, providerLogo } from "@/lib/logos";
+import { mentionSegments } from "@/lib/mentions";
 import { parseSlash } from "@/lib/skills";
 import { formatCost, isLocalUrl } from "@/lib/pricing";
 import {
@@ -84,19 +86,21 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   );
 
   const addToolOutputRef = useRef<(toolName: string, toolCallId: string, result: ToolResult) => void>(() => {});
+  // Set by Stop so the stopped calls' results don't send the turn back to the model.
+  const stoppedRef = useRef(false);
   const { messages, sendMessage, status, stop, regenerate, error, clearError, addToolOutput } = useChat<SushUIMessage>({
     id: conversation.id,
     messages: conversation.messages,
     transport,
     // Once every tool call has a result, hand the turn straight back to the model.
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    sendAutomaticallyWhen: (opts) => !stoppedRef.current && lastAssistantMessageIsCompleteWithToolCalls(opts),
     // Memory and pre-approved connector tools run right away; the rest wait in the chat.
     onToolCall: ({ toolCall }) => {
       const { toolName, toolCallId, input } = toolCall;
       if (toolKind(toolName) === "unknown") {
         addToolOutputRef.current(toolName, toolCallId, { errorText: `Unknown tool ${toolName}.` });
       } else if (runsWithoutApproval(toolName)) {
-        void runTool(toolName, input).then((r) => addToolOutputRef.current(toolName, toolCallId, r));
+        void runTool(toolName, input, toolCallId).then((r) => addToolOutputRef.current(toolName, toolCallId, r));
       }
     },
   });
@@ -109,6 +113,16 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
 
   // Persist whenever a turn settles (not on every streamed token).
   const busy = status === "submitted" || status === "streaming";
+  // Between model steps the stream is done but connector calls may still be running.
+  const runningCalls = useRunningToolCalls();
+  const callIds = (messages.at(-1)?.parts ?? []).flatMap((p) => ("toolCallId" in p ? [p.toolCallId] : []));
+  const toolsRunning = callIds.some((id) => runningCalls.has(id));
+  const working = busy || toolsRunning;
+  const stopAll = () => {
+    stoppedRef.current = true;
+    void stop();
+    cancelToolCalls(callIds);
+  };
   useEffect(() => {
     if (!busy && messages !== conversation.messages && messages.length > 0) {
       saveMessages(conversation.id, messages, targetRef.current);
@@ -117,12 +131,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   }, [busy, messages]);
 
   useEffect(() => {
-    setRunning(conversation.id, busy);
+    setRunning(conversation.id, working);
     return () => setRunning(conversation.id, false);
-  }, [conversation.id, busy]);
+  }, [conversation.id, working]);
 
   const submit = (msg: PromptInputMessage) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
+    stoppedRef.current = false;
     clearError();
     void sendMessage({ text: msg.text, files: msg.files });
   };
@@ -131,6 +146,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   // Attachments on the original message are kept.
   const edit = (message: SushUIMessage, text: string) => {
     const files = message.parts.filter((p) => p.type === "file");
+    stoppedRef.current = false;
     clearError();
     void sendMessage({ text, files, messageId: message.id });
   };
@@ -146,9 +162,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   const [dismissedError, setDismissedError] = useState<Error | undefined>();
   const retryWith = (t: ModelTarget) => {
     pickModel(t);
+    stoppedRef.current = false;
     clearError();
     void regenerate();
   };
+
+  // Each artifact card shows its versions up to that call, so the history is built from the whole chat.
+  const artifacts = useMemo(() => artifactViews(messages), [messages]);
 
   const lastAssistantId = messages.findLast((m) => m.role === "assistant")?.id;
   // Waiting for the first token: nothing visible has arrived yet.
@@ -160,9 +180,9 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       catalog={catalog}
       target={target}
       onPickModel={pickModel}
-      status={status}
+      status={toolsRunning && !busy ? "streaming" : status}
       onSubmit={submit}
-      onStop={() => void stop()}
+      onStop={stopAll}
       onOpenSettings={onOpenSettings}
       researchAvailable={researchAvailable}
       messages={messages}
@@ -187,7 +207,14 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
             </div>
           )}
           {composer}
-          {hasProviders && <Suggestions />}
+          {hasProviders && (
+            <Suggestion
+              label="Try asking"
+              className="mt-5 w-full px-2"
+              suggestionSets={SUGGESTIONS}
+              onSelect={(text) => submit({ text, files: [] })}
+            />
+          )}
         </div>
       </div>
     );
@@ -211,6 +238,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               // Only the latest turn's questions can still be answered.
               canAnswer={!busy && message.id === last?.id}
               onToolOutput={(toolName, toolCallId, result) => addToolOutputRef.current(toolName, toolCallId, result)}
+              artifacts={artifacts}
             />
           ))}
           {waiting && (
@@ -278,43 +306,47 @@ function greeting(hour = new Date().getHours()) {
   return "Late night? Let’s think it through.";
 }
 
+// Starter prompts under the empty-state composer. Each is complete, so picking
+// one sends it; the shuffle button cycles between sets.
 const SUGGESTIONS = [
-  { icon: PenLineIcon, label: "Write or edit", prompt: "Help me write " },
-  { icon: LightbulbIcon, label: "Explain a concept", prompt: "Explain " },
-  { icon: FileTextIcon, label: "Summarize text", prompt: "Summarize this:\n\n" },
-  { icon: CodeIcon, label: "Debug some code", prompt: "Help me debug this code:\n\n" },
+  [
+    "Plan a relaxed 3-day trip to Kyoto",
+    "Explain how vaccines train the immune system",
+    "Write a polite follow-up email after an interview",
+    "Give me a 20-minute bodyweight workout",
+  ],
+  [
+    "Draft a README for a small command-line tool",
+    "Teach me SQL joins with a simple example",
+    "Help me name a cozy coffee shop",
+    "Summarise the trade-offs of remote work",
+  ],
+  [
+    "Write a cover letter template I can reuse",
+    "What's the difference between TCP and UDP?",
+    "Make a weekly vegetarian meal plan",
+    "Write a regex that matches ISO dates",
+  ],
 ];
 
-/** Starter prompts under the empty-state composer; picking one prefills it. */
-function Suggestions() {
-  const { textInput } = usePromptInputController();
-  return (
-    <div className="mt-4 flex flex-col items-start px-2">
-      {SUGGESTIONS.map(({ icon: Icon, label, prompt }) => (
-        <button
-          key={label}
-          type="button"
-          className="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          onClick={() => {
-            textInput.setInput(prompt);
-            document.querySelector<HTMLTextAreaElement>("textarea[name=message]")?.focus();
-          }}
-        >
-          <Icon className="size-4" /> {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** A user message; a leading `/skill` shows as a chip. */
+/** A user message; a leading `/skill` and `@connector` mentions show as chips. */
 function UserText({ text }: { text: string }) {
   const slash = parseSlash(text);
-  if (!slash) return <p className="whitespace-pre-wrap">{text}</p>;
+  const rest = slash ? slash.args : text;
   return (
     <p className="whitespace-pre-wrap">
-      <span className="mr-1.5 rounded-md bg-brand/10 px-1.5 py-0.5 font-medium text-brand">/{slash.command.name}</span>
-      {slash.args}
+      {slash && (
+        <span className="mr-1.5 rounded-md bg-brand/10 px-1.5 py-0.5 font-medium text-brand">/{slash.command.name}</span>
+      )}
+      {mentionSegments(rest).map((s, i) =>
+        s.connector ? (
+          <span key={i} className="rounded-md bg-brand/10 px-1 py-0.5 font-medium text-brand">
+            {s.text}
+          </span>
+        ) : (
+          s.text
+        ),
+      )}
     </p>
   );
 }
@@ -331,6 +363,7 @@ interface ChatMessageProps {
   onEdit: (text: string) => void;
   canAnswer: boolean;
   onToolOutput: (toolName: string, toolCallId: string, result: ToolResult) => void;
+  artifacts: Map<string, ArtifactView>;
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -395,13 +428,18 @@ function ChatMessage({
   onEdit,
   canAnswer,
   onToolOutput,
+  artifacts,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
+  // Web pages the reply cites inline, numbered by first citation.
+  const sources = useMemo(() => (message.role === "assistant" ? citedSources(message) : []), [message]);
+  const sourceKey = sources.map((s) => s.url).join("\n");
+  // Stable while the cited pages stay the same, so streamed text doesn't re-create the renderers.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const markdownComponents = useMemo(() => citationComponents(sources), [sourceKey]);
   // Failed or aborted turns can leave an assistant message with no content.
   if (!hasVisibleContent(message)) return null;
-  const text = message.parts
-    .flatMap((p) => (p.type === "text" ? [p.text] : []))
-    .join("\n\n");
+  const text = stripCitations(message.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n\n"));
 
   if (message.role === "user" && editing) {
     return (
@@ -421,87 +459,95 @@ function ChatMessage({
   const cost = formatCost(model, inputTokens, outputTokens, local);
 
   return (
-    <Message from={message.role}>
-      {message.parts.map((part, i) => {
-        const key = `${message.id}-${i}`;
-        switch (part.type) {
-          case "reasoning":
-            // Chats saved before thinking summaries were requested can hold empty ones.
-            if (!part.text) return null;
-            return (
-              <Reasoning key={key} isStreaming={streaming && part.state === "streaming"}>
-                <ReasoningTrigger />
-                <ReasoningContent>{part.text}</ReasoningContent>
-              </Reasoning>
-            );
-          case "text":
-            return (
-              <MessageContent key={key}>
-                {message.role === "assistant" ? (
-                  <MessageResponse isAnimating={streaming}>{part.text}</MessageResponse>
-                ) : (
-                  <UserText text={part.text} />
-                )}
-              </MessageContent>
-            );
-          case "dynamic-tool":
-            return (
-              <ToolPart
-                key={key}
-                part={part}
-                canAnswer={canAnswer}
-                onResult={(result) => onToolOutput(part.toolName, part.toolCallId, result)}
-              />
-            );
-          case "data-web":
-            return <WebActivityPart key={key} activity={part.data} />;
-          case "file":
-            return part.mediaType.startsWith("image/") ? (
-              <img
-                key={key}
-                src={part.url}
-                alt={part.filename ?? "attachment"}
-                className="max-h-64 w-fit rounded-lg border object-contain"
-              />
-            ) : (
-              <div key={key} className="flex justify-end">
-                <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
-              </div>
-            );
-          default:
-            return null;
-        }
-      })}
-      {message.role === "user" && text && (
-        <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-          <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
-            <CopyIcon className="size-3.5" />
-          </MessageAction>
-          {canEdit && (
-            <MessageAction tooltip="Edit" onClick={() => setEditing(true)}>
-              <PencilIcon className="size-3.5" />
-            </MessageAction>
-          )}
-        </MessageActions>
-      )}
-      {message.role === "assistant" && !streaming && text && (
-        <div className="flex items-center gap-2">
-          <MessageActions>
+    <SourcesProvider defaultExpanded={false}>
+      <Message from={message.role}>
+        {message.parts.map((part, i) => {
+          const key = `${message.id}-${i}`;
+          switch (part.type) {
+            case "reasoning":
+              // Chats saved before thinking summaries were requested can hold empty ones.
+              if (!part.text) return null;
+              return (
+                <Reasoning key={key} isStreaming={streaming && part.state === "streaming"}>
+                  <ReasoningTrigger />
+                  <ReasoningContent>{part.text}</ReasoningContent>
+                </Reasoning>
+              );
+            case "text":
+              return (
+                <MessageContent key={key}>
+                  {message.role === "assistant" ? (
+                    <MessageResponse isAnimating={streaming} components={markdownComponents}>
+                      {part.text}
+                    </MessageResponse>
+                  ) : (
+                    <UserText text={part.text} />
+                  )}
+                </MessageContent>
+              );
+            case "dynamic-tool":
+              if (part.toolName === ARTIFACT_WRITE) {
+                return <ArtifactPart key={key} part={part} view={artifacts.get(part.toolCallId)} />;
+              }
+              return (
+                <ToolPart
+                  key={key}
+                  part={part}
+                  canAnswer={canAnswer}
+                  onResult={(result) => onToolOutput(part.toolName, part.toolCallId, result)}
+                />
+              );
+            case "data-web":
+              return <WebActivityPart key={key} activity={part.data} />;
+            case "file":
+              return part.mediaType.startsWith("image/") ? (
+                <img
+                  key={key}
+                  src={part.url}
+                  alt={part.filename ?? "attachment"}
+                  className="max-h-64 w-fit rounded-lg border object-contain"
+                />
+              ) : (
+                <div key={key} className="flex justify-end">
+                  <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
+                </div>
+              );
+            default:
+              return null;
+          }
+        })}
+        {sources.length > 0 && <CitedSourceList sources={sources} />}
+        {message.role === "user" && text && (
+          <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
               <CopyIcon className="size-3.5" />
             </MessageAction>
-            {canRegenerate && (
-              <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
-                <RefreshCcwIcon className="size-3.5" />
+            {canEdit && (
+              <MessageAction tooltip="Edit" onClick={() => setEditing(true)}>
+                <PencilIcon className="size-3.5" />
               </MessageAction>
             )}
           </MessageActions>
-          {(model || outputTokens !== undefined) && (
-            <MessageStats model={model} logo={logo} inputTokens={inputTokens} outputTokens={outputTokens} cost={cost} />
-          )}
-        </div>
-      )}
-    </Message>
+        )}
+        {message.role === "assistant" && !streaming && text && (
+          <div className="flex items-center gap-2">
+            <MessageActions>
+              <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
+                <CopyIcon className="size-3.5" />
+              </MessageAction>
+              {canRegenerate && (
+                <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
+                  <RefreshCcwIcon className="size-3.5" />
+                </MessageAction>
+              )}
+            </MessageActions>
+            {(model || outputTokens !== undefined) && (
+              <MessageStats model={model} logo={logo} inputTokens={inputTokens} outputTokens={outputTokens} cost={cost} />
+            )}
+          </div>
+        )}
+      </Message>
+    </SourcesProvider>
   );
 }
 

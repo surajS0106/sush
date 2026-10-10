@@ -8,16 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
+  BUILTIN,
   canTranscribe,
   DEFAULT_OLLAMA_MODEL,
   defaultApi,
-  resolveSpeechTarget,
   setSpeechSettings,
   useSpeechSettings,
 } from "@/lib/speech";
 import { api, type ModelInfo, type ProviderView, type TranscribeApi } from "@/lib/tauri";
 
-const PROVIDER_HINT = "Claude models don't accept audio, so Anthropic providers can't transcribe.";
+const PROVIDER_HINT = "Built-in Whisper runs offline. Claude models don't accept audio, so Anthropic providers can't transcribe.";
 const API_HINT = "Ollama audio chat for local Gemma 4. The transcription endpoint for OpenAI, Azure Foundry and Groq.";
 
 const modelHint = (api: TranscribeApi) =>
@@ -28,35 +28,33 @@ const modelHint = (api: TranscribeApi) =>
 /** Form state for the speech target, written straight to the speech settings. */
 function useSpeechForm(providers: ProviderView[]) {
   const settings = useSpeechSettings();
-  // Until the user picks, show the fallback (local Ollama) as the current choice.
-  const fallback = settings.providerId ? null : resolveSpeechTarget(settings, providers);
-  const providerId = settings.providerId ?? fallback?.provider.id ?? "";
-  const model = fallback?.model ?? settings.model;
-  const currentApi = fallback?.api ?? settings.api;
+  const providerId = settings.providerId ?? BUILTIN;
+  const builtin = providerId === BUILTIN;
+  const { model, api: currentApi } = settings;
   const [models, setModels] = useState<ModelInfo[]>([]);
 
   useEffect(() => {
     setModels([]);
-    if (!providerId) return;
+    if (builtin) return;
     let live = true;
     api.listModels(providerId).then((m) => live && setModels(m)).catch(() => {});
     return () => {
       live = false;
     };
-  }, [providerId]);
+  }, [providerId, builtin]);
 
   const pickProvider = (id: string) => {
+    if (id === BUILTIN) return setSpeechSettings({ providerId: BUILTIN });
     const p = providers.find((x) => x.id === id);
     if (!p) return;
     const apiKind = defaultApi(p);
     setSpeechSettings({ providerId: id, api: apiKind, model: apiKind === "ollama-chat" ? DEFAULT_OLLAMA_MODEL : "" });
   };
 
-  // Editing any field pins the shown (possibly fallback) choice so the edit sticks.
   const update = (patch: { model?: string; api?: TranscribeApi }) =>
     setSpeechSettings({ providerId, model, api: currentApi, ...patch });
 
-  return { providerId, model, api: currentApi, models, pickProvider, update };
+  return { providerId, builtin, model, api: currentApi, models, pickProvider, update };
 }
 
 type Form = ReturnType<typeof useSpeechForm>;
@@ -68,6 +66,9 @@ function ProviderSelect({ form, providers }: { form: Form; providers: ProviderVi
         <SelectValue placeholder="Choose a provider" />
       </SelectTrigger>
       <SelectContent align="end">
+        <SelectItem value={BUILTIN}>
+          Built-in Whisper<span className="text-muted-foreground"> · 142 MB, offline</span>
+        </SelectItem>
         {providers.map((p) => (
           <SelectItem key={p.id} value={p.id} disabled={!canTranscribe(p)}>
             {p.name}
@@ -126,19 +127,23 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
         <Setting title="Provider" description={`Where your recorded speech is sent to be transcribed. ${PROVIDER_HINT}`}>
           <ProviderSelect form={form} providers={providers} />
         </Setting>
-        <Setting title="Model" description={modelHint(form.api)}>
-          <ModelInput form={form} />
-        </Setting>
-        <Setting title="API" description={API_HINT}>
-          <ApiPicker form={form} />
-        </Setting>
-        <Setting title="Shortcut" description="Press once to start recording, again to transcribe. Esc cancels.">
-          <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">Ctrl+Shift+Space</kbd>
+        {!form.builtin && (
+          <>
+            <Setting title="Model" description={modelHint(form.api)}>
+              <ModelInput form={form} />
+            </Setting>
+            <Setting title="API" description={API_HINT}>
+              <ApiPicker form={form} />
+            </Setting>
+          </>
+        )}
+        <Setting title="Shortcut" description="Press once to start dictating, again to finish. Local models transcribe live as you speak. Esc cancels.">
+          <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">Ctrl+D</kbd>
         </Setting>
       </Group>
-      {providers.length > 0 && !form.providerId && (
+      {form.builtin && (
         <p className="text-sm text-muted-foreground">
-          No speech model is set up. Add Ollama under Providers for local dictation, or pick a provider above.
+          Whisper base.en runs on this computer. It downloads once (142 MB) the first time you dictate.
         </p>
       )}
     </Page>
@@ -163,12 +168,16 @@ export function SpeechFields({ providers }: { providers: ProviderView[] }) {
       <Field label="Provider" hint={PROVIDER_HINT}>
         <ProviderSelect form={form} providers={providers} />
       </Field>
-      <Field label="Model" hint={modelHint(form.api)}>
-        <ModelInput form={form} />
-      </Field>
-      <Field label="API">
-        <ApiPicker form={form} />
-      </Field>
+      {!form.builtin && (
+        <>
+          <Field label="Model" hint={modelHint(form.api)}>
+            <ModelInput form={form} />
+          </Field>
+          <Field label="API">
+            <ApiPicker form={form} />
+          </Field>
+        </>
+      )}
     </div>
   );
 }

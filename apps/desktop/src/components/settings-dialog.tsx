@@ -21,12 +21,8 @@ import {
 import { useTheme } from "next-themes";
 import { useState } from "react";
 
-import {
-  ConnectorsSection,
-  DesignSection,
-  PluginsSection,
-  SkillsSection,
-} from "@/components/customize-sections";
+import { ConnectorsSection } from "@/components/connectors-section";
+import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";

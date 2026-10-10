@@ -162,10 +162,16 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
                 <span className="flex-1 truncate">{c.name}</span>
                 {c.enabled && (
                   <span
-                    title={s?.state === "error" ? s.error : s?.state}
+                    title={s?.state === "error" ? s.error : s?.state === "needs-auth" ? "Sign in under Manage connectors" : s?.state}
                     className={cn(
                       "size-1.5 shrink-0 rounded-full",
-                      s?.state === "ready" ? "bg-emerald-500" : s?.state === "error" ? "bg-destructive" : "bg-muted-foreground/40",
+                      s?.state === "ready"
+                        ? "bg-emerald-500"
+                        : s?.state === "error"
+                          ? "bg-destructive"
+                          : s?.state === "needs-auth"
+                            ? "bg-amber-500"
+                            : "bg-muted-foreground/40",
                     )}
                   />
                 )}

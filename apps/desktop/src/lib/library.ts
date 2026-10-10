@@ -5,7 +5,7 @@
 import { useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
-import { api, errorMessage, type McpTool, type Plugin, type ServerCommand } from "@/lib/tauri";
+import { api, errorMessage, type McpTool, type Plugin, type ServerCommand, type ServerSpec } from "@/lib/tauri";
 
 export interface Skill {
   id: string;
@@ -28,9 +28,11 @@ export interface DesignSystem {
 export interface Connector {
   id: string;
   name: string;
-  command: ServerCommand;
+  server: ServerSpec;
   enabled: boolean;
   pluginId?: string;
+  /** Set when added from Discover; picks the logo and description (connector-catalog.ts). */
+  catalogId?: string;
 }
 
 export interface InstalledPlugin {
@@ -42,6 +44,9 @@ export interface InstalledPlugin {
   enabled: boolean;
 }
 
+/** Manual asks before each connector tool; Auto runs them and asks only when one looks unsafe. */
+export type PermissionMode = "manual" | "auto";
+
 export interface Prefs {
   /** Generate memory from chats: memory goes in the prompt and the model can edit it. */
   memory: boolean;
@@ -51,6 +56,7 @@ export interface Prefs {
   memorySensitive: boolean;
   research: boolean;
   designSystemId: string | null;
+  permissionMode: PermissionMode;
 }
 
 const DEFAULT_PREFS: Prefs = {
@@ -59,11 +65,19 @@ const DEFAULT_PREFS: Prefs = {
   memorySensitive: false,
   research: false,
   designSystemId: null,
+  permissionMode: "manual",
 };
 
 const skills = createStore<Skill[]>("sush.skills", []);
 const designSystems = createStore<DesignSystem[]>("sush.designSystems", []);
 const connectors = createStore<Connector[]>("sush.connectors", []);
+// Connectors saved before remote ones existed kept the command at the top level.
+connectors.set((all) =>
+  all.map((c) => {
+    const { command, ...rest } = c as Connector & { command?: ServerCommand };
+    return command && !rest.server ? { ...rest, server: { type: "stdio", ...command } } : c;
+  }),
+);
 const plugins = createStore<InstalledPlugin[]>("sush.plugins", []);
 const prefs = createStore<Prefs>("sush.prefs", DEFAULT_PREFS);
 // Saved prefs predate newer fields; fill them in.
@@ -74,6 +88,9 @@ const allowedTools = createStore<string[]>("sush.allowedTools", []);
 export type ConnectorStatus =
   | { state: "connecting" }
   | { state: "ready"; tools: McpTool[]; serverName?: string | null }
+  | { state: "needs-auth" }
+  /** Waiting for the user to finish signing in in the browser. */
+  | { state: "authorizing" }
   | { state: "error"; error: string };
 const connectorStatus = createStore<Record<string, ConnectorStatus>>("sush.connectorStatus", {}, false);
 
@@ -150,6 +167,9 @@ export function saveConnector(c: Omit<Connector, "id"> & { id?: string }): Conne
 }
 export function deleteConnector(id: string) {
   connectors.set((all) => all.filter((c) => c.id !== id));
+  setStatus(id, null);
+  void api.connectorCancelAuthorize(id).catch(() => {});
+  void api.connectorForget(id).catch(() => {});
   void syncConnectors();
 }
 export function toggleConnector(id: string, enabled: boolean) {
@@ -177,16 +197,45 @@ export async function syncConnectors() {
   await Promise.all(active.map((c) => connect(c)));
 }
 
-/** (Re)connect one connector. The Rust side reuses a running process if the command is unchanged. */
+/** (Re)connect one connector. The Rust side reuses a running client if the server is unchanged. */
 export async function connect(c: Connector) {
-  if (connectorStatus.get()[c.id]?.state === "connecting") return;
+  const current = connectorStatus.get()[c.id]?.state;
+  if (current === "connecting" || current === "authorizing") return;
   setStatus(c.id, { state: "connecting" });
   try {
-    const info = await api.connectorConnect(c.id, c.command);
-    if (activeConnectors().some((x) => x.id === c.id)) setStatus(c.id, { state: "ready", ...info });
+    const outcome = await api.connectorConnect(c.id, c.server);
+    // A sign-in started meanwhile (adding from Discover does both) owns the status now.
+    if (connectorStatus.get()[c.id]?.state === "authorizing") return;
+    if (activeConnectors().some((x) => x.id === c.id)) setStatus(c.id, outcome);
   } catch (e) {
+    if (connectorStatus.get()[c.id]?.state === "authorizing") return;
     setStatus(c.id, { state: "error", error: errorMessage(e) });
   }
+}
+
+/** Sign a remote connector in through the browser, then connect it. */
+export async function signIn(c: Connector) {
+  if (c.server.type !== "http") return;
+  setStatus(c.id, { state: "authorizing" });
+  try {
+    await api.connectorAuthorize(c.id, c.server.url, c.server.oauthClientId);
+  } catch (e) {
+    const error = errorMessage(e);
+    // Cancelling isn't an error worth showing; go back to "Sign in".
+    setStatus(c.id, error === "Sign-in cancelled" ? { state: "needs-auth" } : { state: "error", error });
+    return;
+  }
+  setStatus(c.id, null);
+  if (c.enabled) await connect(c);
+}
+
+export const cancelSignIn = (id: string) => void api.connectorCancelAuthorize(id).catch(() => {});
+
+/** Forget a remote connector's credentials; it'll ask to sign in again. */
+export async function signOut(c: Connector) {
+  await api.connectorForget(c.id);
+  setStatus(c.id, null);
+  if (c.enabled) await connect(c);
 }
 
 export const isToolAllowed = (connectorId: string, tool: string) => allowedTools.get().includes(`${connectorId}/${tool}`);
@@ -239,7 +288,7 @@ export async function installPlugin(dir: string): Promise<InstalledPlugin> {
     ...p.connectors.map(({ name, ...command }) => ({
       id: `${id}:connector:${name}`,
       name,
-      command,
+      server: { type: "stdio" as const, ...command },
       enabled: connWasEnabled.get(name) ?? true,
       pluginId: id,
     })),
