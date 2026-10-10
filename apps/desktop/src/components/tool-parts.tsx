@@ -7,7 +7,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
 import { SkillSaveCard, ToolApprovalCard, ToolResultRow } from "@/components/tool-approval-card";
+import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
+import { PullRequestCard } from "@/components/ui/PullRequestCard";
 import {
   CHATS_SEARCH,
   findConnectorTool,
@@ -19,6 +21,8 @@ import {
   type ToolResult,
 } from "@/lib/agent";
 import { parseAskUserInput, type AskUserOutput } from "@/lib/ask-user";
+import { connectorIcon } from "@/lib/connector-catalog";
+import { parseCommits, parsePullRequest } from "@/lib/github";
 import { allowTool } from "@/lib/library";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
@@ -217,9 +221,10 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
   const [connectorName, toolName] = found
     ? [found.connector.name, found.tool]
     : [part.toolName.split("__")[0], part.toolName.split("__").slice(1).join("__") || part.toolName];
+  const icon = found ? connectorIcon(found.connector) : connectorIcon({ id: part.toolName.split("__")[0] });
   const label = (
     <>
-      <PlugIcon className="size-4 shrink-0" />
+      <ConnectorIcon src={icon} />
       <span>
         {connectorName} · {toolName}
       </span>
@@ -229,8 +234,17 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
   switch (part.state) {
     case "input-streaming":
       return <LoadingState label={`Preparing ${toolName}`} />;
-    case "output-available":
-      return <ToolResultRow label={label} detail={String(part.output ?? "")} />;
+    case "output-available": {
+      const pr = parsePullRequest(part.output, part.input);
+      const commits = pr ? null : parseCommits(part.output, part.input);
+      return (
+        <div className="space-y-3">
+          <ToolResultRow label={label} detail={String(part.output ?? "")} />
+          {pr && <PullRequestCard pr={pr} />}
+          {commits && <CommitsCard set={commits} />}
+        </div>
+      );
+    }
     case "output-error":
       return (
         <ToolResultRow
@@ -267,6 +281,13 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
         />
       );
   }
+}
+
+/** The connector's logo in the surrounding text colour, or a plug when it has none. */
+function ConnectorIcon({ src }: { src?: string }) {
+  if (!src) return <PlugIcon className="size-4 shrink-0" />;
+  const mask = `url("${src}") center / contain no-repeat`;
+  return <span aria-hidden className="size-4 shrink-0 bg-current" style={{ mask, WebkitMask: mask }} />;
 }
 
 // --- web research --------------------------------------------------------------------

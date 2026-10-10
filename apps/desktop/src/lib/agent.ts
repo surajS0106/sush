@@ -167,6 +167,15 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     );
   }
 
+  const connectors = connectorTools();
+  if (connectors.length > 0) {
+    sections.push(
+      "Pull requests and commits returned by connector tools are shown to the user as cards right under " +
+        "the tool call, with their title, message, author, sha, branches and diff stats. Don't repeat those " +
+        "details in tables or lists; answer the question or add what the card doesn't show.",
+    );
+  }
+
   const tools: ToolSpec[] = [
     ...(askUser ? [askUserTool] : []),
     ...(skills ? [skillTool] : []),
@@ -174,7 +183,7 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     artifactTool,
     ...(prefs.memory ? memoryTools : []),
     ...(prefs.referenceChats ? chatTools : []),
-    ...connectorTools().map((t) => t.spec),
+    ...connectors.map((t) => t.spec),
   ];
 
   return { system: sections.length > 0 ? sections.join("\n\n---\n\n") : undefined, tools, research };
