@@ -1,0 +1,16 @@
+{
+  "name": "sush",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev": "concurrently -n auth,ollama,app -c blue,magenta,green \"bun run dev:server\" \"bun run dev:ollama\" \"bun run dev:app\"",
+    "dev:app": "bun --filter desktop tauri dev",
+    "dev:server": "bun --filter server dev",
+    "dev:ollama": "ollama ps || ollama serve",
+    "build": "bun --filter server compile && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json",
+    "typecheck": "bun --filter '*' typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}

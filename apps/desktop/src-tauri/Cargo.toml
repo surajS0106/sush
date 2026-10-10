@@ -1,0 +1,30 @@
+[package]
+name = "sush"
+description = "Sush desktop app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# Desktop only for now. Mobile targets would need "staticlib" (iOS) and "cdylib" (Android) here.
+name = "sush_lib"
+crate-type = ["rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sush-core.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+base64 = "0.22"
+ignore = "0.4"
+futures.workspace = true
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true

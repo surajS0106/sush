@@ -1,0 +1,49 @@
+// Account auth against the Sush auth server (apps/server, better-auth).
+//
+// The webview is cross-origin to that server, so instead of cookies the
+// server's bearer plugin returns a session token in `set-auth-token`; we keep
+// it in localStorage and send it as `Authorization: Bearer` on every call.
+
+import { createAuthClient } from "better-auth/react";
+
+const TOKEN_KEY = "sush.authToken";
+
+function readToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeToken(token: string | null) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch (e) {
+    console.warn("Could not persist auth token", e);
+  }
+}
+
+export const authClient = createAuthClient({
+  baseURL: import.meta.env.VITE_AUTH_URL ?? "http://localhost:3000",
+  fetchOptions: {
+    auth: { type: "Bearer", token: readToken },
+    onSuccess: (ctx) => {
+      const token = ctx.response.headers.get("set-auth-token");
+      if (token) writeToken(token);
+    },
+  },
+});
+
+export const useSession = authClient.useSession;
+
+export async function signOut() {
+  try {
+    await authClient.signOut();
+  } finally {
+    // Drop the local token even if the server is unreachable.
+    writeToken(null);
+    await authClient.getSession();
+  }
+}

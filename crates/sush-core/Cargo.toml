@@ -1,0 +1,22 @@
+[package]
+name = "sush-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Provider abstraction, message model and streaming for Sush"
+
+[dependencies]
+async-stream = "0.3"
+async-trait.workspace = true
+base64 = "0.22"
+bytes.workspace = true
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["process", "io-util", "rt"] }
+
+[dev-dependencies]
+anyhow.workspace = true
+tokio.workspace = true
