@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { openSettings } from "@/lib/library";
 import {
   chunkSeconds,
   resolveSpeechTarget,
@@ -14,6 +13,13 @@ import {
 import { api, errorMessage, type ProviderView } from "@/lib/tauri";
 
 export type DictationStatus = "idle" | "recording" | "transcribing";
+
+/** Why dictation stopped short. `audio` is what's still untranscribed, kept so
+ *  the user can switch model and retry without speaking again. */
+export interface DictationFailure {
+  message: string;
+  audio: Float32Array | null;
+}
 
 /** Shorter than this is a stray key press, not speech. */
 const MIN_SECONDS = 0.3;
@@ -32,6 +38,7 @@ function append(value: string, text: string) {
  */
 export function useDictation(value: string, setValue: (v: string) => void, providers: ProviderView[]) {
   const [status, setStatus] = useState<DictationStatus>("idle");
+  const [failure, setFailure] = useState<DictationFailure | null>(null);
   const settings = useSpeechSettings();
   const recording = useRef<Recording | null>(null);
   const starting = useRef(false);
@@ -41,9 +48,7 @@ export function useDictation(value: string, setValue: (v: string) => void, provi
   const start = useCallback(async () => {
     if (recording.current || starting.current) return;
     if (!resolveSpeechTarget(settings, providers)) {
-      toast.error("Pick a speech model to dictate.", {
-        action: { label: "Open settings", onClick: () => openSettings({ section: "speech" }) },
-      });
+      setFailure({ message: "No speech model is set up yet. Choose one to start dictating.", audio: null });
       return;
     }
     starting.current = true;
@@ -51,6 +56,7 @@ export function useDictation(value: string, setValue: (v: string) => void, provi
       recording.current = await startRecording();
       setStatus("recording");
     } catch (e) {
+      // A microphone problem, not a model one, so switching models wouldn't help.
       toast.error(
         e instanceof DOMException && e.name === "NotAllowedError"
           ? "Microphone access is blocked. Allow it in Settings › Privacy & security › Microphone."
@@ -67,44 +73,66 @@ export function useDictation(value: string, setValue: (v: string) => void, provi
     setStatus((s) => (s === "recording" ? "idle" : s));
   }, []);
 
+  const transcribe = useCallback(
+    async (samples: Float32Array) => {
+      const target = resolveSpeechTarget(settings, providers);
+      if (!target) {
+        setFailure({ message: "No speech model is set up yet. Choose one to transcribe your recording.", audio: samples });
+        return;
+      }
+      setStatus("transcribing");
+      const size = chunkSeconds(target.api) * SAMPLE_RATE;
+      let i = 0;
+      try {
+        for (; i < samples.length; i += size) {
+          const text = await api.transcribe(
+            target.provider.id,
+            target.model,
+            target.api,
+            wavBase64(samples.subarray(i, i + size)),
+          );
+          // Update the ref too: the next chunk may land before React re-renders.
+          valueRef.current = append(valueRef.current, text);
+          setValue(valueRef.current);
+        }
+      } catch (e) {
+        setFailure({ message: errorMessage(e), audio: samples.subarray(i) });
+      } finally {
+        setStatus("idle");
+      }
+    },
+    [settings, providers, setValue],
+  );
+
   const stop = useCallback(async () => {
     const rec = recording.current;
     if (!rec) return;
     recording.current = null;
     const samples = rec.stop();
-    const target = resolveSpeechTarget(settings, providers);
-    if (!target || samples.length < MIN_SECONDS * SAMPLE_RATE) {
+    if (samples.length < MIN_SECONDS * SAMPLE_RATE) {
       setStatus("idle");
       return;
     }
-    setStatus("transcribing");
-    try {
-      const size = chunkSeconds(target.api) * SAMPLE_RATE;
-      for (let i = 0; i < samples.length; i += size) {
-        const text = await api.transcribe(
-          target.provider.id,
-          target.model,
-          target.api,
-          wavBase64(samples.subarray(i, i + size)),
-        );
-        // Update the ref too: the next chunk may land before React re-renders.
-        valueRef.current = append(valueRef.current, text);
-        setValue(valueRef.current);
-      }
-    } catch (e) {
-      toast.error(`Dictation failed: ${errorMessage(e)}`);
-    } finally {
-      setStatus("idle");
-    }
-  }, [settings, providers, setValue]);
+    await transcribe(samples);
+  }, [transcribe]);
 
   const toggle = useCallback(() => {
     if (recording.current) void stop();
     else if (status === "idle") void start();
   }, [start, stop, status]);
 
+  /** Retry with the current speech settings: re-send the kept audio, or start recording if there was none. */
+  const retry = useCallback(() => {
+    const audio = failure?.audio;
+    setFailure(null);
+    if (audio) void transcribe(audio);
+    else void start();
+  }, [failure, transcribe, start]);
+
+  const dismiss = useCallback(() => setFailure(null), []);
+
   // Don't leave the microphone open when the composer goes away.
   useEffect(() => () => recording.current?.cancel(), []);
 
-  return { status, toggle, stop, cancel };
+  return { status, toggle, stop, cancel, failure, retry, dismiss };
 }

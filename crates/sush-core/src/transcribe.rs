@@ -48,7 +48,7 @@ pub async fn transcribe(
                 .text("model", model.to_string())
                 .text("response_format", "json")
                 .part("file", file);
-            let resp = ep.apply(http.post(ep.url("audio/transcriptions"))).multipart(form).send().await?;
+            let resp = ep.apply(http.post(ep.url("audio/transcriptions"))).multipart(form).send().await.map_err(ProviderError::sending)?;
             let body: serde_json::Value = check_status("transcription", resp).await?.json().await?;
             body.get("text")
                 .and_then(|t| t.as_str())
@@ -66,7 +66,7 @@ pub async fn transcribe(
                 "messages": [{ "role": "user", "content": PROMPT, "images": [audio] }],
             });
             let url = format!("{}/api/chat", ollama_root(&ep.base_url));
-            let resp = ep.apply(http.post(url)).json(&body).send().await?;
+            let resp = ep.apply(http.post(url)).json(&body).send().await.map_err(ProviderError::sending)?;
             let body: serde_json::Value = check_status("Ollama", resp).await?.json().await?;
             body.pointer("/message/content")
                 .and_then(|t| t.as_str())

@@ -13,6 +13,7 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input";
 import { ComposerMenu } from "@/components/composer-menu";
+import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { hasLeadingCommand, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } from "@/components/slash-menu";
 import { InputGroupAddon } from "@/components/ui/input-group";
@@ -295,6 +296,12 @@ export function Composer({
         <kbd className="rounded border px-1 py-0.5 font-sans">/</kbd> for skills ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">Ctrl+Shift+Space</kbd> to dictate
       </p>
+      <DictationErrorDialog
+        failure={dictation.failure}
+        providers={speechProviders}
+        onRetry={dictation.retry}
+        onDismiss={dictation.dismiss}
+      />
     </div>
   );
 }

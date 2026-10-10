@@ -17,6 +17,20 @@ pub enum ProviderError {
 
     #[error("invalid configuration: {0}")]
     Config(String),
+
+    /// Nothing is listening at the provider's address, e.g. Ollama isn't running.
+    #[error("couldn't reach {0}. Is the server running?")]
+    Unreachable(String),
+}
+
+impl ProviderError {
+    /// Like `From<reqwest::Error>`, but names the server when the connection itself failed.
+    pub(crate) fn sending(e: reqwest::Error) -> Self {
+        match e.url() {
+            Some(url) if e.is_connect() => Self::Unreachable(format!("{}://{}", url.scheme(), url.authority())),
+            _ => Self::Network(e),
+        }
+    }
 }
 
 impl From<serde_json::Error> for ProviderError {

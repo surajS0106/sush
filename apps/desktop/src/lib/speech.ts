@@ -39,9 +39,12 @@ export interface SpeechTarget {
 
 /** The configured speech target, falling back to local Ollama when none is picked. */
 export function resolveSpeechTarget(settings: SpeechSettings, providers: ProviderView[]): SpeechTarget | null {
-  const picked = settings.providerId ? providers.find((p) => p.id === settings.providerId) : undefined;
-  if (picked && canTranscribe(picked) && settings.model.trim()) {
-    return { provider: picked, model: settings.model.trim(), api: settings.api };
+  if (settings.providerId) {
+    // An explicit choice never silently falls back to something else.
+    const picked = providers.find((p) => p.id === settings.providerId);
+    return picked && canTranscribe(picked) && settings.model.trim()
+      ? { provider: picked, model: settings.model.trim(), api: settings.api }
+      : null;
   }
   const ollama = providers.find(isOllama);
   return ollama ? { provider: ollama, model: DEFAULT_OLLAMA_MODEL, api: "ollama-chat" } : null;
