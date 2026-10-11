@@ -3,6 +3,8 @@ mod auth_server;
 mod commands;
 mod connector_auth;
 mod connectors;
+#[cfg(target_os = "macos")]
+mod dock_icon;
 mod error;
 mod library;
 mod runs;
@@ -37,6 +39,12 @@ pub fn run() {
                 app.manage(server);
             }
             Ok(())
+        })
+        .on_window_event(|_window, _event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::WindowEvent::ThemeChanged(theme) = _event {
+                dock_icon::apply(*theme);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_presets,
@@ -77,6 +85,13 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building Sush")
         .run(|_app, _event| {
+            // After Ready: in dev, Tauri sets its own Dock icon while handling it.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Ready = _event {
+                if let Some(window) = _app.get_webview_window("main") {
+                    dock_icon::apply(window.theme().unwrap_or(tauri::Theme::Light));
+                }
+            }
             #[cfg(not(debug_assertions))]
             if let tauri::RunEvent::Exit = _event {
                 _app.state::<auth_server::AuthServer>().stop();

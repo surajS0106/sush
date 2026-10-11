@@ -32,3 +32,8 @@ tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-util.workspace = true
 url = "2"
 whisper-rs = "0.16"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSData", "NSProcessInfo", "NSString"] }

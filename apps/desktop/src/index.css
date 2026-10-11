@@ -56,77 +56,80 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
+    /* Neutrals carry a faint tint of the logo teal (hue ~190-205). */
+    --background: oklch(0.995 0.003 190);
+    --foreground: oklch(0.17 0.02 205);
+    --card: oklch(0.995 0.003 190);
+    --card-foreground: oklch(0.17 0.02 205);
+    --popover: oklch(0.995 0.003 190);
+    --popover-foreground: oklch(0.17 0.02 205);
     /* Primary follows the accent color (--brand, set per data-accent below). */
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.965 0.008 190);
+    --secondary-foreground: oklch(0.22 0.02 205);
+    --muted: oklch(0.965 0.008 190);
+    --muted-foreground: oklch(0.52 0.02 200);
+    --accent: oklch(0.965 0.008 190);
+    --accent-foreground: oklch(0.22 0.02 205);
     --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --border: oklch(0.92 0.01 190);
+    --input: oklch(0.92 0.01 190);
+    --ring: oklch(0.72 0.08 185);
+    /* Logo teal in tints and shades, with the coral. */
+    --chart-1: oklch(0.7 0.12 182);
+    --chart-2: oklch(0.65 0.21 25);
+    --chart-3: oklch(0.5 0.09 190);
+    --chart-4: oklch(0.82 0.08 180);
+    --chart-5: oklch(0.38 0.06 205);
     --radius: 0.625rem;
-    --brand: oklch(0.76 0.13 52);
+    --brand: oklch(0.58 0.105 186);
     --brand-foreground: oklch(1 0 0);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
+    --sidebar: oklch(0.982 0.006 190);
+    --sidebar-foreground: oklch(0.17 0.02 205);
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar-accent: oklch(0.955 0.01 190);
+    --sidebar-accent-foreground: oklch(0.22 0.02 205);
+    --sidebar-border: oklch(0.92 0.01 190);
+    --sidebar-ring: oklch(0.72 0.08 185);
 }
 
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
+    /* Deep teal-black, like the dark app icon. */
+    --background: oklch(0.155 0.012 215);
+    --foreground: oklch(0.975 0.004 190);
+    --card: oklch(0.2 0.014 210);
+    --card-foreground: oklch(0.975 0.004 190);
+    --popover: oklch(0.2 0.014 210);
+    --popover-foreground: oklch(0.975 0.004 190);
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
+    --secondary: oklch(0.26 0.016 205);
+    --secondary-foreground: oklch(0.975 0.004 190);
+    --muted: oklch(0.26 0.016 205);
+    --muted-foreground: oklch(0.7 0.018 200);
+    --accent: oklch(0.26 0.016 205);
+    --accent-foreground: oklch(0.975 0.004 190);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --brand: oklch(0.72 0.14 50);
+    --ring: oklch(0.55 0.07 185);
+    --chart-1: oklch(0.72 0.12 182);
+    --chart-2: oklch(0.68 0.19 25);
+    --chart-3: oklch(0.55 0.09 190);
+    --chart-4: oklch(0.84 0.08 180);
+    --chart-5: oklch(0.42 0.06 205);
+    --brand: oklch(0.7 0.12 182);
     --brand-foreground: oklch(1 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar: oklch(0.185 0.013 212);
+    --sidebar-foreground: oklch(0.975 0.004 190);
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.26 0.016 205);
+    --sidebar-accent-foreground: oklch(0.975 0.004 190);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.556 0 0);
+    --sidebar-ring: oklch(0.55 0.07 185);
 }
 
 @layer base {
@@ -195,24 +198,32 @@
 /* Settings → General → Accent color (lib/appearance.ts sets data-accent on
    <html>). Everything accented reads --brand. The rules also match nested
    elements so the picker's swatches each preview their own accent in the
-   current theme. Orange repeats the :root/.dark defaults for that reason. */
+   current theme. Sush (the logo teal) repeats the :root/.dark defaults for
+   that reason; red is the logo coral and teal a deeper shade of the brand. */
+[data-accent="sush"] { --brand: oklch(0.58 0.105 186); --brand-foreground: oklch(1 0 0); }
 [data-accent="orange"] { --brand: oklch(0.76 0.13 52); --brand-foreground: oklch(1 0 0); }
-[data-accent="red"] { --brand: oklch(0.63 0.2 25); --brand-foreground: oklch(1 0 0); }
+[data-accent="red"] { --brand: oklch(0.64 0.21 25); --brand-foreground: oklch(1 0 0); }
 [data-accent="pink"] { --brand: oklch(0.66 0.2 355); --brand-foreground: oklch(1 0 0); }
 [data-accent="violet"] { --brand: oklch(0.6 0.2 293); --brand-foreground: oklch(1 0 0); }
 [data-accent="blue"] { --brand: oklch(0.6 0.18 255); --brand-foreground: oklch(1 0 0); }
-[data-accent="teal"] { --brand: oklch(0.62 0.11 190); --brand-foreground: oklch(1 0 0); }
+[data-accent="teal"] { --brand: oklch(0.48 0.08 195); --brand-foreground: oklch(1 0 0); }
 [data-accent="green"] { --brand: oklch(0.63 0.15 150); --brand-foreground: oklch(1 0 0); }
 [data-accent="graphite"] { --brand: oklch(0.32 0 0); --brand-foreground: oklch(0.985 0 0); }
 
+.dark[data-accent="sush"], .dark [data-accent="sush"] { --brand: oklch(0.7 0.12 182); }
 .dark[data-accent="orange"], .dark [data-accent="orange"] { --brand: oklch(0.72 0.14 50); }
-.dark[data-accent="red"], .dark [data-accent="red"] { --brand: oklch(0.66 0.19 25); }
+.dark[data-accent="red"], .dark [data-accent="red"] { --brand: oklch(0.68 0.19 25); }
 .dark[data-accent="pink"], .dark [data-accent="pink"] { --brand: oklch(0.7 0.18 355); }
 .dark[data-accent="violet"], .dark [data-accent="violet"] { --brand: oklch(0.66 0.18 293); }
 .dark[data-accent="blue"], .dark [data-accent="blue"] { --brand: oklch(0.66 0.16 255); }
-.dark[data-accent="teal"], .dark [data-accent="teal"] { --brand: oklch(0.68 0.11 190); }
+.dark[data-accent="teal"], .dark [data-accent="teal"] { --brand: oklch(0.62 0.09 195); }
 .dark[data-accent="green"], .dark [data-accent="green"] { --brand: oklch(0.69 0.15 150); }
 .dark[data-accent="graphite"], .dark [data-accent="graphite"] { --brand: oklch(0.88 0 0); --brand-foreground: oklch(0.205 0 0); }
+
+/* The custom accent's values are derived from the picked color in
+   lib/appearance.ts and set on <html>, so nested swatches inherit them. */
+[data-accent="custom"] { --brand: var(--custom-brand); --brand-foreground: var(--custom-brand-foreground); }
+.dark[data-accent="custom"], .dark [data-accent="custom"] { --brand: var(--custom-brand-dark); --brand-foreground: var(--custom-brand-dark-foreground); }
 
 /* Horizontal chip rows (Suggestion) scroll without a visible bar. */
 @utility scrollbar-hide {

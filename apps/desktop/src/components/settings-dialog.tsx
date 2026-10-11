@@ -4,7 +4,6 @@
 import {
   BlocksIcon,
   BrainIcon,
-  CheckIcon,
   CircleUserIcon,
   KeyRoundIcon,
   LogOutIcon,
@@ -28,9 +27,10 @@ import { ProvidersSection } from "@/components/providers-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
 import { Button } from "@/components/ui/button";
+import { ColorPicker } from "@/components/ui/ColorPicker";
+import { DropdownMenu } from "@/components/ui/DropdownMenu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ACCENTS, setAppearance, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
@@ -177,7 +177,12 @@ function GeneralSection() {
           />
         </Setting>
         <Setting title="Accent color" description="Highlight color for the send button, commands and other accents.">
-          <AccentPicker value={appearance.accent} onChange={(accent) => setAppearance({ accent })} />
+          <AccentPicker
+            value={appearance.accent}
+            onChange={(accent) => setAppearance({ accent })}
+            custom={appearance.customAccent}
+            onCustomChange={(customAccent) => setAppearance({ customAccent })}
+          />
         </Setting>
         <Setting title="Chat font">
           <Select value={appearance.chatFont} onValueChange={(v) => setAppearance({ chatFont: v as ChatFont })}>
@@ -237,31 +242,48 @@ function GeneralSection() {
   );
 }
 
-function AccentPicker({ value, onChange }: { value: Accent; onChange: (accent: Accent) => void }) {
+function AccentPicker({
+  value,
+  onChange,
+  custom,
+  onCustomChange,
+}: {
+  value: Accent;
+  onChange: (accent: Accent) => void;
+  custom: string;
+  onCustomChange: (hex: string) => void;
+}) {
   return (
-    <div role="radiogroup" aria-label="Accent color" className="flex gap-1.5">
-      {ACCENTS.map((a) => (
-        <Tooltip key={a.value}>
-          <TooltipTrigger asChild>
-            {/* data-accent scopes --brand to this swatch (index.css). */}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={value === a.value}
-              aria-label={a.label}
-              data-accent={a.value}
-              onClick={() => onChange(a.value)}
-              className={cn(
-                "flex size-6 items-center justify-center rounded-full bg-brand text-brand-foreground ring-offset-2 ring-offset-background transition-shadow hover:ring-2 hover:ring-brand/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
-                value === a.value && "ring-2 ring-brand hover:ring-brand",
-              )}
-            >
-              {value === a.value && <CheckIcon className="size-3.5" strokeWidth={3} />}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{a.label}</TooltipContent>
-        </Tooltip>
-      ))}
+    <div className="flex items-center gap-1">
+      {value === "custom" && (
+        <ColorPicker
+          label="Custom accent color"
+          value={custom}
+          onChange={onCustomChange}
+          swatches={[]}
+          triggerClassName="size-5 rounded-full ring-1 ring-foreground/15 transition-transform hover:scale-110"
+        />
+      )}
+      <DropdownMenu
+        label="Accent color"
+        align="end"
+        value={value}
+        onChange={onChange}
+        items={ACCENTS.map((a) => ({
+          ...a,
+          icon:
+            a.value === "custom" ? (
+              <span
+                className="size-3.5 shrink-0 rounded-full"
+                style={{ background: "conic-gradient(#f43f5e, #f59e0b, #22c55e, #06b6d4, #6366f1, #d946ef, #f43f5e)" }}
+                aria-hidden
+              />
+            ) : (
+              // data-accent scopes --brand to this swatch (index.css).
+              <span data-accent={a.value} className="size-3.5 shrink-0 rounded-full bg-brand" aria-hidden />
+            ),
+        }))}
+      />
     </div>
   );
 }

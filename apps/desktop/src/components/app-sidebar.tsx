@@ -292,7 +292,7 @@ function ProfileMenu({ name, email, onOpenSettings }: { name: string; email: str
           size="lg"
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
         >
-          <img src="/sush-mark.png" alt="" className="aspect-square size-8 rounded-lg" />
+          <img src="/sush-mark.png" alt="" className="aspect-square size-6" />
           <span className="flex-1 truncate text-left text-sm font-medium">{name}</span>
           <ChevronDownIcon className="ml-auto text-muted-foreground" />
         </SidebarMenuButton>

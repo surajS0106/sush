@@ -44,7 +44,8 @@ export function LoginScreen() {
     <div data-tauri-drag-region className="flex h-svh items-center justify-center bg-background p-4">
       <div className="flex w-full max-w-sm flex-col gap-6">
         <div className="flex flex-col items-center gap-3 text-center">
-          <img src="/sush-mark.png" alt="Sush" className="size-12 rounded-xl" />
+          <img src="/sush-mark-light.png" alt="Sush" className="size-12 rounded-[11px] shadow-sm ring-1 ring-black/5 dark:hidden" />
+          <img src="/sush-mark-dark.png" alt="Sush" className="hidden size-12 dark:block" />
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold">{signingUp ? "Create your account" : "Sign in to Sush"}</h1>
             <p className="text-sm text-muted-foreground">

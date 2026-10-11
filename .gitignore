@@ -7,3 +7,4 @@ target/
 .env*
 apps/desktop/src-tauri/gen/schemas
 apps/desktop/src-tauri/binaries
+apps/desktop/src-tauri/icons/Assets.car

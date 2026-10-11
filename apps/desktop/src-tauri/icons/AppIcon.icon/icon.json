@@ -1,0 +1,35 @@
+{
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "glass" : false,
+          "image-name" : "light.png",
+          "image-name-specializations" : [
+            {
+              "value" : "light.png"
+            },
+            {
+              "appearance" : "dark",
+              "value" : "dark.png"
+            }
+          ],
+          "name" : "Artwork"
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}

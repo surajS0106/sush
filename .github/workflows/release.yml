@@ -22,9 +22,11 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             bun_target: bun-darwin-arm64
+            extra_config: --config src-tauri/tauri.macos-icon.conf.json
           - os: macos-latest
             target: x86_64-apple-darwin
             bun_target: bun-darwin-x64
+            extra_config: --config src-tauri/tauri.macos-icon.conf.json
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bun_target: bun-linux-x64
@@ -58,6 +60,11 @@ jobs:
           bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
             --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
 
+      # macOS 26 swaps the app icon with the system appearance; needs Xcode's actool.
+      - name: Compile adaptive macOS icon
+        if: runner.os == 'macOS'
+        run: apps/desktop/src-tauri/icons/build-mac-icon.sh
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +73,7 @@ jobs:
         with:
           projectPath: apps/desktop
           tauriScript: bun tauri
-          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json ${{ matrix.extra_config }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: Sush ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseBody: See the assets below to download the installer for your platform.
