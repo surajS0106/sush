@@ -1,13 +1,13 @@
-// Sush's mascot: a pixel-art nigiri (salmon on rice, a teal nori band) that
-// stands on the composer, or any built-in avatar picked in Settings → Sushi.
-// Its eyes follow the pointer (and drop to the input while you type), it
-// breathes, blinks, wanders along the composer's edge now and then, runs in
-// place while a run is working, and falls asleep when the app is left alone.
-// Clicking it hops and pops a heart; three quick clicks do a backflip.
-// Switching characters pops the new one in with a puff of sparkles. Purely
-// decorative.
+// Sushi, Sush's mascot: a pixel-art nigiri (salmon on rice, a teal nori band)
+// who stands on the composer, or any built-in avatar picked in Settings →
+// Sushi. Its eyes follow the pointer (and drop to the input while you type),
+// it breathes, blinks, wanders along the composer's edge now and then, and
+// falls asleep when the app is left alone. While a run is working it pulls up
+// a laptop and types away, the screen lighting Sushi's face. Clicking it hops
+// and pops a heart; three quick clicks do a backflip. Switching characters
+// pops the new one in with a puff of sparkles. Purely decorative.
 
-import { motion, useAnimationControls, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
@@ -32,6 +32,24 @@ const SPRITE = [
 // Walk cycle: legs apart, then feet together.
 const LEG_FRAMES = ["...L..L....L..L.", "....LL......LL.."];
 
+// The laptop's lid seen from behind (a little nigiri logo), resting on the
+// ground in front of the character, in Sushi's pixels; on Sushi its top edge
+// sits just under the eyes.
+const LAPTOP = [
+  "...KKKKKKKKKK...",
+  "...KkkkOOkkkK...",
+  "...KkkkkkkkkK...",
+  "..BBBBBBBBBBBB..",
+];
+const LAPTOP_W = LAPTOP[0].length;
+
+// Typing hands either side of the lid, tapping in turn: [left row, right row].
+const HAND_X = [1, 14];
+const HAND_FRAMES = [
+  [2, 1],
+  [1, 2],
+];
+
 const HEART = ["HH.HH", "HHHHH", ".HHH.", "..H.."];
 const ZED = ["ZZZ", ".Z.", "ZZZ"];
 const STAR = [".Y.", "YYY", ".Y."];
@@ -45,6 +63,10 @@ const COLORS: Record<string, string> = {
   E: "#2b2b2b", // eyes
   P: "#f7a39b", // blush
   L: "#3d3d3d", // legs
+  K: "#c9ced6", // laptop lid edge
+  k: "#aeb5bf", // laptop lid
+  O: "#f0533f", // laptop logo
+  B: "#7d8590", // laptop base
   H: "#f0533f", // heart
   Y: "#f6c945", // sparkle
   Z: "currentColor", // sleep z
@@ -83,7 +105,11 @@ interface Character {
   eyes: { x: number; y: number }[];
   eyeColor: string;
   legs: Run[][];
+  /** Where the laptop goes while working, in sprite pixels, and the screen's glow on the face, if any. */
+  laptop: { x: number; y: number; scale: number; glow?: { x: number; y: number; w: number; h: number } };
 }
+
+const LAPTOP_RUNS = runs(LAPTOP);
 
 const SUSHI: Character = {
   width: SPRITE[0].length,
@@ -93,6 +119,7 @@ const SUSHI: Character = {
   eyes: [3, 11].map((x) => ({ x, y: 5 })),
   eyeColor: COLORS.E,
   legs: LEG_FRAMES.map((row) => runs([row], COLORS, SPRITE.length)),
+  laptop: { x: 0, y: 7, scale: 1, glow: { x: 1, y: 3, w: 14, h: 4 } },
 };
 
 /**
@@ -103,7 +130,7 @@ const SUSHI: Character = {
  * pairs under a wide base, one pair under a narrow one.
  */
 function avatarCharacter(avatar: AvatarDef): Character {
-  const palette = { ...avatarPalette(avatar), L: COLORS.L };
+  const palette: Record<string, string> = { ...avatarPalette(avatar), L: COLORS.L };
   const isEye = (c: string | undefined) => c === "E" || c === "W";
   const blank = (row: string) => !/[^.]/.test(row);
 
@@ -147,7 +174,17 @@ function avatarCharacter(avatar: AvatarDef): Character {
   };
   const legs = [legRow([-3, 1]), legRow([-2, 0])].map((row) => runs([row, row], palette, big.length));
 
-  return { width, height: big.length + 2, px: 1.5, body: runs(big, palette), eyes, eyeColor, legs };
+  const px = 1.5;
+  // The laptop at Sushi's size, centred, its top just under the eyes.
+  const scale = SUSHI.px / px;
+  const eyeBottom = Math.max(...eyes.map((e) => e.y + 2), 0);
+  const laptop = {
+    x: (width - LAPTOP_W * scale) / 2,
+    y: Math.min(eyeBottom, big.length + 2 - LAPTOP.length * scale),
+    scale,
+  };
+
+  return { width, height: big.length + 2, px, body: runs(big, palette), eyes, eyeColor, legs, laptop };
 }
 
 const characters = new Map<string, Character>([[DEFAULT_MASCOT, SUSHI]]);
@@ -243,7 +280,7 @@ function MascotBody({
   character,
   entrance,
 }: Omit<MascotProps, "kind"> & { character: Character; entrance: boolean }) {
-  const { width, height, px, body, eyes, eyeColor, legs } = character;
+  const { width, height, px, body, eyes, eyeColor, legs, laptop } = character;
   const reduceMotion = useReducedMotion();
   const hopControls = useAnimationControls();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -252,7 +289,8 @@ function MascotBody({
   const [pointerLook, setPointerLook] = useState<Look>({ x: 0, y: 0 });
   const [typing, setTyping] = useState(false);
   const [sleeping, setSleeping] = useState(false);
-  const [legFrame, setLegFrame] = useState(0);
+  const [frame, setFrame] = useState(0);
+  const [glance, setGlance] = useState(false);
   const [x, setX] = useState(0);
   const [walking, setWalking] = useState(false);
   const [hearts, setHearts] = useState<number[]>([]);
@@ -334,17 +372,23 @@ function MascotBody({
     return () => clearTimeout(t);
   }, [draft]);
 
-  // Run in place while a run is working.
+  // While a run is working: a little hop as it pulls the laptop up, then a
+  // gentle bob in time with its typing.
   useEffect(() => {
+    if (busy) setSleeping(false);
     if (reduceMotion) return;
     if (busy) {
-      setSleeping(false);
-      void hopControls.start({
-        y: [0, -5, 0],
-        scaleY: [0.92, 1.06, 0.94],
-        scaleX: [1.06, 0.96, 1.04],
-        transition: { duration: 0.45, repeat: Infinity, repeatDelay: 0.15, ease: "easeOut" },
-      });
+      void hopControls
+        .start({ y: [0, -5, 0], transition: { duration: 0.3, ease: "easeOut" } })
+        .then(() => {
+          if (!busyRef.current) return;
+          void hopControls.start({
+            y: [0, 0.5, 0],
+            scaleY: [1, 0.97, 1],
+            scaleX: [1, 1.015, 1],
+            transition: { duration: 0.5, repeat: Infinity, ease: "easeInOut" },
+          });
+        });
     } else if (entrance) {
       // Pop in: drop from a little above, squash on landing, wobble upright.
       void hopControls.start({
@@ -358,13 +402,33 @@ function MascotBody({
     } else void hopControls.start({ y: 0, scaleX: 1, scaleY: 1, transition: { duration: 0.2 } });
   }, [busy, reduceMotion, hopControls, entrance]);
 
-  // Pitter-patter legs while walking or working.
+  // Every few seconds of work, glance up from the screen for a moment.
+  useEffect(() => {
+    if (reduceMotion || !busy) return setGlance(false);
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      timer = setTimeout(
+        () => {
+          setGlance(true);
+          timer = setTimeout(() => {
+            setGlance(false);
+            next();
+          }, 700);
+        },
+        3000 + Math.random() * 3000,
+      );
+    };
+    next();
+    return () => clearTimeout(timer);
+  }, [busy, reduceMotion]);
+
+  // One frame counter drives both the walking legs and the typing hands.
   const moving = walking || busy;
   useEffect(() => {
-    if (reduceMotion || !moving) return setLegFrame(0);
-    const id = setInterval(() => setLegFrame((f) => (f + 1) % legs.length), busy ? 90 : 150);
+    if (reduceMotion || !moving) return setFrame(0);
+    const id = setInterval(() => setFrame((f) => f + 1), busy && !walking ? 120 : 150);
     return () => clearInterval(id);
-  }, [moving, busy, reduceMotion, legs.length]);
+  }, [moving, busy, walking, reduceMotion]);
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
@@ -416,14 +480,20 @@ function MascotBody({
     ? { x: 0, y: 1 }
     : walking
       ? { x: walkDir, y: 0 }
-      : typing
-        ? { x: -1, y: 1 }
-        : pointerLook;
+      : busy
+        ? glance
+          ? { x: 1, y: -1 }
+          : { x: 0, y: 0 }
+        : typing
+          ? { x: -1, y: 1 }
+          : pointerLook;
+  const hands = HAND_FRAMES[frame % HAND_FRAMES.length];
 
   return (
     <motion.div
       ref={rootRef}
       aria-hidden
+      title="Sushi"
       animate={{ x }}
       transition={{ duration: Math.max(0.3, Math.abs(x - walkFrom) / WALK_SPEED), ease: "linear" }}
       onAnimationComplete={() => setWalking(false)}
@@ -494,7 +564,43 @@ function MascotBody({
               fill={eyeColor}
             />
           ))}
-          <Pixels runs={legs[legFrame]} />
+          <Pixels runs={legs[walking ? frame % legs.length : 0]} />
+          <AnimatePresence>
+            {busy && (
+              <motion.g key="laptop">
+                {/* Screen light flickering on the face. */}
+                {laptop.glow && (
+                  <motion.rect
+                    x={laptop.glow.x}
+                    y={laptop.glow.y}
+                    width={laptop.glow.w}
+                    height={laptop.glow.h}
+                    fill="#9fdcff"
+                    initial={{ opacity: 0 }}
+                    animate={
+                      reduceMotion
+                        ? { opacity: 0.15 }
+                        : { opacity: [0.1, 0.22, 0.14, 0.26, 0.12], transition: { duration: 2.2, repeat: Infinity } }
+                    }
+                    exit={{ opacity: 0, transition: { duration: 0.15 } }}
+                  />
+                )}
+                <g transform={`translate(${laptop.x} ${laptop.y}) scale(${laptop.scale})`}>
+                  <motion.g
+                    style={{ transformBox: "fill-box", transformOrigin: "50% 100%" }}
+                    initial={reduceMotion ? { opacity: 0 } : { y: 4, scaleY: 0.3, opacity: 0 }}
+                    animate={{ y: 0, scaleY: 1, opacity: 1, transition: { delay: 0.12, duration: 0.25, ease: "easeOut" } }}
+                    exit={reduceMotion ? { opacity: 0 } : { scaleY: 0.2, y: 3, opacity: 0, transition: { duration: 0.25 } }}
+                  >
+                    <Pixels runs={LAPTOP_RUNS} />
+                    {HAND_X.map((hx, i) => (
+                      <rect key={hx} x={hx} y={hands[i]} width={1} height={1} fill={COLORS.R} />
+                    ))}
+                  </motion.g>
+                </g>
+              </motion.g>
+            )}
+          </AnimatePresence>
         </motion.svg>
       </motion.div>
     </motion.div>

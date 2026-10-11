@@ -1,11 +1,20 @@
-//! The terminal in Cowork's side panel: the user's own shell, started in the
-//! workspace folder through a PTY. It's the user typing, not the agent, so it
-//! runs outside the sandbox like any terminal they'd open themselves.
+//! The terminal in Cowork's side panel: the user's own shell (PowerShell on
+//! Windows), started in the workspace folder with plain pipes rather than a
+//! PTY. The UI draws it like VS Code's panel: a prompt, the command, its
+//! output. Every command is followed by a marker line carrying the shell's
+//! working directory; that's how the UI knows the command finished and what
+//! to show in the next prompt.
+//!
+//! It's the user typing, not the agent, so it runs outside the sandbox like
+//! any terminal they'd open themselves.
 
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::PathBuf;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use serde::Serialize;
 use sush_core::agent::ui::new_id;
 use tauri::ipc::Channel;
 use tauri::State;
@@ -14,96 +23,217 @@ use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::blocking;
 
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TerminalEvent {
+    /// Output from the shell; `error` for stderr.
+    Output { text: String, error: bool },
+    /// The shell is waiting for a command, in `cwd`.
+    Prompt { cwd: String },
+    /// The shell exited by itself (`exit`, or it crashed).
+    Exit,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInfo {
+    id: String,
+    /// "powershell", "bash" or "sh", for the prompt's look.
+    shell: &'static str,
+}
+
 pub struct Terminal {
-    writer: Box<dyn Write + Send>,
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    shared: Arc<Shared>,
+    stdin: ChildStdin,
+    child: Child,
 }
 
-fn pty_error(e: impl std::fmt::Display) -> AppError {
-    AppError::Invalid(format!("The terminal failed: {e}"))
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
 }
 
-fn size(cols: u16, rows: u16) -> PtySize {
-    PtySize { rows: rows.max(2), cols: cols.max(10), pixel_width: 0, pixel_height: 0 }
+struct Shared {
+    on_event: Channel<TerminalEvent>,
+    root: PathBuf,
+    /// Where the shell was at its last prompt; a restart starts there.
+    cwd: Mutex<PathBuf>,
+    /// Bumped on every (re)start so an old process's readers fall silent.
+    generation: AtomicU64,
 }
 
-/// Start a shell in a workspace folder. Its output arrives on `on_data`.
-#[tauri::command]
-pub async fn terminal_open(
-    state: State<'_, AppState>,
-    workspace_id: String,
-    cols: u16,
-    rows: u16,
-    on_data: Channel<String>,
-) -> AppResult<String> {
-    let store = state.store.clone();
-    let workspace = blocking(move || {
-        store.workspace(&workspace_id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))
-    })
-    .await?;
+/// Starts the marker line: unit separators can't show up in normal output.
+const MARK: &[u8] = b"\x1fSUSH\x1f";
 
-    let pair = native_pty_system().openpty(size(cols, rows)).map_err(pty_error)?;
-    let mut cmd = CommandBuilder::new(default_shell());
-    cmd.cwd(Path::new(&workspace.root));
-    let child = pair.slave.spawn_command(cmd).map_err(pty_error)?;
-    drop(pair.slave);
-    let mut reader = pair.master.try_clone_reader().map_err(pty_error)?;
-    let writer = pair.master.take_writer().map_err(pty_error)?;
+#[cfg(windows)]
+const SHELL: &str = "powershell";
+#[cfg(windows)]
+const MARKER: &str = "Write-Host ([char]31 + 'SUSH' + [char]31 + $PWD.ProviderPath)";
+/// UTF-8 both ways, and no progress bars (they'd print as junk without a console).
+#[cfg(windows)]
+const SETUP: &str = "$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding\n";
 
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        let mut pending = Vec::new();
-        while let Ok(n) = reader.read(&mut buf) {
-            if n == 0 {
-                break;
+#[cfg(not(windows))]
+const MARKER: &str = r#"printf '\037SUSH\037%s\n' "$PWD""#;
+#[cfg(not(windows))]
+const SETUP: &str = "";
+
+#[cfg(not(windows))]
+fn unix_shell() -> &'static str {
+    if std::path::Path::new("/bin/bash").exists() {
+        "bash"
+    } else {
+        "sh"
+    }
+}
+
+fn shell_name() -> &'static str {
+    #[cfg(windows)]
+    return SHELL;
+    #[cfg(not(windows))]
+    return unix_shell();
+}
+
+fn shell_command() -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let mut cmd = Command::new("powershell.exe");
+        // Commands come one per line on stdin. NonInteractive: a prompt for
+        // input fails instead of hanging, since there's no console to answer it.
+        cmd.args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "-"]);
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new(format!("/bin/{}", unix_shell()));
+        cmd.process_group(0); // so Stop can kill everything it started
+        cmd
+    }
+}
+
+/// A command line as the shell should run it: output formatted to the
+/// panel's width, then the marker, even when the command fails.
+fn wrap(command: &str, cols: u16) -> String {
+    let cols = cols.clamp(40, 500);
+    #[cfg(windows)]
+    {
+        // PowerShell also ends single-quoted strings at typographic quotes.
+        let mut quoted = String::with_capacity(command.len());
+        for c in command.chars() {
+            quoted.push(c);
+            if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+                quoted.push(c);
             }
-            pending.extend_from_slice(&buf[..n]);
+        }
+        format!(
+            "try {{ Invoke-Expression '{quoted}' | Out-String -Stream -Width {cols} | Out-Default }} \
+             catch {{ [Console]::Error.Write(($_ | Out-String)) }} finally {{ {MARKER} }}\n\n"
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        format!("COLUMNS={cols}; export COLUMNS; eval '{}'; {MARKER}\n", command.replace('\'', r"'\''"))
+    }
+}
+
+fn spawn(shared: &Arc<Shared>) -> AppResult<(Child, ChildStdin)> {
+    let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut cwd = shared.cwd.lock().unwrap().clone();
+    if !cwd.is_dir() {
+        cwd = shared.root.clone();
+    }
+    let mut child = shell_command()
+        .current_dir(&cwd)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::Invalid(format!("Couldn't start {}: {e}", shell_name())))?;
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let s = shared.clone();
+    std::thread::spawn(move || read_output(s, generation, stdout, false));
+    let s = shared.clone();
+    std::thread::spawn(move || read_output(s, generation, stderr, true));
+    stdin.write_all(format!("{SETUP}{MARKER}\n").as_bytes())?;
+    stdin.flush()?;
+    Ok((child, stdin))
+}
+
+fn read_output(shared: Arc<Shared>, generation: u64, mut from: impl Read, error: bool) {
+    let current = || shared.generation.load(Ordering::SeqCst) == generation;
+    let mut buf = [0u8; 8192];
+    let mut pending = Vec::new();
+    loop {
+        let n = match from.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if !current() {
+            return;
+        }
+        pending.extend_from_slice(&buf[..n]);
+        let events = if error {
             let text = take_utf8(&mut pending);
-            if !text.is_empty() && on_data.send(text).is_err() {
+            if text.is_empty() { Vec::new() } else { vec![TerminalEvent::Output { text, error }] }
+        } else {
+            take_events(&mut pending)
+        };
+        for event in events {
+            if let TerminalEvent::Prompt { cwd } = &event {
+                *shared.cwd.lock().unwrap() = PathBuf::from(cwd);
+            }
+            if shared.on_event.send(event).is_err() {
                 return; // the page went away
             }
         }
-        let _ = on_data.send("\r\n[the shell exited]\r\n".into());
-    });
-
-    let id = new_id();
-    state.terminals.lock().unwrap().insert(id.clone(), Terminal { writer, master: pair.master, child });
-    Ok(id)
-}
-
-/// Keystrokes from the UI.
-#[tauri::command]
-pub fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> AppResult<()> {
-    let mut terminals = state.terminals.lock().unwrap();
-    let t = terminals.get_mut(&id).ok_or_else(|| AppError::NotFound("That terminal was closed.".into()))?;
-    t.writer.write_all(data.as_bytes())?;
-    t.writer.flush()?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn terminal_resize(state: State<'_, AppState>, id: String, cols: u16, rows: u16) -> AppResult<()> {
-    let terminals = state.terminals.lock().unwrap();
-    if let Some(t) = terminals.get(&id) {
-        t.master.resize(size(cols, rows)).map_err(pty_error)?;
     }
-    Ok(())
-}
-
-#[tauri::command]
-pub fn terminal_close(state: State<'_, AppState>, id: String) {
-    if let Some(mut t) = state.terminals.lock().unwrap().remove(&id) {
-        let _ = t.child.kill();
+    if !error && current() {
+        let _ = shared.on_event.send(TerminalEvent::Exit);
     }
 }
 
-fn default_shell() -> String {
-    if cfg!(windows) {
-        "powershell.exe".into()
-    } else {
-        std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into())
+/// Output and prompts from the front of stdout's `pending` bytes. Holds back
+/// what might be the start of a marker, or of a character, until more arrives.
+fn take_events(pending: &mut Vec<u8>) -> Vec<TerminalEvent> {
+    fn output(events: &mut Vec<TerminalEvent>, text: String) {
+        if !text.is_empty() {
+            events.push(TerminalEvent::Output { text, error: false });
+        }
     }
+    let mut events = Vec::new();
+    loop {
+        match pending.windows(MARK.len()).position(|w| w == MARK) {
+            Some(at) => {
+                let Some(end) = pending[at..].iter().position(|&b| b == b'\n').map(|i| at + i) else {
+                    let text = String::from_utf8_lossy(&pending[..at]).into_owned();
+                    pending.drain(..at);
+                    output(&mut events, text);
+                    break;
+                };
+                let text = String::from_utf8_lossy(&pending[..at]).into_owned();
+                let cwd = String::from_utf8_lossy(&pending[at + MARK.len()..end]).trim_end_matches('\r').to_string();
+                pending.drain(..=end);
+                output(&mut events, text);
+                events.push(TerminalEvent::Prompt { cwd });
+            }
+            None => {
+                let keep = (1..MARK.len().min(pending.len() + 1)).rev().find(|&k| pending.ends_with(&MARK[..k])).unwrap_or(0);
+                let tail = pending.split_off(pending.len() - keep);
+                let text = take_utf8(pending);
+                pending.extend_from_slice(&tail);
+                output(&mut events, text);
+                break;
+            }
+        }
+    }
+    events
 }
 
 /// The complete UTF-8 text at the front of `pending`, leaving a character
@@ -119,9 +249,107 @@ fn take_utf8(pending: &mut Vec<u8>) -> String {
     text
 }
 
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .creation_flags(0x0800_0000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        // The shell leads its own process group (`process_group(0)`).
+        let _ = Command::new("kill").args(["-KILL", &format!("-{}", child.id())]).status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn not_found() -> AppError {
+    AppError::NotFound("That terminal was closed.".into())
+}
+
+/// Start a shell in a workspace folder. What it prints arrives on `on_event`,
+/// starting with a prompt once it's ready.
+#[tauri::command]
+pub async fn terminal_open(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    on_event: Channel<TerminalEvent>,
+) -> AppResult<TerminalInfo> {
+    let store = state.store.clone();
+    let workspace = blocking(move || {
+        store.workspace(&workspace_id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))
+    })
+    .await?;
+    let root = PathBuf::from(&workspace.root);
+    let shared = Arc::new(Shared { on_event, cwd: Mutex::new(root.clone()), root, generation: AtomicU64::new(0) });
+    let (child, stdin) = spawn(&shared)?;
+    let id = new_id();
+    state.terminals.lock().unwrap().insert(id.clone(), Terminal { shared, stdin, child });
+    Ok(TerminalInfo { id, shell: shell_name() })
+}
+
+/// Run a command line at the prompt; `cols` is the panel's width in characters.
+#[tauri::command]
+pub fn terminal_run(state: State<'_, AppState>, id: String, command: String, cols: u16) -> AppResult<()> {
+    let mut terminals = state.terminals.lock().unwrap();
+    let t = terminals.get_mut(&id).ok_or_else(not_found)?;
+    t.stdin.write_all(wrap(&command, cols).as_bytes())?;
+    t.stdin.flush()?;
+    Ok(())
+}
+
+/// Input for the running command (it reads the shell's stdin).
+#[tauri::command]
+pub fn terminal_write(state: State<'_, AppState>, id: String, data: String) -> AppResult<()> {
+    let mut terminals = state.terminals.lock().unwrap();
+    let t = terminals.get_mut(&id).ok_or_else(not_found)?;
+    t.stdin.write_all(data.as_bytes())?;
+    t.stdin.flush()?;
+    Ok(())
+}
+
+/// Stop whatever is running (Ctrl+C): a pipe can't carry the signal, so the
+/// shell and everything it started is killed and a fresh one starts where it was.
+#[tauri::command]
+pub async fn terminal_interrupt(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let mut terminals = state.terminals.lock().unwrap();
+    let t = terminals.get_mut(&id).ok_or_else(not_found)?;
+    kill_tree(&mut t.child);
+    let (child, stdin) = spawn(&t.shared)?;
+    t.child = child;
+    t.stdin = stdin;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn terminal_close(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    let removed = state.terminals.lock().unwrap().remove(&id);
+    if let Some(mut t) = removed {
+        kill_tree(&mut t.child);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::take_utf8;
+    use super::*;
+
+    fn texts(events: &[TerminalEvent]) -> Vec<String> {
+        events
+            .iter()
+            .map(|e| match e {
+                TerminalEvent::Output { text, .. } => format!("out:{text}"),
+                TerminalEvent::Prompt { cwd } => format!("prompt:{cwd}"),
+                TerminalEvent::Exit => "exit".into(),
+            })
+            .collect()
+    }
 
     #[test]
     fn split_characters_wait_for_the_rest() {
@@ -130,6 +358,25 @@ mod tests {
         assert_eq!(pending.len(), 1);
         pending.extend_from_slice(&"héllo".as_bytes()[2..]);
         assert_eq!(take_utf8(&mut pending), "éllo");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn markers_become_prompts() {
+        let mut pending = b"hello\r\n\x1fSUSH\x1fC:\\work\r\nmore".to_vec();
+        assert_eq!(texts(&take_events(&mut pending)), ["out:hello\r\n", "prompt:C:\\work", "out:more"]);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn a_split_marker_waits_for_the_rest() {
+        let mut pending = b"out\x1fSU".to_vec();
+        assert_eq!(texts(&take_events(&mut pending)), ["out:out"]);
+        assert_eq!(pending, b"\x1fSU");
+        pending.extend_from_slice(b"SH\x1f/home/me");
+        assert!(take_events(&mut pending).is_empty());
+        pending.extend_from_slice(b"\n");
+        assert_eq!(texts(&take_events(&mut pending)), ["prompt:/home/me"]);
         assert!(pending.is_empty());
     }
 }

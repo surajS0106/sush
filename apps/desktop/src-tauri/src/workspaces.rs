@@ -15,6 +15,7 @@ use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, EditApproval, Entry, Workspace, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
@@ -141,6 +142,32 @@ pub async fn workspace_read_file(state: State<'_, AppState>, id: String, path: S
         Ok(FileView { path: rel, text: Some(text), size, truncated })
     })
     .await
+}
+
+/// Save a file the user edited in the viewer. It's their own change, like
+/// saving in their editor, so no checkpoint is taken.
+#[tauri::command]
+pub async fn workspace_write_file(state: State<'_, AppState>, id: String, path: String, text: String) -> AppResult<()> {
+    let store = state.store.clone();
+    blocking(move || {
+        let fs = open(&store, &id)?;
+        let rel = fs.rel(&path).map_err(AppError::Invalid)?;
+        fs.write(&rel, text.as_bytes()).map_err(AppError::Invalid)
+    })
+    .await
+}
+
+/// Show a workspace file or folder in the system file manager.
+#[tauri::command]
+pub async fn workspace_reveal(app: AppHandle, state: State<'_, AppState>, id: String, path: String) -> AppResult<()> {
+    let store = state.store.clone();
+    let target = blocking(move || {
+        let fs = open(&store, &id)?;
+        let rel = fs.rel(&path).map_err(AppError::Invalid)?;
+        Ok(rel.split('/').filter(|c| !c.is_empty()).fold(fs.root().to_path_buf(), |p, c| p.join(c)))
+    })
+    .await?;
+    app.opener().reveal_item_in_dir(target).map_err(|e| AppError::Invalid(format!("Couldn't show it in the file manager: {e}")))
 }
 
 /// Files whose path contains `query`, for the file filter.

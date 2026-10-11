@@ -350,11 +350,44 @@ html[data-resizing] * {
 }
 
 /* Cowork file viewer: shiki output (or the plain fallback) with line numbers. */
+.code-view {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 .code-view pre.shiki {
   margin: 0;
   padding: 0.5rem 0;
   background: transparent !important;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: inherit;
+  tab-size: 4;
+}
+/* The editor: a textarea over the highlighted code, its text invisible so the
+   colours show through. Metrics must match the <pre> exactly; the left
+   padding is the line-number gutter (width + margin below). */
+.code-editor textarea {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0.5rem 0 0.5rem 4.25rem;
+  border: 0;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--foreground);
+  font: inherit;
+  letter-spacing: inherit;
+  tab-size: 4;
+  white-space: pre;
+}
+.code-editor textarea::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+  color: transparent;
+}
+.code-editor:has(textarea:focus) {
+  cursor: text;
 }
 .code-view pre.shiki code {
   counter-reset: line;

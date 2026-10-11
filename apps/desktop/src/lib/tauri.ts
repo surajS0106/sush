@@ -232,6 +232,17 @@ export interface FileView {
   truncated: boolean;
 }
 
+/** From the Cowork terminal: output (`error` for stderr), a prompt once a command finished, or the shell exiting. */
+export type TerminalEvent =
+  | { kind: "output"; text: string; error: boolean }
+  | { kind: "prompt"; cwd: string }
+  | { kind: "exit" };
+
+export interface TerminalInfo {
+  id: string;
+  shell: "powershell" | "bash" | "sh";
+}
+
 export interface ChatHit {
   id: string;
   title: string;
@@ -349,14 +360,22 @@ export const api = {
   workspaceReadFile: (id: string, path: string) => invoke<FileView>("workspace_read_file", { id, path }),
   workspaceFind: (id: string, query: string) => invoke<string[]>("workspace_find", { id, query }),
   sandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
-  /** Start the user's shell in a workspace; output arrives on `onData`. Returns the terminal id. */
-  terminalOpen: (workspaceId: string, cols: number, rows: number, onData: (text: string) => void) => {
-    const channel = new Channel<string>();
-    channel.onmessage = onData;
-    return invoke<string>("terminal_open", { workspaceId, cols, rows, onData: channel });
+  /** Save a file the user edited in the viewer. */
+  workspaceWriteFile: (id: string, path: string, text: string) => invoke<void>("workspace_write_file", { id, path, text }),
+  /** Show a workspace file or folder in the system file manager. */
+  workspaceReveal: (id: string, path: string) => invoke<void>("workspace_reveal", { id, path }),
+  /** Start the user's shell in a workspace; what it prints arrives on `onEvent`, starting with a prompt. */
+  terminalOpen: (workspaceId: string, onEvent: (event: TerminalEvent) => void) => {
+    const channel = new Channel<TerminalEvent>();
+    channel.onmessage = onEvent;
+    return invoke<TerminalInfo>("terminal_open", { workspaceId, onEvent: channel });
   },
+  /** Run a command line at the prompt; `cols` is the panel's width in characters. */
+  terminalRun: (id: string, command: string, cols: number) => invoke<void>("terminal_run", { id, command, cols }),
+  /** Input for the running command. */
   terminalWrite: (id: string, data: string) => invoke<void>("terminal_write", { id, data }),
-  terminalResize: (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
+  /** Stop the running command: the shell restarts where it was. */
+  terminalInterrupt: (id: string) => invoke<void>("terminal_interrupt", { id }),
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
   /** Follow the built-in browser; returns the page it shows, or null before one is opened. */
   browserSubscribe: (onEvent: (event: BrowserEvent) => void) => {

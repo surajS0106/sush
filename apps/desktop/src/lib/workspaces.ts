@@ -73,6 +73,11 @@ export function notifyFilesChanged(threadId: string, workspaceId: string) {
   versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1, [threadId]: (v[threadId] ?? 0) + 1 }));
 }
 
+/** After the user changed a file themselves (saving in the viewer). */
+export function notifyWorkspaceChanged(workspaceId: string) {
+  versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1 }));
+}
+
 /** Changes whenever files in this workspace (or touched by this thread) may have changed. */
 export const useFilesVersion = (key: string | undefined) =>
   useSyncExternalStore(versions.subscribe, () => (key ? (versions.get()[key] ?? 0) : 0));
@@ -205,7 +210,10 @@ export function openFile(workspaceId: string, path: string) {
   togglePanel("files", true);
 }
 
+/** Close a tab; asks first if it has unsaved edits. Returns whether it closed. */
 export function closeFile(workspaceId: string, path: string) {
+  if (hasDraft(workspaceId, path) && !window.confirm(`${path.split("/").pop()} has unsaved changes. Close it anyway?`)) return false;
+  setDraft(workspaceId, path, undefined);
   openFiles.set((all) => {
     const cur = all[workspaceId] ?? NO_FILES;
     const at = cur.tabs.indexOf(path);
@@ -213,10 +221,40 @@ export function closeFile(workspaceId: string, path: string) {
     const active = cur.active === path ? (tabs[Math.min(at, tabs.length - 1)] ?? null) : cur.active;
     return { ...all, [workspaceId]: { tabs, active } };
   });
+  return true;
 }
 
 export function selectFile(workspaceId: string, path: string) {
   openFiles.set((all) => ({ ...all, [workspaceId]: { ...(all[workspaceId] ?? NO_FILES), active: path } }));
+}
+
+// --- unsaved edits ----------------------------------------------------------------------
+
+/** Text the user typed in the viewer and hasn't saved, by workspace and path. Kept while switching tabs. */
+const drafts = createStore<Readonly<Record<string, string>>>("sush.file-drafts", {}, false);
+
+const draftKey = (workspaceId: string, path: string) => `${workspaceId}\n${path}`;
+
+export const useDraft = (workspaceId: string, path: string) =>
+  useSyncExternalStore(drafts.subscribe, () => drafts.get()[draftKey(workspaceId, path)]);
+
+/** Whether each path has unsaved edits, for the tabs. */
+export function useUnsaved(workspaceId: string): (path: string) => boolean {
+  const all = useSyncExternalStore(drafts.subscribe, drafts.get);
+  return (path) => draftKey(workspaceId, path) in all;
+}
+
+export const hasDraft = (workspaceId: string, path: string) => draftKey(workspaceId, path) in drafts.get();
+
+export function setDraft(workspaceId: string, path: string, text: string | undefined) {
+  const key = draftKey(workspaceId, path);
+  if (text === undefined && !(key in drafts.get())) return;
+  drafts.set((all) => {
+    const next = { ...all };
+    if (text === undefined) delete next[key];
+    else next[key] = text;
+    return next;
+  });
 }
 
 /** Put back every file changed since `turnId` began, or only `path`. */
