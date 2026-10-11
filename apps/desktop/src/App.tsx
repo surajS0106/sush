@@ -180,7 +180,7 @@ function AppHeader({ workspaceId, nav, children }: { workspaceId?: string; nav: 
     >
       {sidebarHidden && (
         <>
-          <NavControls nav={nav} />
+          <NavControls nav={nav} coworkStatus />
           <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />
         </>
       )}

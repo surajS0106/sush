@@ -99,6 +99,7 @@ mod tests {
             &["init", "-q", "-b", "main"][..],
             &["config", "user.email", "t@example.com"],
             &["config", "user.name", "t"],
+            &["config", "commit.gpgsign", "false"],
             &["commit", "-q", "--allow-empty", "-m", "init"],
             &["branch", "feature"],
         ] {

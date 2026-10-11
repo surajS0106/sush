@@ -31,6 +31,7 @@ import { useTheme } from "next-themes";
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -69,7 +70,7 @@ import { signOut, useSession } from "@/lib/auth";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
 import { errorMessage } from "@/lib/tauri";
-import { useSessionStatus } from "@/lib/sessions";
+import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
 import { togglePinned, type Conversation } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -108,7 +109,7 @@ interface AppSidebarProps {
   onSwitchMode: (mode: SessionMode) => void;
 }
 
-/** The sidebar's right edge: drag it to set the width, or past the minimum to close; double-click puts the default back. */
+/** The sidebar's right edge: drag it to set the width, or on past the minimum to close; double-click puts the default back. */
 function SidebarResizer() {
   const { sidebar } = useLayout();
   const { setOpen } = useSidebar();
@@ -124,7 +125,7 @@ function SidebarResizer() {
       }
       onResize={(width) => setLayout({ sidebar: width })}
       onReset={() => setLayout({ sidebar: SIDEBAR.default })}
-      onCollapse={() => setOpen(false)}
+      onCollapse={(collapsed) => setOpen(!collapsed)}
     />
   );
 }
@@ -290,11 +291,12 @@ function ModeToggle({ mode, onChange }: { mode: SessionMode; onChange: (mode: Se
               aria-label={label}
               onClick={() => onChange(value)}
               className={cn(
-                "flex h-6 w-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors outline-hidden hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring [&>svg]:size-3.5",
+                "relative flex h-6 w-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors outline-hidden hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring [&>svg]:size-3.5",
                 mode === value && "bg-background text-sidebar-foreground shadow-xs dark:bg-sidebar",
               )}
             >
               <Icon />
+              {value === "cowork" && <CoworkStatusBadge className="size-1.5 ring-0" />}
             </button>
           </TooltipTrigger>
           <TooltipContent side="bottom">{label}</TooltipContent>
@@ -308,6 +310,7 @@ function ModeToggle({ mode, onChange }: { mode: SessionMode; onChange: (mode: Se
 function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => void }) {
   const { isMobile } = useSidebar();
   const workspaces = useWorkspaces();
+  const status = useCoworkStatus();
   const add = async () => {
     try {
       const w = await addWorkspace();
@@ -331,7 +334,8 @@ function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => voi
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton tooltip="Cowork: work in a folder">
             <FolderOpenIcon /> <span>Cowork</span>
-            <ChevronDownIcon className="ml-auto size-3.5 text-muted-foreground" />
+            {status && <StatusDot status={status} className="ml-auto" />}
+            <ChevronDownIcon className={cn("size-3.5 text-muted-foreground", !status && "ml-auto")} />
           </SidebarMenuButton>
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-60" side={isMobile ? "bottom" : "right"} align="start">

@@ -3,7 +3,7 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const KEY_STEP = 16;
-/** How far past `min` a drag must go before releasing it collapses the container (with `onCollapse`). */
+/** How far past `min` a drag must go to collapse the container (with `onCollapse`). */
 const COLLAPSE_SLACK = 56;
 
 export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "onChange"> {
@@ -21,8 +21,11 @@ export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "on
   onResize: (width: number) => void;
   /** Double-click (or Enter) puts the default width back. */
   onReset?: () => void;
-  /** Closes the container when a drag is released well past `min`; without it the width just stops at `min`. */
-  onCollapse?: () => void;
+  /**
+   * Closes (true) the container mid-drag once the pointer goes well past `min`, and reopens it (false) if the
+   * pointer comes back. Without it the width just stops at `min`.
+   */
+  onCollapse?: (collapsed: boolean) => void;
   /** 2 for a centered column, which grows on both sides as one edge moves. */
   scale?: number;
 }
@@ -33,7 +36,8 @@ export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "on
  * until it ends, so nothing re-renders or hits storage per pointer move.
  * While it's on, `data-resizing` on <html> pins the cursor and turns off
  * width transitions (index.css), so the container tracks the pointer exactly.
- * With `onCollapse`, dragging on past the minimum and letting go closes it.
+ * With `onCollapse`, dragging on past the minimum snaps the container shut,
+ * and dragging back opens it again, all before letting go.
  */
 export function ResizeHandle({
   label,
@@ -62,25 +66,26 @@ export function ResizeHandle({
     const startX = e.clientX;
     const start = measure();
     let width: number | null = null;
-    let collapse = false;
+    let collapsed = false;
     document.documentElement.dataset.resizing = "";
 
     const move = (ev: PointerEvent) => {
       const raw = start + sign * (ev.clientX - startX) * scale;
-      collapse = !!onCollapse && raw < min - COLLAPSE_SLACK;
       width = clamp(raw);
       preview(width);
+      if (onCollapse && (raw < min - COLLAPSE_SLACK) !== collapsed) {
+        collapsed = !collapsed;
+        onCollapse(collapsed);
+      }
     };
     const up = () => {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
-      // Transitions come back first, so a collapse animates.
       delete document.documentElement.dataset.resizing;
-      if (collapse) {
+      if (collapsed) {
         // Keep the saved width; it reopens as it was before the drag.
         preview(start);
-        onCollapse?.();
       } else if (width !== null) {
         setNow(width);
         onResize(width);

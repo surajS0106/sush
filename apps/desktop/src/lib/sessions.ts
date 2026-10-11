@@ -250,3 +250,17 @@ export function useSessionStatus(id: string): SessionStatus | null {
     return status === "submitted" || status === "streaming" ? "working" : status === "awaiting" ? "needs-input" : null;
   });
 }
+
+/** Across every Cowork session: `needs-input` if any is waiting on the user, else `working` if any is running. */
+export function useCoworkStatus(): SessionStatus | null {
+  return useSyncExternalStore(subscribe, () => {
+    let working = false;
+    for (const c of getConversations()) {
+      if (!c.workspaceId) continue;
+      const status = views.get().get(c.id)?.status;
+      if (status === "awaiting") return "needs-input";
+      if (status === "submitted" || status === "streaming") working = true;
+    }
+    return working ? "working" : null;
+  });
+}

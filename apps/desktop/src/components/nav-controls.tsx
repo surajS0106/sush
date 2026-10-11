@@ -1,6 +1,7 @@
 import { ArrowLeftIcon, ArrowRightIcon, PanelLeftIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 
+import { CoworkStatusBadge } from "@/components/cowork-status-dot";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -13,13 +14,17 @@ export interface Nav {
   forward: () => void;
 }
 
-/** Sidebar toggle plus back/forward, as in the title bar of Claude's desktop app. */
-export function NavControls({ nav }: { nav: Nav }) {
+/**
+ * Sidebar toggle plus back/forward, as in the title bar of Claude's desktop app.
+ * `coworkStatus` badges the toggle while a Cowork session runs; set it where the sidebar is hidden.
+ */
+export function NavControls({ nav, coworkStatus = false }: { nav: Nav; coworkStatus?: boolean }) {
   const { toggleSidebar } = useSidebar();
   return (
     <>
-      <ToolbarButton label="Toggle sidebar" onClick={toggleSidebar}>
+      <ToolbarButton label="Toggle sidebar" onClick={toggleSidebar} className="relative">
         <PanelLeftIcon />
+        {coworkStatus && <CoworkStatusBadge className="ring-background" />}
       </ToolbarButton>
       <ToolbarButton label="Back" disabled={!nav.canBack} onClick={nav.back}>
         <ArrowLeftIcon />
