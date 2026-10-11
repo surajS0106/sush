@@ -5,6 +5,7 @@ use std::sync::{Mutex, RwLock};
 use sush_core::mcp::{McpClient, ServerSpec};
 use sush_core::memory::MemoryDir;
 use sush_core::store::Store;
+use sush_core::workspace::sandbox::Sandbox;
 use sush_core::ProviderConfig;
 use tokio_util::sync::CancellationToken;
 
@@ -19,6 +20,10 @@ pub struct AppState {
     pub runs: crate::runs::Runs,
     /// Long-term memory files (`memory/` in the app data dir).
     pub memory: std::sync::Arc<MemoryDir>,
+    /// OS sandbox for Cowork shell commands (`sandbox/` in the app data dir).
+    pub sandbox: std::sync::Arc<Sandbox>,
+    /// Interactive terminals the user opened in Cowork, by id.
+    pub terminals: Mutex<HashMap<String, crate::terminal::Terminal>>,
     /// In-flight chat streams by id, so the UI can cancel them.
     pub streams: Mutex<HashMap<String, CancellationToken>>,
     pub http: reqwest::Client,
@@ -43,6 +48,8 @@ impl AppState {
             store: std::sync::Arc::new(Store::open(&data_dir)?),
             runs: Default::default(),
             memory: std::sync::Arc::new(MemoryDir::open(&data_dir.join("memory"))?),
+            sandbox: std::sync::Arc::new(Sandbox::new(data_dir.join("sandbox"))),
+            terminals: Default::default(),
             streams: Mutex::new(HashMap::new()),
             connectors: Default::default(),
             authorizing: Default::default(),

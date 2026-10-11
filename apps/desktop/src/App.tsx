@@ -6,6 +6,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { ChatView } from "@/components/chat-view";
 import { NavControls, type Nav } from "@/components/nav-controls";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { PanelToggles, WorkspaceChip } from "@/components/workspace-panel";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
@@ -25,6 +26,7 @@ export default function App() {
 
   const current = conversations.find((c) => c.id === activeId) ?? null;
   const startNew = () => setActiveId(getOrCreateEmptyConversation().id);
+  const startCowork = (workspaceId: string) => setActiveId(getOrCreateEmptyConversation(workspaceId).id);
 
   // Ctrl/⌘+N starts a session, Alt+←/→ walks the history.
   const keys = useRef({ startNew, nav });
@@ -77,6 +79,7 @@ export default function App() {
             activeId={activeId}
             onSelect={setActiveId}
             onNew={startNew}
+            onNewCowork={startCowork}
             onDelete={(id) => {
               deleteConversation(id);
               if (id === activeId) setActiveId(null);
@@ -85,7 +88,11 @@ export default function App() {
             nav={nav}
           />
           <SidebarInset className="min-w-0">
-            <AppHeader title={current && current.messages.length > 0 ? current.title : null} nav={nav} />
+            <AppHeader
+              title={current && current.messages.length > 0 ? current.title : null}
+              workspaceId={current?.workspaceId}
+              nav={nav}
+            />
             {current && (
               // Re-keyed on a prefill so the composer picks it up even if this chat was already open.
               <PromptInputProvider key={prefilled?.id ?? current.id} initialInput={current.messages.length === 0 ? prefilled?.prompt : undefined}>
@@ -108,7 +115,8 @@ export default function App() {
 }
 
 /** Doubles as the window's title bar: drag it to move the window, double-click to maximize. */
-function AppHeader({ title, nav }: { title: string | null; nav: Nav }) {
+/** For a Cowork session it also shows the folder chip and the side panel toggles. */
+function AppHeader({ title, workspaceId, nav }: { title: string | null; workspaceId?: string; nav: Nav }) {
   const { state, isMobile } = useSidebar();
   // The sidebar's title bar carries these while it's showing.
   const sidebarHidden = isMobile || state === "collapsed";
@@ -132,6 +140,15 @@ function AppHeader({ title, nav }: { title: string | null; nav: Nav }) {
         <span data-tauri-drag-region className={cn("truncate text-sm font-medium", !sidebarHidden && "px-2")}>
           {title}
         </span>
+      )}
+      {workspaceId && (
+        <>
+          <span className={cn(!title && !sidebarHidden && "pl-2")}>
+            <WorkspaceChip workspaceId={workspaceId} />
+          </span>
+          <span data-tauri-drag-region className="flex-1 self-stretch" />
+          <PanelToggles />
+        </>
       )}
     </header>
   );

@@ -11,6 +11,7 @@ import { AuthGate } from "./components/auth-gate";
 import { WindowControls } from "./components/window-controls";
 import { initMemory } from "./lib/memory";
 import { initSessions } from "./lib/sessions";
+import { initWorkspaces } from "./lib/workspaces";
 import { initStore } from "./lib/store";
 import { errorMessage } from "./lib/tauri";
 
@@ -38,7 +39,7 @@ const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement)
 
 // Conversations and memory load from disk before anything renders, so the UI
 // can read them synchronously; then follow the runs already going.
-Promise.all([initStore(), initMemory()])
+Promise.all([initStore(), initMemory(), initWorkspaces()])
   .then(initSessions)
   .then(
   () =>

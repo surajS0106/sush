@@ -15,6 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::message::{ChatRequest, Part};
+use crate::workspace::{Access, EditApproval, Workspace};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -43,6 +44,9 @@ pub struct ThreadMeta {
     pub target: Option<Value>,
     #[serde(default)]
     pub pinned: bool,
+    /// Set for Cowork sessions: the workspace they work in. Fixed once created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +90,26 @@ const MIGRATIONS: &[&str] = &[r#"
         size INTEGER NOT NULL
     );
     CREATE VIRTUAL TABLE chats_fts USING fts5(thread_id UNINDEXED, title, body);
+"#, r#"
+    ALTER TABLE threads ADD COLUMN workspace_id TEXT;
+    CREATE TABLE workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root TEXT NOT NULL,
+        access TEXT NOT NULL,
+        approval TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+    );
+    -- A file's content before a turn first changed it (sha NULL: it didn't exist).
+    CREATE TABLE checkpoints (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        sha TEXT,
+        UNIQUE (thread_id, turn_id, path)
+    );
 "#];
 
 pub struct Store {
@@ -108,7 +132,7 @@ impl Store {
     pub fn threads(&self) -> StoreResult<Vec<Thread>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, target, pinned FROM threads ORDER BY created_at DESC",
+            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id FROM threads ORDER BY created_at DESC",
         )?;
         let metas = stmt
             .query_map([], |r| {
@@ -120,6 +144,7 @@ impl Store {
                     updated_at: r.get(3)?,
                     target: target.and_then(|t| serde_json::from_str(&t).ok()),
                     pinned: r.get(5)?,
+                    workspace_id: r.get(6)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -169,6 +194,14 @@ impl Store {
         let mut stmt = conn.prepare("SELECT data FROM messages WHERE thread_id = ?1 ORDER BY seq")?;
         let rows = stmt.query_map([id], |r| r.get::<_, String>(0))?;
         rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
+    }
+
+    /// The workspace a saved thread was created in, if it's a Cowork session.
+    pub fn thread_workspace(&self, id: &str) -> StoreResult<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let found: Option<Option<String>> =
+            conn.query_row("SELECT workspace_id FROM threads WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(found.flatten())
     }
 
     pub fn delete_thread(&self, id: &str) -> StoreResult<()> {
@@ -303,6 +336,164 @@ impl Store {
     }
 }
 
+/// Files a turn changed, for "Undo".
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TurnChanges {
+    /// The user message that started the turn.
+    pub turn_id: String,
+    pub paths: Vec<String>,
+}
+
+/// A file's content before the changes being undone; `original: None` means it didn't exist.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Original {
+    pub workspace_id: String,
+    pub path: String,
+    pub original: Option<Vec<u8>>,
+}
+
+impl Store {
+    pub fn workspaces(&self) -> StoreResult<Vec<Workspace>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, name, root, access, approval, created_at FROM workspaces ORDER BY created_at")?;
+        let rows = stmt.query_map([], workspace_row)?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub fn workspace(&self, id: &str) -> StoreResult<Option<Workspace>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT id, name, root, access, approval, created_at FROM workspaces WHERE id = ?1", [id], workspace_row)
+            .optional()?)
+    }
+
+    pub fn save_workspace(&self, w: &Workspace) -> StoreResult<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO workspaces (id, name, root, access, approval, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (id) DO UPDATE SET name = ?2, access = ?4, approval = ?5",
+            params![w.id, w.name, w.root, w.access.as_str(), w.approval.as_str(), w.created_at],
+        )?;
+        Ok(())
+    }
+
+    /// Forget a workspace. Its sessions stay, without file access.
+    pub fn delete_workspace(&self, id: &str) -> StoreResult<()> {
+        self.conn.lock().unwrap().execute("DELETE FROM workspaces WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Remember a file's content before a turn's first change to it; later
+    /// changes in the same turn keep the first one.
+    pub fn add_checkpoint(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        workspace_id: &str,
+        path: &str,
+        original: Option<&[u8]>,
+    ) -> StoreResult<()> {
+        let exists = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT 1 FROM checkpoints WHERE thread_id = ?1 AND turn_id = ?2 AND path = ?3",
+                params![thread_id, turn_id, path],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if exists {
+            return Ok(());
+        }
+        let sha = match original {
+            Some(bytes) => {
+                let url = self.put_blob("application/octet-stream", bytes)?;
+                Some(blob_sha(&url).unwrap_or_default().to_string())
+            }
+            None => None,
+        };
+        self.conn.lock().unwrap().execute(
+            "INSERT OR IGNORE INTO checkpoints (thread_id, turn_id, workspace_id, path, sha) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![thread_id, turn_id, workspace_id, path, sha],
+        )?;
+        Ok(())
+    }
+
+    /// Each turn of a thread that changed files, oldest first.
+    pub fn turn_changes(&self, thread_id: &str) -> StoreResult<Vec<TurnChanges>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT turn_id, path FROM checkpoints WHERE thread_id = ?1 ORDER BY seq")?;
+        let rows = stmt.query_map([thread_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut turns: Vec<TurnChanges> = Vec::new();
+        for row in rows {
+            let (turn_id, path) = row?;
+            match turns.iter_mut().find(|t| t.turn_id == turn_id) {
+                Some(t) => t.paths.push(path),
+                None => turns.push(TurnChanges { turn_id, paths: vec![path] }),
+            }
+        }
+        Ok(turns)
+    }
+
+    /// What every file changed since `turn_id` began looked like before it,
+    /// and forget those checkpoints. Restoring them undoes that turn and the
+    /// ones after it.
+    pub fn take_originals_since(&self, thread_id: &str, turn_id: &str) -> StoreResult<Vec<Original>> {
+        let rows: Vec<(i64, String, String, Option<String>)> = {
+            let conn = self.conn.lock().unwrap();
+            let first: Option<i64> = conn.query_row(
+                "SELECT MIN(seq) FROM checkpoints WHERE thread_id = ?1 AND turn_id = ?2",
+                params![thread_id, turn_id],
+                |r| r.get(0),
+            )?;
+            let Some(first) = first else { return Ok(Vec::new()) };
+            let mut stmt = conn.prepare(
+                "SELECT seq, workspace_id, path, sha FROM checkpoints WHERE thread_id = ?1 AND seq >= ?2 ORDER BY seq",
+            )?;
+            let rows = stmt.query_map(params![thread_id, first], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut out: Vec<Original> = Vec::new();
+        for (_, workspace_id, path, sha) in &rows {
+            // The earliest checkpoint for a path is its state before all of these turns.
+            if out.iter().any(|o| &o.path == path) {
+                continue;
+            }
+            let original = match sha {
+                Some(sha) => Some(
+                    self.blob(sha)?
+                        .ok_or_else(|| StoreError::Invalid(format!("The saved copy of {path} is missing.")))?
+                        .1,
+                ),
+                None => None,
+            };
+            out.push(Original { workspace_id: workspace_id.clone(), path: path.clone(), original });
+        }
+        if let Some((first, ..)) = rows.first() {
+            self.conn
+                .lock()
+                .unwrap()
+                .execute("DELETE FROM checkpoints WHERE thread_id = ?1 AND seq >= ?2", params![thread_id, first])?;
+        }
+        Ok(out)
+    }
+}
+
+fn workspace_row(r: &rusqlite::Row) -> rusqlite::Result<Workspace> {
+    let access: String = r.get(3)?;
+    let approval: String = r.get(4)?;
+    Ok(Workspace {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        root: r.get(2)?,
+        access: Access::parse(&access).unwrap_or(Access::ReadOnly),
+        approval: EditApproval::parse(&approval).unwrap_or(EditApproval::Ask),
+        created_at: r.get(5)?,
+    })
+}
+
 fn migrate(conn: &Connection) -> StoreResult<()> {
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (i, sql) in MIGRATIONS.iter().enumerate().skip(version as usize) {
@@ -314,9 +505,10 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
 fn upsert_meta(conn: &Connection, m: &ThreadMeta) -> StoreResult<()> {
     let target = m.target.as_ref().map(serde_json::to_string).transpose()?;
     conn.execute(
-        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT (id) DO UPDATE SET title = ?2, updated_at = ?4, target = ?5, pinned = ?6",
-        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned],
+        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (id) DO UPDATE SET title = ?2, updated_at = ?4, target = ?5, pinned = ?6,
+             workspace_id = COALESCE(threads.workspace_id, ?7)",
+        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned, m.workspace_id],
     )?;
     Ok(())
 }
@@ -413,7 +605,15 @@ mod tests {
     use serde_json::json;
 
     fn meta(id: &str, title: &str, created_at: i64) -> ThreadMeta {
-        ThreadMeta { id: id.into(), title: title.into(), created_at, updated_at: created_at, target: None, pinned: false }
+        ThreadMeta {
+            id: id.into(),
+            title: title.into(),
+            created_at,
+            updated_at: created_at,
+            target: None,
+            pinned: false,
+            workspace_id: None,
+        }
     }
 
     fn text(role: &str, t: &str) -> Value {
@@ -515,6 +715,58 @@ mod tests {
         let store = Store::open(dir.path()).unwrap();
         assert_eq!(store.blob("../sush.db").unwrap(), None);
         assert_eq!(blob_sha("http://sushblob.localhost/../../etc/passwd"), None);
+    }
+
+    #[test]
+    fn checkpoints_keep_the_earliest_original_per_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.add_checkpoint("t", "turn1", "w", "a.txt", Some(b"v1")).unwrap();
+        store.add_checkpoint("t", "turn1", "w", "a.txt", Some(b"v1 edited")).unwrap(); // same turn: ignored
+        store.add_checkpoint("t", "turn2", "w", "a.txt", Some(b"v2")).unwrap();
+        store.add_checkpoint("t", "turn2", "w", "new.txt", None).unwrap();
+        store.add_checkpoint("other", "turn1", "w", "a.txt", Some(b"x")).unwrap();
+
+        let turns = store.turn_changes("t").unwrap();
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[1].paths, ["a.txt", "new.txt"]);
+
+        // Undoing turn 2 restores a.txt as it was after turn 1 and removes new.txt.
+        let originals = store.take_originals_since("t", "turn2").unwrap();
+        assert_eq!(
+            originals,
+            [
+                Original { workspace_id: "w".into(), path: "a.txt".into(), original: Some(b"v2".to_vec()) },
+                Original { workspace_id: "w".into(), path: "new.txt".into(), original: None },
+            ]
+        );
+        assert_eq!(store.turn_changes("t").unwrap().len(), 1);
+        // Undoing turn 1 goes back to before it.
+        assert_eq!(store.take_originals_since("t", "turn1").unwrap()[0].original, Some(b"v1".to_vec()));
+        assert!(store.take_originals_since("t", "turn1").unwrap().is_empty());
+    }
+
+    #[test]
+    fn workspaces_round_trip_and_threads_keep_theirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let w = Workspace {
+            id: "w".into(),
+            name: "proj".into(),
+            root: "/tmp/proj".into(),
+            access: Access::WorkspaceWrite,
+            approval: EditApproval::Ask,
+            created_at: 1,
+        };
+        store.save_workspace(&w).unwrap();
+        assert_eq!(store.workspace("w").unwrap(), Some(w));
+
+        let mut t = meta("t", "Cowork", 1);
+        t.workspace_id = Some("w".into());
+        store.save_thread(&t, Some(vec![])).unwrap();
+        // A later save without it doesn't detach the session.
+        store.save_thread(&meta("t", "Cowork", 1), None).unwrap();
+        assert_eq!(store.threads().unwrap()[0].meta.workspace_id.as_deref(), Some("w"));
     }
 
     #[test]

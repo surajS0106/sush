@@ -1,7 +1,6 @@
 // How `artifact_write` calls and web citations appear inside a message.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { save } from "@tauri-apps/plugin-dialog";
 import type { DynamicToolUIPart } from "ai";
 import { FileIcon } from "lucide-react";
 import type { ComponentProps } from "react";
@@ -46,8 +45,7 @@ export function ArtifactPart({ part, view }: { part: DynamicToolUIPart; view?: A
 
 async function saveArtifact(filename: string, version: Version) {
   try {
-    const path = await save({ defaultPath: filename });
-    if (path) await api.saveTextFile(path, version.code);
+    await api.saveTextFileAs(filename, version.code);
   } catch (e) {
     toast.error(`Couldn't save ${filename}: ${errorMessage(e)}`);
   }

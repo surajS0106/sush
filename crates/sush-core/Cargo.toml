@@ -10,19 +10,31 @@ async-stream = "0.3"
 async-trait.workspace = true
 base64 = "0.22"
 bytes.workspace = true
+cap-std = "4.0.3"
+dunce = "1.0.5"
 futures.workspace = true
 getrandom = "0.3"
+globset = "0.4.20"
+ignore = "0.4.33"
+regex = "1.13.1"
 reqwest.workspace = true
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["process", "io-util", "rt"] }
+tokio = { workspace = true, features = ["process", "io-util", "rt", "fs"] }
 tokio-util.workspace = true
+trash = "5.2.9"
 url = "2"
 
 [dev-dependencies]
 anyhow.workspace = true
 tempfile = "3.27.0"
 tokio = { workspace = true, features = ["net"] }
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.190"
+
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_Storage_FileSystem"] }

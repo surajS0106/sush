@@ -195,10 +195,33 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
 
 export type ToolResult = { output: unknown } | { errorText: string };
 
-export type ToolKind = "ask-user" | "memory" | "chats" | "skill" | "skill-save" | "artifact" | "connector" | "unknown";
+export type ToolKind =
+  | "ask-user"
+  | "memory"
+  | "chats"
+  | "skill"
+  | "skill-save"
+  | "artifact"
+  | "workspace"
+  | "connector"
+  | "unknown";
+
+/** Cowork file and shell tools. Rust offers and runs them (`sush_core::workspace::tools`). */
+export const WORKSPACE_TOOLS = new Set([
+  "fs_list",
+  "fs_glob",
+  "fs_read",
+  "fs_search",
+  "fs_write",
+  "fs_edit",
+  "fs_move",
+  "fs_delete",
+  "shell_run",
+]);
 
 export function toolKind(name: string): ToolKind {
   if (name === ASK_USER) return "ask-user";
+  if (WORKSPACE_TOOLS.has(name)) return "workspace";
   if (name === MEMORY_WRITE || name === MEMORY_DELETE || name === MEMORY_SAVE) return "memory";
   if (name === CHATS_SEARCH || name === CHAT_READ) return "chats";
   if (name === SKILL) return "skill";

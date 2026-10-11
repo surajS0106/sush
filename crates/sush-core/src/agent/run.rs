@@ -78,6 +78,9 @@ pub enum ToolExec {
     Connector { connector_id: String, tool: String },
     /// Run by the UI (memory, skills, artifacts, ...).
     Client,
+    /// A file or shell tool in the thread's Cowork workspace, run in Rust.
+    /// Only the host adds these; it drops any the UI sends.
+    Workspace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -124,6 +127,11 @@ pub trait RunHost: Send + Sync {
     async fn execute(&self, call: &ToolCall, exec: &ToolExec, cancel: CancellationToken) -> Result<Value, String>;
     fn emit(&self, event: RunEvent);
     async fn save(&self, messages: &[Value]);
+    /// Whether this call needs the user first. By default the tool's own
+    /// setting; hosts can decide per call (e.g. reading a secrets file).
+    fn approval(&self, _call: &ToolCall, tool: &RunTool) -> Approval {
+        tool.approval
+    }
 }
 
 /// Run `action` on a thread's `messages` and return them as they end up.
@@ -331,7 +339,7 @@ impl Runner<'_> {
                     "Unknown tool {}. It may belong to a connector that was turned off.",
                     call.name
                 ))),
-                Some(t) if t.approval == Approval::Auto => {
+                Some(t) if host.approval(&call, &t) == Approval::Auto => {
                     in_flight.insert(call.id.clone(), (index, call.clone()));
                     running.push(start(index, call, t.exec, self.cancel.child_token()));
                 }

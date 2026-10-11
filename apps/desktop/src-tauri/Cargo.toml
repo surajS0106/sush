@@ -32,6 +32,8 @@ tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-util.workspace = true
 url = "2"
 whisper-rs = "0.16"
+dunce = "1.0.5"
+portable-pty = "0.9.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

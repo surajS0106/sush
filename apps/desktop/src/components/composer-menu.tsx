@@ -2,7 +2,6 @@
 // connectors / design system / plugins, and toggle research, memory and
 // clarifying questions.
 
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
   BlocksIcon,
   BrainIcon,
@@ -87,10 +86,9 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   const manage = (section: SettingsSection) => openSettings({ section });
 
   const addFolder = async () => {
-    const path = await openDialog({ directory: true, title: "Add folder" });
-    if (typeof path !== "string") return;
     try {
-      const folder = await api.readFolder(path);
+      const folder = await api.pickFolderAttachment();
+      if (!folder) return;
       if (folder.files.length === 0) {
         toast.error(`No readable text files in ${folder.name}`);
         return;

@@ -250,3 +250,30 @@
     display: none;
   }
 }
+
+/* Cowork file viewer: shiki output (or the plain fallback) with line numbers. */
+.code-view pre.shiki {
+  margin: 0;
+  padding: 0.5rem 0;
+  background: transparent !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.code-view pre.shiki code {
+  counter-reset: line;
+  display: block;
+}
+.code-view pre.shiki .line::before {
+  counter-increment: line;
+  content: counter(line);
+  display: inline-block;
+  width: 3.25rem;
+  margin-right: 1rem;
+  padding-right: 0.5rem;
+  text-align: right;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  user-select: none;
+}
+.dark .code-view pre.shiki span {
+  color: var(--shiki-dark) !important;
+}

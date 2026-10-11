@@ -12,6 +12,7 @@ pub mod providers;
 pub mod sse;
 pub mod store;
 pub mod transcribe;
+pub mod workspace;
 
 pub use error::ProviderError;
 pub use message::{ChatEvent, ChatRequest, FinishReason, Message, Part, Role, ToolSpec, WebSource};

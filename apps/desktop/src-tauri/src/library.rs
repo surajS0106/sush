@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use sush_core::mcp::ServerCommand;
+use tauri::AppHandle;
+use tauri_plugin_dialog::DialogExt;
 
 use crate::error::{AppError, AppResult};
 
@@ -32,20 +34,32 @@ pub struct Folder {
     truncated: bool,
 }
 
-/// Text files under `path`, honouring `.gitignore` and skipping hidden files,
-/// binaries and anything over the caps.
+/// Ask the user for a folder and return its text files, honouring
+/// `.gitignore` and skipping hidden files, binaries and anything over the
+/// caps. `None` if they cancelled. The dialog opens here so the webview can't
+/// read a folder the user didn't pick.
 #[tauri::command]
-pub async fn read_folder(path: String) -> AppResult<Folder> {
-    tokio::task::spawn_blocking(move || walk(Path::new(&path)))
-        .await
-        .map_err(|e| AppError::Invalid(e.to_string()))?
+pub async fn pick_folder_attachment(app: AppHandle) -> AppResult<Option<Folder>> {
+    tokio::task::spawn_blocking(move || {
+        let Some(picked) = app.dialog().file().set_title("Add folder").blocking_pick_folder() else { return Ok(None) };
+        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("That folder can't be used: {e}")))?;
+        walk(&path).map(Some)
+    })
+    .await
+    .map_err(|e| AppError::Invalid(e.to_string()))?
 }
 
-/// Write an artifact to the path the user picked in a save dialog.
+/// Save text where the user picks in a save dialog. Returns whether it was saved.
 #[tauri::command]
-pub async fn save_text_file(path: String, contents: String) -> AppResult<()> {
-    tokio::fs::write(path, contents).await?;
-    Ok(())
+pub async fn save_text_file_as(app: AppHandle, file_name: String, contents: String) -> AppResult<bool> {
+    tokio::task::spawn_blocking(move || {
+        let Some(picked) = app.dialog().file().set_file_name(file_name).blocking_save_file() else { return Ok(false) };
+        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("Can't save there: {e}")))?;
+        std::fs::write(path, contents)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| AppError::Invalid(e.to_string()))?
 }
 
 fn walk(root: &Path) -> AppResult<Folder> {

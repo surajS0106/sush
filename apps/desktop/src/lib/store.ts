@@ -19,6 +19,8 @@ export interface Conversation {
   updatedAt: number;
   target?: ModelTarget;
   pinned?: boolean;
+  /** Set for Cowork sessions: the workspace (granted folder) they work in. */
+  workspaceId?: string;
   messages: SushUIMessage[];
 }
 
@@ -107,10 +109,17 @@ export function useAskUser() {
 export const setAskUser = (on: boolean) => askUser.set(on);
 export const getAskUser = () => askUser.get();
 
-export function createConversation(): Conversation {
+export function createConversation(workspaceId?: string): Conversation {
   const now = Date.now();
   // Saved once it has messages, so untouched chats don't pile up on disk.
-  const convo: Conversation = { id: crypto.randomUUID(), title: "New chat", createdAt: now, updatedAt: now, messages: [] };
+  const convo: Conversation = {
+    id: crypto.randomUUID(),
+    title: "New chat",
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+    ...(workspaceId ? { workspaceId } : {}),
+  };
   conversations.set((all) => [convo, ...all]);
   return convo;
 }
@@ -175,6 +184,9 @@ function readLegacy(): StoredThread[] {
 }
 
 /** An untouched chat if there is one, otherwise a new one. Reads live state, so repeated calls never pile up empty chats. */
-export function getOrCreateEmptyConversation(): Conversation {
-  return conversations.get().find((c) => c.messages.length === 0) ?? createConversation();
+export function getOrCreateEmptyConversation(workspaceId?: string): Conversation {
+  return (
+    conversations.get().find((c) => c.messages.length === 0 && c.workspaceId === workspaceId) ??
+    createConversation(workspaceId)
+  );
 }

@@ -7,17 +7,25 @@
 //!
 //! Connector tools run here. Tools the UI owns (memory, skills, artifacts) are
 //! requested with a `client-tool` frame and answered with `tool_result`.
+//!
+//! A Cowork session's run also gets its workspace's file and shell tools.
+//! Those are added here, never taken from the UI, and whether each call needs
+//! approval is decided here too (`workspace::tools::approval`). Every change
+//! is checkpointed first so a turn can be undone (`workspaces.rs`).
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sush_core::agent::ui::{self, ToolCall, STOPPED};
-use sush_core::agent::{self, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, ToolExec};
+use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
 use sush_core::provider::EventStream;
 use sush_core::store::ThreadMeta;
+use sush_core::workspace::sandbox::SandboxStatus;
+use sush_core::workspace::{tools as ws_tools, Workspace, WorkspaceFs};
 use sush_core::ChatRequest;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
@@ -39,6 +47,8 @@ pub enum RunFrame {
     ClientTool { thread_id: String, call_id: String, name: String, input: Value },
     /// The thread was written to disk; its metadata as stored.
     Saved { thread: ThreadMeta },
+    /// A Cowork tool changed files (or may have, for shell commands).
+    FilesChanged { thread_id: String, workspace_id: String },
 }
 
 #[derive(Serialize)]
@@ -68,6 +78,16 @@ struct Live {
     inbox: mpsc::UnboundedSender<Inbox>,
     /// Becomes true once the run has saved and ended.
     done: watch::Receiver<bool>,
+    cowork: Option<Cowork>,
+}
+
+/// A Cowork run's folder. The workspace settings refresh when the user
+/// answers mid-run (e.g. "Allow all edits"); the folder itself can't change.
+struct Cowork {
+    workspace: Mutex<Workspace>,
+    fs: Arc<WorkspaceFs>,
+    /// The sandbox as checked when the run started.
+    sandbox: SandboxStatus,
 }
 
 struct LiveState {
@@ -152,6 +172,41 @@ impl RunHost for Host {
                 runs.client_calls.lock().unwrap().remove(&call.id);
                 result
             }
+            ToolExec::Workspace => {
+                let Some(cowork) = &self.live.cowork else {
+                    return Err("This session's workspace folder is no longer available.".into());
+                };
+                let workspace = cowork.workspace.lock().unwrap().clone();
+                // Changes are grouped by the turn (the user message) that made them, for undo.
+                let turn = {
+                    let live = self.live.state.lock().unwrap();
+                    let user = live.messages.iter().rev().find(|m| ui::role(m) == Some("user"));
+                    user.and_then(|m| m.get("id")).and_then(Value::as_str).unwrap_or_default().to_string()
+                };
+                let store = state.store.clone();
+                let (thread_id, workspace_id) = (self.thread_id.clone(), workspace.id.clone());
+                let checkpoint: ws_tools::Checkpoint = Arc::new(move |path: &str, original: Option<Vec<u8>>| {
+                    store
+                        .add_checkpoint(&thread_id, &turn, &workspace_id, path, original.as_deref())
+                        .map_err(|e| format!("Couldn't keep a copy of {path} for undo, so it wasn't changed: {e}"))
+                });
+                let result =
+                    ws_tools::execute(cowork.fs.clone(), &workspace, &call.name, call.input.clone(), cancel, checkpoint, &state.sandbox)
+                        .await;
+                if ws_tools::changes_files(&call.name) {
+                    state.runs.send(RunFrame::FilesChanged { thread_id: self.thread_id.clone(), workspace_id: workspace.id });
+                }
+                result
+            }
+        }
+    }
+
+    fn approval(&self, call: &ToolCall, tool: &RunTool) -> Approval {
+        match (&tool.exec, &self.live.cowork) {
+            (ToolExec::Workspace, Some(cowork)) => {
+                ws_tools::approval(&cowork.workspace.lock().unwrap(), &call.name, &call.input, Some(&cowork.sandbox))
+            }
+            _ => tool.approval,
         }
     }
 
@@ -238,9 +293,13 @@ pub async fn run_start(
 ) -> AppResult<()> {
     let runs = &state.runs;
     let _starting = runs.starting.lock().await;
+    let (config, cowork) = prepare(&state, &thread, config).await?;
     let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
     if let Some(live) = existing {
         if let RunAction::Respond { call_id, response } = &action {
+            if let (Some(current), Some(fresh)) = (&live.cowork, &cowork) {
+                *current.workspace.lock().unwrap() = fresh.workspace.lock().unwrap().clone();
+            }
             let answer = Inbox { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()) };
             if !live.cancel.is_cancelled() && live.inbox.send(answer).is_ok() {
                 return Ok(());
@@ -262,6 +321,7 @@ pub async fn run_start(
         cancel: CancellationToken::new(),
         inbox,
         done,
+        cowork,
     });
     runs.live.lock().unwrap().insert(thread.id.clone(), live.clone());
 
@@ -278,6 +338,44 @@ pub async fn run_start(
         let _ = done_tx.send(true);
     });
     Ok(())
+}
+
+/// The config a run gets: the UI's, minus anything posing as a workspace
+/// tool, plus the workspace's tools and instructions for a Cowork session.
+async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>)> {
+    config.tools.retain(|t| t.exec != ToolExec::Workspace && !ws_tools::is_workspace_tool(&t.spec.name));
+    let store = state.store.clone();
+    let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
+    let workspace = blocking(move || {
+        // A saved session keeps the workspace it was created with.
+        let workspace_id = store.thread_workspace(&id)?.or(claimed);
+        Ok(match workspace_id {
+            Some(w) => store.workspace(&w)?,
+            None => None,
+        })
+    })
+    .await?;
+    let Some(workspace) = workspace else { return Ok((config, None)) };
+    let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
+    let mut sandbox = state.sandbox.status().await;
+    if sandbox.available {
+        // On Windows this grants the folder to the sandbox (once; it can take a while).
+        if let Err(e) = state.sandbox.prepare(Path::new(&workspace.root)).await {
+            sandbox.available = false;
+            sandbox.network_blocked = false;
+            sandbox.detail = format!("The sandbox couldn't be set up for this folder, so every command asks first: {e}");
+        }
+    }
+    let section = ws_tools::system_section(&workspace, &fs, &sandbox);
+    config.system = Some(match config.system.take() {
+        Some(system) => format!("{system}\n\n---\n\n{section}"),
+        None => section,
+    });
+    // Approval is decided per call by `Host::approval`; this is only the fallback.
+    config.tools.extend(
+        ws_tools::specs(workspace.access).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+    );
+    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox })))
 }
 
 /// Stop a thread's run: the model stream and any tool calls in flight.

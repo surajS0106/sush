@@ -2,11 +2,31 @@
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { DynamicToolUIPart } from "ai";
-import { BrainIcon, FileIcon, FolderIcon, GlobeIcon, MessagesSquareIcon, PlugIcon, ScrollTextIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import {
+  ArrowRightIcon,
+  BrainIcon,
+  FileIcon,
+  FilePenIcon,
+  FolderIcon,
+  GlobeIcon,
+  MessagesSquareIcon,
+  PlugIcon,
+  ScrollTextIcon,
+  SearchIcon,
+  TerminalIcon,
+  Trash2Icon,
+} from "lucide-react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
-import { SkillSaveCard, ToolApprovalCard, ToolResultRow } from "@/components/tool-approval-card";
+import {
+  CodeBlock,
+  EditDiff,
+  SkillSaveCard,
+  ToolApprovalCard,
+  ToolResultRow,
+  WorkspaceApprovalCard,
+} from "@/components/tool-approval-card";
 import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
@@ -25,14 +45,17 @@ import { parseCommits, parsePullRequest } from "@/lib/github";
 import { allowTool } from "@/lib/library";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
+import type { SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type WebActivity } from "@/lib/transport";
+import { cn } from "@/lib/utils";
+import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
 
 interface ToolPartProps {
   part: DynamicToolUIPart;
   /** Only the latest turn's pending calls can still be answered or approved. */
   canAnswer: boolean;
   onResult: (result: ToolResult) => void;
-  /** Let a waiting connector call run; Rust calls the connector. */
+  /** Let a waiting connector or Cowork call run; Rust runs it. */
   onApprove: () => void;
 }
 
@@ -48,6 +71,8 @@ export function ToolPart(props: ToolPartProps) {
       return <SkillPart part={props.part} />;
     case "skill-save":
       return <SkillSavePart {...props} />;
+    case "workspace":
+      return <WorkspacePart {...props} />;
     default:
       return <ConnectorPart {...props} />;
   }
@@ -207,6 +232,170 @@ function SkillSavePart({ part, canAnswer, onResult }: ToolPartProps) {
           }}
         />
       );
+  }
+}
+
+// --- cowork ---------------------------------------------------------------------------
+
+interface WorkspaceInput {
+  path?: string;
+  pattern?: string;
+  content?: string;
+  old_string?: string;
+  new_string?: string;
+  from?: string;
+  to?: string;
+  command?: string;
+  cwd?: string;
+  network?: boolean;
+  unsandboxed?: boolean;
+  justification?: string;
+}
+
+/** What a Cowork call does, as a short phrase and an icon. */
+function describeWorkspaceCall(name: string, input: WorkspaceInput): { icon: typeof FileIcon; done: string; doing: string } {
+  const path = input.path || "the folder";
+  switch (name) {
+    case "fs_list":
+      return { icon: FolderIcon, done: `Listed ${path}`, doing: `Listing ${path}` };
+    case "fs_glob":
+      return { icon: SearchIcon, done: `Found files matching ${input.pattern ?? ""}`, doing: "Finding files" };
+    case "fs_search":
+      return { icon: SearchIcon, done: `Searched for “${input.pattern ?? ""}”`, doing: "Searching files" };
+    case "fs_read":
+      return { icon: FileIcon, done: `Read ${path}`, doing: `Reading ${path}` };
+    case "fs_write":
+      return { icon: FilePenIcon, done: `Wrote ${path}`, doing: `Writing ${path}` };
+    case "fs_edit":
+      return { icon: FilePenIcon, done: `Edited ${path}`, doing: `Editing ${path}` };
+    case "fs_move":
+      return { icon: ArrowRightIcon, done: `Moved ${input.from ?? ""} to ${input.to ?? ""}`, doing: "Moving a file" };
+    case "fs_delete":
+      return { icon: Trash2Icon, done: `Deleted ${path}`, doing: `Deleting ${path}` };
+    default:
+      return { icon: TerminalIcon, done: `Ran ${input.command ?? "a command"}`, doing: "Running a command" };
+  }
+}
+
+const EDIT_TOOLS = new Set(["fs_write", "fs_edit", "fs_move", "fs_delete"]);
+/** Calls about one file, which "Open" shows in the viewer. */
+const FILE_TOOLS = new Set(["fs_read", "fs_write", "fs_edit"]);
+
+function WorkspacePart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
+  const workspace = useContext(CurrentWorkspace);
+  const sandbox = useSandboxStatus();
+  const [approved, setApproved] = useState(false);
+  const inFlight = useRunningToolCalls().has(part.toolCallId);
+  const input = (part.input ?? {}) as WorkspaceInput;
+  const { icon: Icon, done, doing } = describeWorkspaceCall(part.toolName, input);
+  const label = (text: string, suffix?: string) => (
+    <>
+      <Icon className="size-4 shrink-0" />
+      <span className={cn("line-clamp-1 text-left", part.toolName === "shell_run" && "font-mono text-xs")}>{text}</span>
+      {suffix && <span className="shrink-0 opacity-70">· {suffix}</span>}
+    </>
+  );
+
+  switch (part.state) {
+    case "input-streaming":
+      return <LoadingState label={doing} />;
+    case "output-available": {
+      const file = FILE_TOOLS.has(part.toolName) ? input.path : undefined;
+      return (
+        <ToolResultRow
+          label={label(done)}
+          detail={String(part.output ?? "")}
+          action={
+            workspace && file ? (
+              <button
+                type="button"
+                className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                onClick={() => openFile(workspace.id, file)}
+              >
+                Open
+              </button>
+            ) : undefined
+          }
+        />
+      );
+    }
+    case "output-error": {
+      const quiet = part.errorText === DENIED || part.errorText === STOPPED;
+      return (
+        <ToolResultRow
+          error={!quiet}
+          label={label(done, part.errorText === DENIED ? "denied" : part.errorText === STOPPED ? "stopped" : "failed")}
+          detail={quiet ? undefined : part.errorText}
+        />
+      );
+    }
+    default: {
+      // The run starts calls that need no approval itself and reports them as running.
+      if (approved || inFlight) return <LoadingState label={doing} />;
+      if (!canAnswer) return <p className="text-sm text-muted-foreground italic">{done} didn’t happen</p>;
+      const allow = () => {
+        setApproved(true);
+        onApprove();
+      };
+      const allowAll =
+        workspace && EDIT_TOOLS.has(part.toolName)
+          ? () => {
+              setApproved(true);
+              // Later edits in this folder run without asking; this one goes ahead now.
+              void updateWorkspace(workspace.id, workspace.access, "auto-edits").finally(onApprove);
+            }
+          : undefined;
+      return (
+        <WorkspaceApprovalCard
+          {...workspaceRequest(part.toolName, input, sandbox)}
+          onAllow={allow}
+          onAllowAll={allowAll}
+          onDeny={() => onResult({ errorText: DENIED })}
+        />
+      );
+    }
+  }
+}
+
+/** The approval card's question and preview for a Cowork call. */
+/** How a command will run, for its approval card. */
+function commandNote(input: WorkspaceInput, sandbox: SandboxStatus | null): string {
+  const where = `In ${input.cwd || "the workspace folder"}. `;
+  const why = input.justification ? ` Why: ${input.justification}` : "";
+  if (input.unsandboxed || !sandbox?.available) {
+    return `${where}Runs outside the sandbox, on your computer with your permissions.${why}`;
+  }
+  if (input.network) return `${where}Runs in the sandbox (changes only this folder) but with network access.${why}`;
+  return sandbox.networkBlocked
+    ? `${where}Runs in the sandbox: it can change files only in this folder and has no network.`
+    : `${where}Runs in the sandbox: it can change files only in this folder. Network isn’t blocked on this system.`;
+}
+
+function workspaceRequest(
+  name: string,
+  input: WorkspaceInput,
+  sandbox: SandboxStatus | null,
+): { title: string; note?: string; children?: React.ReactNode } {
+  const path = input.path ?? "";
+  switch (name) {
+    case "shell_run":
+      return {
+        title: input.unsandboxed ? "Run this command outside the sandbox?" : "Run this command?",
+        note: commandNote(input, sandbox),
+        children: <CodeBlock text={input.command ?? ""} lines={20} />,
+      };
+    case "fs_edit":
+      return { title: `Edit ${path}?`, children: <EditDiff before={input.old_string ?? ""} after={input.new_string ?? ""} /> };
+    case "fs_write":
+      return { title: `Write ${path}?`, note: "Creates the file, or replaces everything in it.", children: <CodeBlock text={input.content ?? ""} /> };
+    case "fs_move":
+      return { title: `Move ${input.from ?? ""} to ${input.to ?? ""}?` };
+    case "fs_delete":
+      return { title: `Delete ${path}?`, note: "It goes to the trash." };
+    case "fs_read":
+      return { title: `Read ${path}?`, note: "This file may hold passwords or keys, which would be sent to the model." };
+    default:
+      return { title: `Allow ${name}?` };
   }
 }
 

@@ -1,5 +1,15 @@
-import { ArrowDownIcon, ArrowUpIcon, CopyIcon, PencilIcon, RefreshCcwIcon, SettingsIcon, WrenchIcon } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CopyIcon,
+  PencilIcon,
+  RefreshCcwIcon,
+  SettingsIcon,
+  Undo2Icon,
+  WrenchIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 
 import {
   Conversation,
@@ -9,11 +19,13 @@ import {
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { ActivityGroup, groupParts } from "@/components/activity-group";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
 import { Composer } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
+import { CoworkPanel } from "@/components/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -46,7 +58,9 @@ import {
   useThread,
 } from "@/lib/sessions";
 import { setTarget, type Conversation as StoredConversation } from "@/lib/store";
+import { errorMessage, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
+import { CurrentWorkspace, undoTurn, useTurnChanges, useWorkspace } from "@/lib/workspaces";
 
 interface ChatViewProps {
   conversation: StoredConversation;
@@ -77,6 +91,34 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   // `streaming` also covers tools running between model steps.
   const busy = runStatus === "submitted" || runStatus === "streaming";
   const status = runStatus === "awaiting" ? "ready" : runStatus;
+
+  // Cowork: the folder this session works in, and the files each turn changed.
+  const workspaceId = conversation.workspaceId;
+  const workspace = useWorkspace(workspaceId);
+  const turnChanges = useTurnChanges(id, !!workspaceId && !busy);
+  const changedPaths = useMemo(() => new Set([...turnChanges.values()].flat()), [turnChanges]);
+  // Each assistant message belongs to the turn its preceding user message started.
+  const turnOf = useMemo(() => {
+    const turns = new Map<string, string>();
+    let user: string | undefined;
+    for (const m of messages) {
+      if (m.role === "user") user = m.id;
+      else if (user) turns.set(m.id, user);
+    }
+    return turns;
+  }, [messages]);
+  const undo = (turnId: string, files: string[]) => {
+    if (!workspaceId) return;
+    const many = files.length === 1 ? "1 file" : `${files.length} files`;
+    if (!window.confirm(`Put back ${many} as they were before this turn? Changes from later turns to the same files are undone too.`)) return;
+    undoTurn(id, workspaceId, turnId)
+      .then((r) => {
+        if (r.failed.length > 0) toast.error(`Couldn’t restore ${r.failed.length} file(s)`, { description: r.failed.join("\n") });
+        else toast.success(`Restored ${r.restored.length === 1 ? "1 file" : `${r.restored.length} files`}`);
+      })
+      .catch((e) => toast.error(errorMessage(e)));
+  };
+  const panel = workspace ? <CoworkPanel workspace={workspace} changed={changedPaths} /> : null;
 
   const submit = (msg: PromptInputMessage) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
@@ -128,11 +170,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   );
 
   if (messages.length === 0) {
-    return (
+    const start = (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-[10vh]">
         <div className="w-full max-w-2xl">
           {hasProviders === null ? null : hasProviders ? (
-            <h1 className="mb-7 text-center text-[28px] font-medium tracking-tight">{greeting(firstName)}</h1>
+            <h1 className="mb-7 text-center text-[28px] font-medium tracking-tight">
+              {workspaceId ? `What should we work on${workspace ? ` in ${workspace.name}` : ""}?` : greeting(firstName)}
+            </h1>
           ) : (
             <div className="mb-7 flex flex-col items-center gap-3 text-center">
               <h1 className="text-[28px] font-medium tracking-tight">Connect a model to get started</h1>
@@ -149,16 +193,21 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
             <Suggestion
               label="Try asking"
               className="mt-5 w-full px-2"
-              suggestionSets={SUGGESTIONS}
+              suggestionSets={workspaceId ? COWORK_SUGGESTIONS : SUGGESTIONS}
               onSelect={(text) => submit({ text, files: [] })}
             />
           )}
         </div>
       </div>
     );
+    return (
+      <WorkspaceFrame workspace={workspace} panel={panel}>
+        {start}
+      </WorkspaceFrame>
+    );
   }
 
-  return (
+  const chat = (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 py-8">
@@ -178,6 +227,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
               onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
+              changedFiles={busy ? undefined : turnChanges.get(turnOf.get(message.id) ?? "")}
+              onUndo={() => {
+                const turnId = turnOf.get(message.id);
+                const files = turnId ? turnChanges.get(turnId) : undefined;
+                if (turnId && files) undo(turnId, files);
+              }}
             />
           ))}
           {waiting && (
@@ -228,6 +283,30 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       </Dialog>
     </div>
   );
+  return (
+    <WorkspaceFrame workspace={workspace} panel={panel}>
+      {chat}
+    </WorkspaceFrame>
+  );
+}
+
+interface WorkspaceFrameProps {
+  workspace: Workspace | null;
+  /** The Cowork side panel (files, terminal), or nothing for a plain chat. */
+  panel: React.ReactNode;
+  children: React.ReactNode;
+}
+
+/** Puts a Cowork session's side panel beside the chat; tool cards read the workspace from here. */
+function WorkspaceFrame({ workspace, panel, children }: WorkspaceFrameProps) {
+  return (
+    <CurrentWorkspace.Provider value={workspace}>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        {panel}
+      </div>
+    </CurrentWorkspace.Provider>
+  );
 }
 
 /** Matches the errors providers return when a model was sent tools it can't call. */
@@ -248,6 +327,22 @@ function greeting(name?: string, hour = new Date().getHours()) {
 
 // Starter prompts under the empty-state composer. Each is complete, so picking
 // one sends it; the shuffle button cycles between sets.
+/** Starters for a Cowork session, about the folder it works in. */
+const COWORK_SUGGESTIONS = [
+  [
+    "Explain how this folder is organised",
+    "Find the TODOs and summarise them",
+    "Write a README for this project",
+    "Run the tests and fix what fails",
+  ],
+  [
+    "What does this project do?",
+    "Look for bugs in the most recently changed files",
+    "Tidy up the formatting of the docs",
+    "List the dependencies and what each is for",
+  ],
+];
+
 const SUGGESTIONS = [
   [
     "Plan a relaxed 3-day trip to Kyoto",
@@ -307,6 +402,9 @@ interface ChatMessageProps {
   /** A waiting connector call the user allowed; Rust runs it. */
   onApprove: (toolCallId: string) => void;
   artifacts: Map<string, ArtifactView>;
+  /** Cowork: files this turn changed, which "Undo" puts back. */
+  changedFiles?: string[];
+  onUndo: () => void;
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -373,6 +471,8 @@ function ChatMessage({
   onToolResult,
   onApprove,
   artifacts,
+  changedFiles,
+  onUndo,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
   // Web pages the reply cites inline, numbered by first citation.
@@ -402,65 +502,75 @@ function ChatMessage({
   const { inputTokens, outputTokens, model } = message.metadata ?? {};
   const cost = formatCost(model, inputTokens, outputTokens, local);
 
+  const renderPart = (part: SushUIMessage["parts"][number], i: number) => {
+    const key = `${message.id}-${i}`;
+    switch (part.type) {
+      case "reasoning":
+        // Chats saved before thinking summaries were requested can hold empty ones.
+        if (!part.text) return null;
+        return (
+          <Reasoning key={key} isStreaming={streaming && part.state === "streaming"}>
+            <ReasoningTrigger />
+            <ReasoningContent>{part.text}</ReasoningContent>
+          </Reasoning>
+        );
+      case "text":
+        return (
+          <MessageContent key={key}>
+            {message.role === "assistant" ? (
+              <MessageResponse isAnimating={streaming} components={markdownComponents}>
+                {part.text}
+              </MessageResponse>
+            ) : (
+              <UserText text={part.text} />
+            )}
+          </MessageContent>
+        );
+      case "dynamic-tool":
+        if (part.toolName === ARTIFACT_WRITE) {
+          return <ArtifactPart key={key} part={part} view={artifacts.get(part.toolCallId)} />;
+        }
+        return (
+          <ToolPart
+            key={key}
+            part={part}
+            canAnswer={canAnswer}
+            onResult={(result) => onToolResult(part.toolCallId, result)}
+            onApprove={() => onApprove(part.toolCallId)}
+          />
+        );
+      case "data-web":
+        return <WebActivityPart key={key} activity={part.data} />;
+      case "file":
+        return part.mediaType.startsWith("image/") ? (
+          <img
+            key={key}
+            src={part.url}
+            alt={part.filename ?? "attachment"}
+            className="max-h-64 w-fit rounded-lg border object-contain"
+          />
+        ) : (
+          <div key={key} className="flex justify-end">
+            <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
+          </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <SourcesProvider defaultExpanded={false}>
       <Message from={message.role}>
-        {message.parts.map((part, i) => {
-          const key = `${message.id}-${i}`;
-          switch (part.type) {
-            case "reasoning":
-              // Chats saved before thinking summaries were requested can hold empty ones.
-              if (!part.text) return null;
-              return (
-                <Reasoning key={key} isStreaming={streaming && part.state === "streaming"}>
-                  <ReasoningTrigger />
-                  <ReasoningContent>{part.text}</ReasoningContent>
-                </Reasoning>
-              );
-            case "text":
-              return (
-                <MessageContent key={key}>
-                  {message.role === "assistant" ? (
-                    <MessageResponse isAnimating={streaming} components={markdownComponents}>
-                      {part.text}
-                    </MessageResponse>
-                  ) : (
-                    <UserText text={part.text} />
-                  )}
-                </MessageContent>
-              );
-            case "dynamic-tool":
-              if (part.toolName === ARTIFACT_WRITE) {
-                return <ArtifactPart key={key} part={part} view={artifacts.get(part.toolCallId)} />;
-              }
-              return (
-                <ToolPart
-                  key={key}
-                  part={part}
-                  canAnswer={canAnswer}
-                  onResult={(result) => onToolResult(part.toolCallId, result)}
-                  onApprove={() => onApprove(part.toolCallId)}
-                />
-              );
-            case "data-web":
-              return <WebActivityPart key={key} activity={part.data} />;
-            case "file":
-              return part.mediaType.startsWith("image/") ? (
-                <img
-                  key={key}
-                  src={part.url}
-                  alt={part.filename ?? "attachment"}
-                  className="max-h-64 w-fit rounded-lg border object-contain"
-                />
-              ) : (
-                <div key={key} className="flex justify-end">
-                  <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
-                </div>
-              );
-            default:
-              return null;
-          }
-        })}
+        {groupParts(message.parts).map((item) =>
+          Array.isArray(item) ? (
+            <ActivityGroup key={`${message.id}-g${item[0]}`} parts={item.map((i) => message.parts[i])}>
+              {item.map((i) => renderPart(message.parts[i], i))}
+            </ActivityGroup>
+          ) : (
+            renderPart(message.parts[item], item)
+          ),
+        )}
         {sources.length > 0 && <CitedSourceList sources={sources} />}
         {message.role === "user" && text && (
           <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -483,6 +593,14 @@ function ChatMessage({
               {canRegenerate && (
                 <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
                   <RefreshCcwIcon className="size-3.5" />
+                </MessageAction>
+              )}
+              {changedFiles && changedFiles.length > 0 && (
+                <MessageAction
+                  tooltip={`Undo file changes (${changedFiles.length === 1 ? changedFiles[0] : `${changedFiles.length} files`})`}
+                  onClick={onUndo}
+                >
+                  <Undo2Icon className="size-3.5" />
                 </MessageAction>
               )}
             </MessageActions>

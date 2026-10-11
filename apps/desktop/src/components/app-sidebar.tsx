@@ -3,6 +3,9 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleHelpIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  FolderPlusIcon,
   LogOutIcon,
   GitPullRequestIcon,
   LoaderCircleIcon,
@@ -60,7 +63,9 @@ import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { openSettings } from "@/lib/library";
+import { errorMessage } from "@/lib/tauri";
 import { useSessionStatus } from "@/lib/sessions";
+import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
 import { togglePinned, type Conversation } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
@@ -85,12 +90,14 @@ interface AppSidebarProps {
   activeId: string | null;
   onSelect: (id: string) => void;
   onNew: () => void;
+  /** Start a Cowork session in a workspace. */
+  onNewCowork: (workspaceId: string) => void;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   nav: Nav;
 }
 
-export function AppSidebar({ conversations, activeId, onSelect, onNew, onDelete, onOpenSettings, nav }: AppSidebarProps) {
+export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowork, onDelete, onOpenSettings, nav }: AppSidebarProps) {
   const { data: session } = useSession();
   const trafficLights = useTrafficLights();
   // Empty means no filter; the field is always shown.
@@ -145,6 +152,7 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onDelete,
       <SidebarContent>
         <SidebarGroup>
           <SidebarMenu>
+            <CoworkMenu onNewCowork={onNewCowork} />
             {PLANNED.map(({ label, icon: Icon }) => (
               <SidebarMenuItem key={label}>
                 <SidebarMenuButton tooltip={label} onClick={() => comingSoon(label)}>
@@ -210,6 +218,53 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onDelete,
   );
 }
 
+/** "Cowork": start a session in a folder Sush may work in, or add one. */
+function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => void }) {
+  const { isMobile } = useSidebar();
+  const workspaces = useWorkspaces();
+  const add = async () => {
+    try {
+      const w = await addWorkspace();
+      if (w) onNewCowork(w.id);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+  if (workspaces.length === 0) {
+    return (
+      <SidebarMenuItem>
+        <SidebarMenuButton tooltip="Cowork: work in a folder" onClick={() => void add()}>
+          <FolderOpenIcon /> <span>Cowork</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  }
+  return (
+    <SidebarMenuItem>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton tooltip="Cowork: work in a folder">
+            <FolderOpenIcon /> <span>Cowork</span>
+            <ChevronDownIcon className="ml-auto size-3.5 text-muted-foreground" />
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-60" side={isMobile ? "bottom" : "right"} align="start">
+          <DropdownMenuLabel className="text-xs text-muted-foreground">New session in</DropdownMenuLabel>
+          {workspaces.map((w) => (
+            <DropdownMenuItem key={w.id} onSelect={() => onNewCowork(w.id)} title={w.root}>
+              <FolderIcon /> <span className="truncate">{w.name}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => void add()}>
+            <FolderPlusIcon /> <span>Add a folder…</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </SidebarMenuItem>
+  );
+}
+
 function SessionRow({
   conversation: c,
   active,
@@ -226,7 +281,11 @@ function SessionRow({
   return (
     <SidebarMenuItem>
       <SidebarMenuButton isActive={active} onClick={() => onSelect(c.id)}>
-        {status === "working" && <LoaderCircleIcon className="animate-spin text-muted-foreground" />}
+        {status === "working" ? (
+          <LoaderCircleIcon className="animate-spin text-muted-foreground" />
+        ) : (
+          c.workspaceId && <FolderIcon className="text-muted-foreground" aria-label="Cowork session" />
+        )}
         <span>{c.title}</span>
         {status === "needs-input" && (
           <span className="ml-auto size-2 shrink-0 rounded-full bg-brand" aria-label="Waiting for you" title="Waiting for you" />

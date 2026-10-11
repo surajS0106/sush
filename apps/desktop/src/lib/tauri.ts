@@ -138,10 +138,64 @@ export interface StoredThread {
   updatedAt: number;
   target?: { providerId: string; model: string };
   pinned?: boolean;
+  /** Set for Cowork sessions: the workspace they work in. */
+  workspaceId?: string;
   messages: unknown[];
 }
 
 export type ThreadMeta = Omit<StoredThread, "messages">;
+
+/** What the agent may do in a workspace (`sush_core::workspace::Access`). */
+export type WorkspaceAccess = "read-only" | "workspace-write";
+/** When file changes need approval; shell commands always do. */
+export type EditApproval = "ask" | "auto-edits";
+
+/** A folder the user granted for Cowork (`sush_core::workspace::Workspace`). */
+export interface Workspace {
+  id: string;
+  name: string;
+  root: string;
+  access: WorkspaceAccess;
+  approval: EditApproval;
+  createdAt: number;
+}
+
+export interface WorkspaceEntry {
+  name: string;
+  /** Relative to the workspace, with forward slashes. */
+  path: string;
+  dir: boolean;
+  size: number;
+}
+
+/** Files one turn of a Cowork session changed; `turnId` is the user message that started it. */
+export interface TurnChanges {
+  turnId: string;
+  paths: string[];
+}
+
+export interface UndoResult {
+  restored: string[];
+  failed: string[];
+}
+
+/** Whether Cowork commands run in an OS sandbox here (`sush_core::workspace::sandbox`). */
+export interface SandboxStatus {
+  /** "Seatbelt", "bubblewrap" or "restricted token". */
+  mechanism: string;
+  /** Its self-test passed: writes outside the workspace are refused. */
+  available: boolean;
+  networkBlocked: boolean;
+  detail: string;
+}
+
+/** A workspace file for the viewer; `text` is null for binary files. */
+export interface FileView {
+  path: string;
+  text: string | null;
+  size: number;
+  truncated: boolean;
+}
 
 export interface ChatHit {
   id: string;
@@ -174,7 +228,8 @@ export type RunFrame =
   | { type: "status"; threadId: string; status: RunStatus; error: string | null }
   | { type: "tool-running"; threadId: string; callId: string; running: boolean }
   | { type: "client-tool"; threadId: string; callId: string; name: string; input: unknown }
-  | { type: "saved"; thread: ThreadMeta };
+  | { type: "saved"; thread: ThreadMeta }
+  | { type: "files-changed"; threadId: string; workspaceId: string };
 
 export interface LiveRun {
   threadId: string;
@@ -236,8 +291,31 @@ export const api = {
   memoryWrite: (file: StoredMemoryFile) => invoke<void>("memory_write", { file }),
   memoryDelete: (path: string) => invoke<boolean>("memory_delete", { path }),
   memoryClear: () => invoke<void>("memory_clear"),
-  readFolder: (path: string) => invoke<Folder>("read_folder", { path }),
-  saveTextFile: (path: string, contents: string) => invoke<void>("save_text_file", { path, contents }),
+  /** Opens a folder picker (in Rust) and reads the chosen folder; null if cancelled. */
+  pickFolderAttachment: () => invoke<Folder | null>("pick_folder_attachment"),
+  /** Opens a save dialog (in Rust) and writes the file; false if cancelled. */
+  saveTextFileAs: (fileName: string, contents: string) => invoke<boolean>("save_text_file_as", { fileName, contents }),
+  workspacesList: () => invoke<Workspace[]>("workspaces_list"),
+  /** Opens a folder picker (in Rust); null if cancelled. */
+  workspaceAdd: () => invoke<Workspace | null>("workspace_add"),
+  workspaceUpdate: (id: string, access: WorkspaceAccess, approval: EditApproval) =>
+    invoke<Workspace>("workspace_update", { id, access, approval }),
+  workspaceRemove: (id: string) => invoke<void>("workspace_remove", { id }),
+  workspaceTree: (id: string, path: string) => invoke<WorkspaceEntry[]>("workspace_tree", { id, path }),
+  turnChanges: (threadId: string) => invoke<TurnChanges[]>("turn_changes", { threadId }),
+  undoTurn: (threadId: string, turnId: string) => invoke<UndoResult>("undo_turn", { threadId, turnId }),
+  workspaceReadFile: (id: string, path: string) => invoke<FileView>("workspace_read_file", { id, path }),
+  workspaceFind: (id: string, query: string) => invoke<string[]>("workspace_find", { id, query }),
+  sandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
+  /** Start the user's shell in a workspace; output arrives on `onData`. Returns the terminal id. */
+  terminalOpen: (workspaceId: string, cols: number, rows: number, onData: (text: string) => void) => {
+    const channel = new Channel<string>();
+    channel.onmessage = onData;
+    return invoke<string>("terminal_open", { workspaceId, cols, rows, onData: channel });
+  },
+  terminalWrite: (id: string, data: string) => invoke<void>("terminal_write", { id, data }),
+  terminalResize: (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
+  terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
   loadPlugin: (path: string) => invoke<Plugin>("load_plugin", { path }),
   connectorConnect: (id: string, server: ServerSpec) => invoke<ConnectOutcome>("connector_connect", { id, server }),
   /** `callId` lets `connectorCancelCall` stop it. */

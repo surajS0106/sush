@@ -32,6 +32,7 @@ import {
   type ToolResponse,
 } from "@/lib/tauri";
 import type { ModelTarget, SushUIMessage } from "@/lib/transport";
+import { notifyFilesChanged } from "@/lib/workspaces";
 
 export interface ThreadView {
   messages: SushUIMessage[];
@@ -110,6 +111,9 @@ function onFrame(frame: RunFrame) {
       break;
     case "saved":
       applySaved(frame.thread, views.get().get(frame.thread.id)?.messages);
+      break;
+    case "files-changed":
+      notifyFilesChanged(frame.threadId, frame.workspaceId);
       break;
   }
 }
