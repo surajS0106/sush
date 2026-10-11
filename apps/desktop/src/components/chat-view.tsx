@@ -5,7 +5,6 @@ import {
   PencilIcon,
   RefreshCcwIcon,
   SettingsIcon,
-  Undo2Icon,
   WrenchIcon,
 } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -25,6 +24,8 @@ import { Composer } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
+import { FileChanges } from "@/components/file-changes";
+import { SessionOptions } from "@/components/session-options";
 import { CoworkPanel } from "@/components/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -57,10 +58,11 @@ import {
   toResponse,
   useThread,
 } from "@/lib/sessions";
-import { setTarget, type Conversation as StoredConversation } from "@/lib/store";
+import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { errorMessage, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
-import { CurrentWorkspace, undoTurn, useTurnChanges, useWorkspace } from "@/lib/workspaces";
+import { cn } from "@/lib/utils";
+import { CurrentWorkspace, takePendingWorktree, useTurnChanges, useWorkspace } from "@/lib/workspaces";
 
 interface ChatViewProps {
   conversation: StoredConversation;
@@ -97,32 +99,37 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   const workspace = useWorkspace(workspaceId);
   const turnChanges = useTurnChanges(id, !!workspaceId && !busy);
   const changedPaths = useMemo(() => new Set([...turnChanges.values()].flat()), [turnChanges]);
-  // Each assistant message belongs to the turn its preceding user message started.
-  const turnOf = useMemo(() => {
-    const turns = new Map<string, string>();
+  // A turn's file changes show under its last assistant message, keyed by the user message that started it.
+  const turnEnds = useMemo(() => {
+    const ends = new Map<string, string>();
     let user: string | undefined;
-    for (const m of messages) {
-      if (m.role === "user") user = m.id;
-      else if (user) turns.set(m.id, user);
+    let lastReply: string | undefined;
+    for (const m of [...messages, null]) {
+      if (!m || m.role === "user") {
+        if (user && lastReply) ends.set(lastReply, user);
+        user = m?.id;
+        lastReply = undefined;
+      } else lastReply = m.id;
     }
-    return turns;
+    return ends;
   }, [messages]);
-  const undo = (turnId: string, files: string[]) => {
-    if (!workspaceId) return;
-    const many = files.length === 1 ? "1 file" : `${files.length} files`;
-    if (!window.confirm(`Put back ${many} as they were before this turn? Changes from later turns to the same files are undone too.`)) return;
-    undoTurn(id, workspaceId, turnId)
-      .then((r) => {
-        if (r.failed.length > 0) toast.error(`Couldn’t restore ${r.failed.length} file(s)`, { description: r.failed.join("\n") });
-        else toast.success(`Restored ${r.restored.length === 1 ? "1 file" : `${r.restored.length} files`}`);
-      })
-      .catch((e) => toast.error(errorMessage(e)));
-  };
   const panel = workspace ? <CoworkPanel workspace={workspace} changed={changedPaths} /> : null;
 
   const submit = (msg: PromptInputMessage) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
-    void storeAttachments(msg.files).then((files) => sendMessage(id, msg.text, files));
+    void (async () => {
+      // A session that asked for its own worktree moves into it before its first run.
+      if (workspaceId && messages.length === 0) {
+        try {
+          const worktree = await takePendingWorktree(id, workspaceId);
+          if (worktree) setConversationWorkspace(id, worktree.id);
+        } catch (e) {
+          toast.error("Couldn’t create the worktree", { description: errorMessage(e) });
+          return;
+        }
+      }
+      sendMessage(id, msg.text, await storeAttachments(msg.files));
+    })();
   };
 
   // Replacing a user message drops everything after it and asks the model again.
@@ -170,30 +177,67 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   );
 
   if (messages.length === 0) {
-    const start = (
+    const connect = (
+      <div className={cn("flex flex-col gap-3", workspaceId ? "items-start" : "mb-7 items-center text-center")}>
+        <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight">
+          <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
+          Connect a model to get started
+        </h1>
+        <p className="max-w-md text-sm text-muted-foreground">
+          Add OpenAI, Anthropic, Azure Foundry, a local Ollama server, or any compatible endpoint.
+        </p>
+        <Button variant="outline" className="rounded-full" onClick={onOpenSettings}>
+          <SettingsIcon /> Open settings
+        </Button>
+      </div>
+    );
+    const start = workspaceId ? (
+      // Cowork, like a fresh session in Claude Code: the greeting up top, the composer
+      // at the bottom with where it runs and which folder it works in just above.
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto w-full max-w-(--transcript-width) px-6 pt-[12vh] pb-8">
+            {hasProviders === null ? null : hasProviders ? (
+              <>
+                <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight">
+                  <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
+                  <span>{`What should we work on${workspace ? ` in ${workspace.name}` : ""}?`}</span>
+                </h1>
+                <Suggestion
+                  label="Try asking"
+                  className="mt-8 w-full"
+                  suggestionSets={COWORK_SUGGESTIONS}
+                  onSelect={(text) => submit({ text, files: [] })}
+                />
+              </>
+            ) : (
+              connect
+            )}
+          </div>
+        </div>
+        <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
+          <SessionOptions conversationId={id} workspaceId={workspaceId} />
+          {composer}
+        </div>
+      </div>
+    ) : (
+      // A plain chat: greeting and composer together in the middle, starters below.
       <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-[10vh]">
         <div className="w-full max-w-2xl">
           {hasProviders === null ? null : hasProviders ? (
-            <h1 className="mb-7 text-center text-[28px] font-medium tracking-tight">
-              {workspaceId ? `What should we work on${workspace ? ` in ${workspace.name}` : ""}?` : greeting(firstName)}
+            <h1 className="mb-7 flex items-center justify-center gap-3 text-[28px] font-medium tracking-tight">
+              <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
+              <span>{greeting(firstName)}</span>
             </h1>
           ) : (
-            <div className="mb-7 flex flex-col items-center gap-3 text-center">
-              <h1 className="text-[28px] font-medium tracking-tight">Connect a model to get started</h1>
-              <p className="max-w-md text-sm text-muted-foreground">
-                Add OpenAI, Anthropic, Azure Foundry, a local Ollama server, or any compatible endpoint.
-              </p>
-              <Button variant="outline" className="rounded-full" onClick={onOpenSettings}>
-                <SettingsIcon /> Open settings
-              </Button>
-            </div>
+            connect
           )}
           {composer}
           {hasProviders && (
             <Suggestion
               label="Try asking"
               className="mt-5 w-full px-2"
-              suggestionSets={workspaceId ? COWORK_SUGGESTIONS : SUGGESTIONS}
+              suggestionSets={SUGGESTIONS}
               onSelect={(text) => submit({ text, files: [] })}
             />
           )}
@@ -227,12 +271,11 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
               onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
-              changedFiles={busy ? undefined : turnChanges.get(turnOf.get(message.id) ?? "")}
-              onUndo={() => {
-                const turnId = turnOf.get(message.id);
-                const files = turnId ? turnChanges.get(turnId) : undefined;
-                if (turnId && files) undo(turnId, files);
-              }}
+              fileChanges={(() => {
+                const turnId = turnEnds.get(message.id);
+                if (busy || !workspaceId || !turnId || !turnChanges.has(turnId)) return null;
+                return <FileChanges threadId={id} workspaceId={workspaceId} turnId={turnId} />;
+              })()}
             />
           ))}
           {waiting && (
@@ -402,9 +445,8 @@ interface ChatMessageProps {
   /** A waiting connector call the user allowed; Rust runs it. */
   onApprove: (toolCallId: string) => void;
   artifacts: Map<string, ArtifactView>;
-  /** Cowork: files this turn changed, which "Undo" puts back. */
-  changedFiles?: string[];
-  onUndo: () => void;
+  /** Cowork: the files this turn changed, under its last reply. */
+  fileChanges?: React.ReactNode;
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -471,8 +513,7 @@ function ChatMessage({
   onToolResult,
   onApprove,
   artifacts,
-  changedFiles,
-  onUndo,
+  fileChanges,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
   // Web pages the reply cites inline, numbered by first citation.
@@ -572,6 +613,7 @@ function ChatMessage({
           ),
         )}
         {sources.length > 0 && <CitedSourceList sources={sources} />}
+        {fileChanges}
         {message.role === "user" && text && (
           <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
@@ -593,14 +635,6 @@ function ChatMessage({
               {canRegenerate && (
                 <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
                   <RefreshCcwIcon className="size-3.5" />
-                </MessageAction>
-              )}
-              {changedFiles && changedFiles.length > 0 && (
-                <MessageAction
-                  tooltip={`Undo file changes (${changedFiles.length === 1 ? changedFiles[0] : `${changedFiles.length} files`})`}
-                  onClick={onUndo}
-                >
-                  <Undo2Icon className="size-3.5" />
                 </MessageAction>
               )}
             </MessageActions>

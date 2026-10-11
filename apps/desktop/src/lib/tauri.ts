@@ -174,6 +174,24 @@ export interface TurnChanges {
   paths: string[];
 }
 
+/** A workspace folder's git state (`sush_core::workspace::git`). */
+export interface GitInfo {
+  /** The checked-out branch; null when HEAD is detached. */
+  branch: string | null;
+  branches: string[];
+  /** The folder is a linked worktree rather than the main checkout. */
+  worktree: boolean;
+}
+
+/** A file a turn changed (`workspaces.rs`); `null` content means the file didn't exist. */
+export interface FileDiff {
+  path: string;
+  before: string | null;
+  after: string | null;
+  /** Not text, or too big to diff; no content is sent. */
+  binary: boolean;
+}
+
 export interface UndoResult {
   restored: string[];
   failed: string[];
@@ -187,6 +205,23 @@ export interface SandboxStatus {
   available: boolean;
   networkBlocked: boolean;
   detail: string;
+}
+
+/** What the built-in browser shows (`browser.rs`). */
+export interface BrowserPage {
+  url: string;
+  title: string;
+  loading: boolean;
+}
+
+/** `reveal`: the agent is using the browser, so the pane should show. */
+export type BrowserEvent = ({ type: "page" } & BrowserPage) | { type: "reveal" };
+
+export interface BrowserBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 /** A workspace file for the viewer; `text` is null for binary files. */
@@ -303,7 +338,14 @@ export const api = {
   workspaceRemove: (id: string) => invoke<void>("workspace_remove", { id }),
   workspaceTree: (id: string, path: string) => invoke<WorkspaceEntry[]>("workspace_tree", { id, path }),
   turnChanges: (threadId: string) => invoke<TurnChanges[]>("turn_changes", { threadId }),
-  undoTurn: (threadId: string, turnId: string) => invoke<UndoResult>("undo_turn", { threadId, turnId }),
+  workspaceGit: (id: string) => invoke<GitInfo | null>("workspace_git", { id }),
+  workspaceGitSwitch: (id: string, branch: string) => invoke<void>("workspace_git_switch", { id, branch }),
+  /** A new worktree on a fresh branch from `base`, added as a workspace. */
+  worktreeCreate: (id: string, base: string) => invoke<Workspace>("worktree_create", { id, base }),
+  turnDiff: (threadId: string, turnId: string) => invoke<FileDiff[]>("turn_diff", { threadId, turnId }),
+  /** Undo a turn's changes (and later turns'), or only those to `path`. */
+  undoTurn: (threadId: string, turnId: string, path?: string) =>
+    invoke<UndoResult>("undo_turn", { threadId, turnId, path: path ?? null }),
   workspaceReadFile: (id: string, path: string) => invoke<FileView>("workspace_read_file", { id, path }),
   workspaceFind: (id: string, query: string) => invoke<string[]>("workspace_find", { id, query }),
   sandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
@@ -316,6 +358,17 @@ export const api = {
   terminalWrite: (id: string, data: string) => invoke<void>("terminal_write", { id, data }),
   terminalResize: (id: string, cols: number, rows: number) => invoke<void>("terminal_resize", { id, cols, rows }),
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
+  /** Follow the built-in browser; returns the page it shows, or null before one is opened. */
+  browserSubscribe: (onEvent: (event: BrowserEvent) => void) => {
+    const channel = new Channel<BrowserEvent>();
+    channel.onmessage = onEvent;
+    return invoke<BrowserPage | null>("browser_subscribe", { onEvent: channel });
+  },
+  /** Open an address the user typed (a scheme is added if missing). */
+  browserOpen: (url: string) => invoke<void>("browser_open", { url }),
+  browserGo: (to: "back" | "forward" | "reload") => invoke<void>("browser_go", { to }),
+  /** Place the browser over its pane (CSS pixels from the window's top left), or hide it with null. */
+  browserSetView: (bounds: BrowserBounds | null) => invoke<void>("browser_set_view", { bounds }),
   loadPlugin: (path: string) => invoke<Plugin>("load_plugin", { path }),
   connectorConnect: (id: string, server: ServerSpec) => invoke<ConnectOutcome>("connector_connect", { id, server }),
   /** `callId` lets `connectorCancelCall` stop it. */

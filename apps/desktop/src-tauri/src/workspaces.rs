@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::Serialize;
 use sush_core::agent::ui::new_id;
 use sush_core::store::TurnChanges;
+use sush_core::workspace::git::{self, GitInfo};
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, EditApproval, Entry, Workspace, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
@@ -149,6 +150,56 @@ pub async fn workspace_find(state: State<'_, AppState>, id: String, query: Strin
     blocking(move || Ok(open(&store, &id)?.find(&query, 200))).await
 }
 
+/// The workspace's git state (branch, local branches, linked worktree), or
+/// `None` if the folder isn't in a repository.
+#[tauri::command]
+pub async fn workspace_git(state: State<'_, AppState>, id: String) -> AppResult<Option<GitInfo>> {
+    let store = state.store.clone();
+    blocking(move || Ok(git::info(Path::new(&find(&store, &id)?.root)))).await
+}
+
+/// Check out another local branch in the workspace folder.
+#[tauri::command]
+pub async fn workspace_git_switch(state: State<'_, AppState>, id: String, branch: String) -> AppResult<()> {
+    let store = state.store.clone();
+    blocking(move || git::switch(Path::new(&find(&store, &id)?.root), &branch).map_err(AppError::Invalid)).await
+}
+
+/// Give a session its own git worktree: a new branch from `base`, checked out
+/// in a folder under the app data dir, added as a workspace with the same
+/// settings. The user's checkout is left alone.
+#[tauri::command]
+pub async fn worktree_create(app: AppHandle, state: State<'_, AppState>, id: String, base: String) -> AppResult<Workspace> {
+    let dir = app.path().app_data_dir().map_err(|e| AppError::Invalid(format!("No app data folder: {e}")))?.join("worktrees");
+    let store = state.store.clone();
+    blocking(move || {
+        let parent = find(&store, &id)?;
+        let short: String = new_id().chars().filter(char::is_ascii_alphanumeric).take(6).collect::<String>().to_lowercase();
+        let branch = format!("sush/{short}");
+        std::fs::create_dir_all(&dir)?;
+        let dest = dir.join(format!("{}-{short}", parent.name));
+        git::add_worktree(Path::new(&parent.root), &base, &dest, &branch).map_err(AppError::Invalid)?;
+        let root = dunce::canonicalize(&dest)?;
+        let workspace = Workspace {
+            id: new_id(),
+            name: format!("{} · {branch}", parent.name),
+            root: root.to_string_lossy().into_owned(),
+            access: parent.access,
+            approval: parent.approval,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64),
+        };
+        store.save_workspace(&workspace)?;
+        Ok(workspace)
+    })
+    .await
+}
+
+fn find(store: &sush_core::store::Store, id: &str) -> AppResult<Workspace> {
+    store.workspace(id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))
+}
+
 fn open(store: &sush_core::store::Store, id: &str) -> AppResult<WorkspaceFs> {
     let workspace = store.workspace(id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))?;
     WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)
@@ -182,14 +233,74 @@ pub struct UndoResult {
     failed: Vec<String>,
 }
 
-/// Put every file changed since `turn_id` began back as it was before it.
-/// Stops the session's run first so nothing writes in between.
+/// Text past this size isn't diffed; the card just says the file changed.
+const DIFF_LIMIT: usize = 512 * 1024;
+
+/// A file a turn changed, as text for the diff viewer. `None`: the file
+/// didn't exist. `binary`: not text (or too big), so no content is sent.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    path: String,
+    before: Option<String>,
+    after: Option<String>,
+    binary: bool,
+}
+
+/// What each file a turn changed looked like before and after it. "After" is
+/// the file now, or what the next turn to change it found.
 #[tauri::command]
-pub async fn undo_turn(state: State<'_, AppState>, thread_id: String, turn_id: String) -> AppResult<UndoResult> {
+pub async fn turn_diff(state: State<'_, AppState>, thread_id: String, turn_id: String) -> AppResult<Vec<FileDiff>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let files = store.turn_files(&thread_id, &turn_id)?;
+        let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
+        let mut out = Vec::with_capacity(files.len());
+        for f in files {
+            let after = match f.later {
+                Some(later) => later,
+                None => {
+                    if !folders.contains_key(&f.workspace_id) {
+                        let fs = store.workspace(&f.workspace_id)?.and_then(|w| WorkspaceFs::open(Path::new(&w.root)).ok());
+                        folders.insert(f.workspace_id.clone(), fs);
+                    }
+                    match &folders[&f.workspace_id] {
+                        Some(fs) => fs.bytes(&f.path).map_err(AppError::Invalid)?,
+                        None => None,
+                    }
+                }
+            };
+            let text = |b: Option<Vec<u8>>| -> Result<Option<String>, ()> {
+                match b {
+                    None => Ok(None),
+                    Some(b) if b.len() > DIFF_LIMIT || b.contains(&0) => Err(()),
+                    Some(b) => String::from_utf8(b).map(Some).map_err(|_| ()),
+                }
+            };
+            out.push(match (text(f.before), text(after)) {
+                (Ok(before), Ok(after)) => FileDiff { path: f.path, before, after, binary: false },
+                _ => FileDiff { path: f.path, before: None, after: None, binary: true },
+            });
+        }
+        Ok(out)
+    })
+    .await
+}
+
+/// Put every file changed since `turn_id` began back as it was before it, or
+/// just `path` when given. Stops the session's run first so nothing writes in
+/// between.
+#[tauri::command]
+pub async fn undo_turn(
+    state: State<'_, AppState>,
+    thread_id: String,
+    turn_id: String,
+    path: Option<String>,
+) -> AppResult<UndoResult> {
     state.runs.stop(&thread_id).await;
     let store = state.store.clone();
     blocking(move || {
-        let originals = store.take_originals_since(&thread_id, &turn_id)?;
+        let originals = store.take_originals_since(&thread_id, &turn_id, path.as_deref())?;
         let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
         let mut result = UndoResult { restored: Vec::new(), failed: Vec::new() };
         for o in originals {

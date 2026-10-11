@@ -124,6 +124,15 @@ export function createConversation(workspaceId?: string): Conversation {
   return convo;
 }
 
+/** Point an untouched session at a folder (Cowork) or at none (a plain chat). */
+export function setConversationWorkspace(id: string, workspaceId: string | undefined) {
+  update(id, (c) => {
+    if (c.messages.length > 0) return c;
+    const { workspaceId: _, ...rest } = c;
+    return workspaceId ? { ...rest, workspaceId } : rest;
+  });
+}
+
 export function togglePinned(id: string) {
   const next = update(id, (c) => ({ ...c, pinned: !c.pinned }));
   if (next) persist(() => api.threadSave(meta(next), next.messages.length > 0 ? null : []));

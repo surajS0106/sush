@@ -1,5 +1,6 @@
 #[cfg(not(debug_assertions))]
 mod auth_server;
+mod browser;
 mod commands;
 mod connector_auth;
 mod connectors;
@@ -39,6 +40,7 @@ pub fn run() {
                 sandbox.status().await;
             });
             app.manage(whisper::Whisper::default());
+            app.manage(browser::Browser::default());
             #[cfg(not(debug_assertions))]
             {
                 let server = auth_server::AuthServer::default();
@@ -71,10 +73,18 @@ pub fn run() {
             workspaces::workspace_remove,
             workspaces::workspace_tree,
             workspaces::turn_changes,
+            workspaces::turn_diff,
+            workspaces::workspace_git,
+            workspaces::workspace_git_switch,
+            workspaces::worktree_create,
             workspaces::undo_turn,
             workspaces::workspace_read_file,
             workspaces::workspace_find,
             workspaces::sandbox_status,
+            browser::browser_subscribe,
+            browser::browser_open,
+            browser::browser_go,
+            browser::browser_set_view,
             terminal::terminal_open,
             terminal::terminal_write,
             terminal::terminal_resize,

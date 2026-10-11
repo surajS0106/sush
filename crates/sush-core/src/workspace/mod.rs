@@ -9,6 +9,7 @@
 //! Some paths stay read-only even when the workspace is writable (`.git`,
 //! `.sush`), and files that look like secrets need the user's approval to read.
 
+pub mod git;
 pub mod sandbox;
 pub mod shell;
 pub mod tools;

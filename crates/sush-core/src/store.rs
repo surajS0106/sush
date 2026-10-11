@@ -345,6 +345,18 @@ pub struct TurnChanges {
     pub paths: Vec<String>,
 }
 
+/// A file a turn changed: its content before the turn (`None`: it didn't
+/// exist) and, when a later turn changed it again, before that turn
+/// (`Some(None)`: it didn't exist then). `later: None` means the file on disk
+/// is still the turn's result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnFile {
+    pub workspace_id: String,
+    pub path: String,
+    pub before: Option<Vec<u8>>,
+    pub later: Option<Option<Vec<u8>>>,
+}
+
 /// A file's content before the changes being undone; `original: None` means it didn't exist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Original {
@@ -439,20 +451,22 @@ impl Store {
 
     /// What every file changed since `turn_id` began looked like before it,
     /// and forget those checkpoints. Restoring them undoes that turn and the
-    /// ones after it.
-    pub fn take_originals_since(&self, thread_id: &str, turn_id: &str) -> StoreResult<Vec<Original>> {
+    /// ones after it. With `only`, just that file is taken.
+    pub fn take_originals_since(&self, thread_id: &str, turn_id: &str, only: Option<&str>) -> StoreResult<Vec<Original>> {
         let rows: Vec<(i64, String, String, Option<String>)> = {
             let conn = self.conn.lock().unwrap();
             let first: Option<i64> = conn.query_row(
-                "SELECT MIN(seq) FROM checkpoints WHERE thread_id = ?1 AND turn_id = ?2",
-                params![thread_id, turn_id],
+                "SELECT MIN(seq) FROM checkpoints WHERE thread_id = ?1 AND turn_id = ?2 AND (?3 IS NULL OR path = ?3)",
+                params![thread_id, turn_id, only],
                 |r| r.get(0),
             )?;
             let Some(first) = first else { return Ok(Vec::new()) };
             let mut stmt = conn.prepare(
-                "SELECT seq, workspace_id, path, sha FROM checkpoints WHERE thread_id = ?1 AND seq >= ?2 ORDER BY seq",
+                "SELECT seq, workspace_id, path, sha FROM checkpoints
+                 WHERE thread_id = ?1 AND seq >= ?2 AND (?3 IS NULL OR path = ?3) ORDER BY seq",
             )?;
-            let rows = stmt.query_map(params![thread_id, first], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            let rows =
+                stmt.query_map(params![thread_id, first, only], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
             rows.collect::<Result<_, _>>()?
         };
         let mut out: Vec<Original> = Vec::new();
@@ -461,23 +475,54 @@ impl Store {
             if out.iter().any(|o| &o.path == path) {
                 continue;
             }
-            let original = match sha {
-                Some(sha) => Some(
-                    self.blob(sha)?
-                        .ok_or_else(|| StoreError::Invalid(format!("The saved copy of {path} is missing.")))?
-                        .1,
-                ),
-                None => None,
-            };
-            out.push(Original { workspace_id: workspace_id.clone(), path: path.clone(), original });
+            out.push(Original { workspace_id: workspace_id.clone(), path: path.clone(), original: self.checkpoint_bytes(path, sha)? });
         }
         if let Some((first, ..)) = rows.first() {
-            self.conn
-                .lock()
-                .unwrap()
-                .execute("DELETE FROM checkpoints WHERE thread_id = ?1 AND seq >= ?2", params![thread_id, first])?;
+            self.conn.lock().unwrap().execute(
+                "DELETE FROM checkpoints WHERE thread_id = ?1 AND seq >= ?2 AND (?3 IS NULL OR path = ?3)",
+                params![thread_id, first, only],
+            )?;
         }
         Ok(out)
+    }
+
+    /// Each file a turn changed, as it was before the turn and, if a later
+    /// turn changed it again, as it was before that one. Nothing is forgotten.
+    pub fn turn_files(&self, thread_id: &str, turn_id: &str) -> StoreResult<Vec<TurnFile>> {
+        let rows: Vec<(String, String, Option<String>, Option<Option<String>>)> = {
+            let conn = self.conn.lock().unwrap();
+            let later = "FROM checkpoints n WHERE n.thread_id = c.thread_id AND n.path = c.path AND n.seq > c.seq ORDER BY n.seq LIMIT 1";
+            let mut stmt = conn.prepare(&format!(
+                "SELECT c.workspace_id, c.path, c.sha, (SELECT n.seq {later}), (SELECT n.sha {later})
+                 FROM checkpoints c WHERE c.thread_id = ?1 AND c.turn_id = ?2 ORDER BY c.seq"
+            ))?;
+            let rows = stmt.query_map(params![thread_id, turn_id], |r| {
+                // The later checkpoint's seq tells "no later turn" apart from "later turn: the file didn't exist".
+                let next_seq: Option<i64> = r.get(3)?;
+                let next_sha: Option<String> = r.get(4)?;
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, next_seq.map(|_| next_sha)))
+            })?;
+            rows.collect::<Result<_, _>>()?
+        };
+        rows.into_iter()
+            .map(|(workspace_id, path, sha, next)| {
+                let before = self.checkpoint_bytes(&path, &sha)?;
+                let later = match next {
+                    Some(sha) => Some(self.checkpoint_bytes(&path, &sha)?),
+                    None => None,
+                };
+                Ok(TurnFile { workspace_id, path, before, later })
+            })
+            .collect()
+    }
+
+    fn checkpoint_bytes(&self, path: &str, sha: &Option<String>) -> StoreResult<Option<Vec<u8>>> {
+        match sha {
+            Some(sha) => Ok(Some(
+                self.blob(sha)?.ok_or_else(|| StoreError::Invalid(format!("The saved copy of {path} is missing.")))?.1,
+            )),
+            None => Ok(None),
+        }
     }
 }
 
@@ -731,8 +776,15 @@ mod tests {
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[1].paths, ["a.txt", "new.txt"]);
 
+        // Turn 1's a.txt went from v1 to what turn 2 found; turn 2's files are still on disk.
+        let files = store.turn_files("t", "turn1").unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!((files[0].before.as_deref(), files[0].later.clone()), (Some(&b"v1"[..]), Some(Some(b"v2".to_vec()))));
+        let files = store.turn_files("t", "turn2").unwrap();
+        assert_eq!(files.iter().map(|f| (f.before.clone(), f.later.clone())).collect::<Vec<_>>(), [(Some(b"v2".to_vec()), None), (None, None)]);
+
         // Undoing turn 2 restores a.txt as it was after turn 1 and removes new.txt.
-        let originals = store.take_originals_since("t", "turn2").unwrap();
+        let originals = store.take_originals_since("t", "turn2", None).unwrap();
         assert_eq!(
             originals,
             [
@@ -742,8 +794,23 @@ mod tests {
         );
         assert_eq!(store.turn_changes("t").unwrap().len(), 1);
         // Undoing turn 1 goes back to before it.
-        assert_eq!(store.take_originals_since("t", "turn1").unwrap()[0].original, Some(b"v1".to_vec()));
-        assert!(store.take_originals_since("t", "turn1").unwrap().is_empty());
+        assert_eq!(store.take_originals_since("t", "turn1", None).unwrap()[0].original, Some(b"v1".to_vec()));
+        assert!(store.take_originals_since("t", "turn1", None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn one_file_can_be_undone_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.add_checkpoint("t", "turn1", "w", "a.txt", Some(b"a")).unwrap();
+        store.add_checkpoint("t", "turn1", "w", "b.txt", Some(b"b")).unwrap();
+        store.add_checkpoint("t", "turn2", "w", "a.txt", Some(b"a2")).unwrap();
+
+        let originals = store.take_originals_since("t", "turn1", Some("a.txt")).unwrap();
+        assert_eq!(originals.len(), 1);
+        assert_eq!(originals[0].original, Some(b"a".to_vec()));
+        // b.txt can still be undone; a.txt is gone from every turn.
+        assert_eq!(store.turn_changes("t").unwrap(), [TurnChanges { turn_id: "turn1".into(), paths: vec!["b.txt".into()] }]);
     }
 
     #[test]

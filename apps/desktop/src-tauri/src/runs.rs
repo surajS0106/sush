@@ -12,6 +12,7 @@
 //! Those are added here, never taken from the UI, and whether each call needs
 //! approval is decided here too (`workspace::tools::approval`). Every change
 //! is checkpointed first so a turn can be undone (`workspaces.rs`).
+//! It gets the built-in browser's tools as well (`browser.rs`).
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sush_core::agent::ui::{self, ToolCall, STOPPED};
 use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
+use sush_core::browser as browser_tools;
 use sush_core::provider::EventStream;
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::sandbox::SandboxStatus;
@@ -32,6 +34,7 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
+use crate::browser::Browser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::blocking;
@@ -198,6 +201,10 @@ impl RunHost for Host {
                 }
                 result
             }
+            ToolExec::Browser => {
+                let browser = self.app.state::<Browser>();
+                browser.execute(&self.app, &self.thread_id, &call.name, &call.input, cancel).await
+            }
         }
     }
 
@@ -205,6 +212,10 @@ impl RunHost for Host {
         match (&tool.exec, &self.live.cowork) {
             (ToolExec::Workspace, Some(cowork)) => {
                 ws_tools::approval(&cowork.workspace.lock().unwrap(), &call.name, &call.input, Some(&cowork.sandbox))
+            }
+            (ToolExec::Browser, _) => {
+                let allowed = self.app.state::<Browser>().allowed_sites(&self.thread_id);
+                browser_tools::approval(&call.name, &call.input, &allowed)
             }
             _ => tool.approval,
         }
@@ -340,10 +351,15 @@ pub async fn run_start(
     Ok(())
 }
 
-/// The config a run gets: the UI's, minus anything posing as a workspace
-/// tool, plus the workspace's tools and instructions for a Cowork session.
+/// The config a run gets: the UI's, minus anything posing as a workspace or
+/// browser tool, plus the workspace's and the browser's tools and
+/// instructions for a Cowork session.
 async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>)> {
-    config.tools.retain(|t| t.exec != ToolExec::Workspace && !ws_tools::is_workspace_tool(&t.spec.name));
+    config.tools.retain(|t| {
+        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser)
+            && !ws_tools::is_workspace_tool(&t.spec.name)
+            && !browser_tools::is_browser_tool(&t.spec.name)
+    });
     let store = state.store.clone();
     let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
     let workspace = blocking(move || {
@@ -366,7 +382,9 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
             sandbox.detail = format!("The sandbox couldn't be set up for this folder, so every command asks first: {e}");
         }
     }
-    let section = ws_tools::system_section(&workspace, &fs, &sandbox);
+    let section = format!("{}
+
+{}", ws_tools::system_section(&workspace, &fs, &sandbox), browser_tools::system_section());
     config.system = Some(match config.system.take() {
         Some(system) => format!("{system}\n\n---\n\n{section}"),
         None => section,
@@ -374,6 +392,9 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
     // Approval is decided per call by `Host::approval`; this is only the fallback.
     config.tools.extend(
         ws_tools::specs(workspace.access).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+    );
+    config.tools.extend(
+        browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask }),
     );
     Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox })))
 }

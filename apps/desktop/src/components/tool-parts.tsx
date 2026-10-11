@@ -9,7 +9,9 @@ import {
   FilePenIcon,
   FolderIcon,
   GlobeIcon,
+  KeyboardIcon,
   MessagesSquareIcon,
+  MousePointerClickIcon,
   PlugIcon,
   ScrollTextIcon,
   SearchIcon,
@@ -73,6 +75,8 @@ export function ToolPart(props: ToolPartProps) {
       return <SkillSavePart {...props} />;
     case "workspace":
       return <WorkspacePart {...props} />;
+    case "browser":
+      return <BrowserPart {...props} />;
     default:
       return <ConnectorPart {...props} />;
   }
@@ -396,6 +400,90 @@ function workspaceRequest(
       return { title: `Read ${path}?`, note: "This file may hold passwords or keys, which would be sent to the model." };
     default:
       return { title: `Allow ${name}?` };
+  }
+}
+
+// --- browser -----------------------------------------------------------------------
+
+interface BrowserInput {
+  url?: string;
+  ref?: number;
+  text?: string;
+  submit?: boolean;
+}
+
+/** The page a browser tool's output starts with ("Page: …"). */
+function pageTitle(output: unknown) {
+  const title = /^Page: (.*)$/m.exec(String(output ?? ""))?.[1]?.trim();
+  return title || undefined;
+}
+
+function describeBrowserCall(name: string, input: BrowserInput, output?: unknown) {
+  const page = pageTitle(output);
+  switch (name) {
+    case "browser_navigate": {
+      const to = input.url ?? "";
+      if (to === "back" || to === "forward") return { icon: GlobeIcon, done: `Went ${to}`, doing: `Going ${to}` };
+      if (to === "reload") return { icon: GlobeIcon, done: "Reloaded the page", doing: "Reloading" };
+      return { icon: GlobeIcon, done: `Opened ${page ?? to}`, doing: `Opening ${to}` };
+    }
+    case "browser_click":
+      return { icon: MousePointerClickIcon, done: `Clicked [${input.ref ?? "?"}]${page ? ` on ${page}` : ""}`, doing: "Clicking" };
+    case "browser_type":
+      return { icon: KeyboardIcon, done: `Typed into [${input.ref ?? "?"}]${page ? ` on ${page}` : ""}`, doing: "Typing" };
+    default:
+      return { icon: GlobeIcon, done: `Read ${page ?? "the page"}`, doing: "Reading the page" };
+  }
+}
+
+function BrowserPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
+  const [approved, setApproved] = useState(false);
+  const inFlight = useRunningToolCalls().has(part.toolCallId);
+  const input = (part.input ?? {}) as BrowserInput;
+  const { icon: Icon, done, doing } = describeBrowserCall(
+    part.toolName,
+    input,
+    part.state === "output-available" ? part.output : undefined,
+  );
+  const label = (text: string, suffix?: string) => (
+    <>
+      <Icon className="size-4 shrink-0" />
+      <span className="line-clamp-1 text-left">{text}</span>
+      {suffix && <span className="shrink-0 opacity-70">· {suffix}</span>}
+    </>
+  );
+  switch (part.state) {
+    case "input-streaming":
+      return <LoadingState label={doing} />;
+    case "output-available":
+      return <ToolResultRow label={label(done)} detail={String(part.output ?? "")} />;
+    case "output-error": {
+      const quiet = part.errorText === DENIED || part.errorText === STOPPED;
+      return (
+        <ToolResultRow
+          error={!quiet}
+          label={label(done, part.errorText === DENIED ? "denied" : part.errorText === STOPPED ? "stopped" : "failed")}
+          detail={quiet ? undefined : part.errorText}
+        />
+      );
+    }
+    default: {
+      if (approved || inFlight) return <LoadingState label={doing} />;
+      if (!canAnswer) return <p className="text-sm text-muted-foreground italic">{done} didn’t happen</p>;
+      // Only opening a site the user hasn't allowed in this session asks.
+      return (
+        <WorkspaceApprovalCard
+          icon={GlobeIcon}
+          title={`Open ${input.url ?? "this page"}?`}
+          note="Sush can then read this site and click and type on it during this session."
+          onAllow={() => {
+            setApproved(true);
+            onApprove();
+          }}
+          onDeny={() => onResult({ errorText: DENIED })}
+        />
+      );
+    }
   }
 }
 

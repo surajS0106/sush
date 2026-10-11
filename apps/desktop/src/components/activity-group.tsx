@@ -56,7 +56,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} 
 
 /** "Read 3 files, searched twice and ran a command". */
 export function activitySummary(parts: Part[]): { text: string; failed: number } {
-  const count = { read: 0, search: 0, edit: 0, command: 0, memory: 0, chats: 0, skill: 0, other: 0 };
+  const count = { read: 0, search: 0, edit: 0, command: 0, memory: 0, chats: 0, skill: 0, browser: 0, other: 0 };
   let failed = 0;
   for (const p of parts) {
     if (p.type !== "dynamic-tool") continue;
@@ -71,6 +71,7 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
       if (kind === "memory") count.memory++;
       else if (kind === "chats") count.chats++;
       else if (kind === "skill") count.skill++;
+      else if (kind === "browser") count.browser++;
       else count.other++;
     }
   }
@@ -82,6 +83,7 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
     count.memory && "updated memory",
     count.chats && "looked through past chats",
     count.skill && `used ${plural(count.skill, "a skill", "skills")}`,
+    count.browser && "used the browser",
     count.other && `used ${plural(count.other, "a tool", "tools")}`,
   ].filter((s): s is string => !!s);
   const joined = phrases.length > 1 ? `${phrases.slice(0, -1).join(", ")} and ${phrases.at(-1)}` : (phrases[0] ?? "worked");

@@ -16,7 +16,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 sush-core.workspace = true
 async-trait.workspace = true
-tauri = { version = "2", features = [] }
+# "unstable" for `Window::add_child`: the built-in browser is a child webview.
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 base64 = "0.22"

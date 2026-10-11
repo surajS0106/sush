@@ -203,6 +203,7 @@ export type ToolKind =
   | "skill-save"
   | "artifact"
   | "workspace"
+  | "browser"
   | "connector"
   | "unknown";
 
@@ -219,9 +220,13 @@ export const WORKSPACE_TOOLS = new Set([
   "shell_run",
 ]);
 
+/** Cowork's built-in browser. Rust offers and runs them (`sush_core::browser`). */
+export const BROWSER_TOOLS = new Set(["browser_navigate", "browser_read", "browser_click", "browser_type"]);
+
 export function toolKind(name: string): ToolKind {
   if (name === ASK_USER) return "ask-user";
   if (WORKSPACE_TOOLS.has(name)) return "workspace";
+  if (BROWSER_TOOLS.has(name)) return "browser";
   if (name === MEMORY_WRITE || name === MEMORY_DELETE || name === MEMORY_SAVE) return "memory";
   if (name === CHATS_SEARCH || name === CHAT_READ) return "chats";
   if (name === SKILL) return "skill";

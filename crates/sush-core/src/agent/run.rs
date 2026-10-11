@@ -81,6 +81,9 @@ pub enum ToolExec {
     /// A file or shell tool in the thread's Cowork workspace, run in Rust.
     /// Only the host adds these; it drops any the UI sends.
     Workspace,
+    /// A tool for the host's built-in browser (`crate::browser`). Like
+    /// workspace tools, only the host adds these.
+    Browser,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

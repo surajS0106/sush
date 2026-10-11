@@ -3,6 +3,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   CircleHelpIcon,
+  CodeXmlIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderPlusIcon,
@@ -10,6 +11,7 @@ import {
   GitPullRequestIcon,
   LoaderCircleIcon,
   MessageSquareIcon,
+  MessagesSquareIcon,
   MonitorIcon,
   MoonIcon,
   MoreHorizontalIcon,
@@ -87,6 +89,9 @@ const comingSoon = (what: string) => toast(`${what} is coming soon`);
 /** Shown beside "New"; App binds the same key. */
 export const NEW_SHORTCUT_LABEL = IS_MAC ? "⌘N" : "Ctrl+N";
 
+/** A plain chat, or a Cowork session working in a folder. */
+export type SessionMode = "chat" | "cowork";
+
 interface AppSidebarProps {
   conversations: Conversation[];
   activeId: string | null;
@@ -97,6 +102,9 @@ interface AppSidebarProps {
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   nav: Nav;
+  /** Whether the open session is a chat or Cowork; the toggle switches. */
+  mode: SessionMode;
+  onSwitchMode: (mode: SessionMode) => void;
 }
 
 /** The sidebar's right edge: drag it to set the width; double-click puts the default back. */
@@ -115,7 +123,18 @@ function SidebarResizer() {
   );
 }
 
-export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowork, onDelete, onOpenSettings, nav }: AppSidebarProps) {
+export function AppSidebar({
+  conversations,
+  activeId,
+  onSelect,
+  onNew,
+  onNewCowork,
+  onDelete,
+  onOpenSettings,
+  nav,
+  mode,
+  onSwitchMode,
+}: AppSidebarProps) {
   const { data: session } = useSession();
   const trafficLights = useTrafficLights();
   // Empty means no filter; the field is always shown.
@@ -138,6 +157,8 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowo
       {/* Title bar: drag to move the window; on macOS the traffic lights sit at its left. */}
       <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-0.5 px-2 select-none", trafficLights && "pl-20")}>
         <NavControls nav={nav} />
+        <span data-tauri-drag-region className="flex-1 self-stretch" />
+        <ModeToggle mode={mode} onChange={onSwitchMode} />
       </div>
 
       <div className="flex flex-col gap-1 px-2 pb-1">
@@ -240,6 +261,39 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowo
       </SidebarFooter>
       <SidebarResizer />
     </Sidebar>
+  );
+}
+
+const MODES: { value: SessionMode; label: string; icon: typeof MessageSquareIcon }[] = [
+  { value: "chat", label: "Chat", icon: MessagesSquareIcon },
+  { value: "cowork", label: "Cowork: work in a folder", icon: CodeXmlIcon },
+];
+
+/** The Chat / Cowork switch in the sidebar's title bar. */
+function ModeToggle({ mode, onChange }: { mode: SessionMode; onChange: (mode: SessionMode) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Session type" className="flex items-center gap-0.5 rounded-lg bg-sidebar-accent/70 p-0.5">
+      {MODES.map(({ value, label, icon: Icon }) => (
+        <Tooltip key={value}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={mode === value}
+              aria-label={label}
+              onClick={() => onChange(value)}
+              className={cn(
+                "flex h-6 w-7 items-center justify-center rounded-md text-sidebar-foreground/60 transition-colors outline-hidden hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring [&>svg]:size-3.5",
+                mode === value && "bg-background text-sidebar-foreground shadow-xs dark:bg-sidebar",
+              )}
+            >
+              <Icon />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">{label}</TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
   );
 }
 

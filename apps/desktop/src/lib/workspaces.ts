@@ -8,6 +8,8 @@ import { createStore } from "@/lib/store";
 import {
   api,
   type EditApproval,
+  type FileDiff,
+  type GitInfo,
   type SandboxStatus,
   type TurnChanges,
   type Workspace,
@@ -33,6 +35,8 @@ const sandbox = createStore<SandboxStatus | null>("sush.sandbox-status", null, f
 
 /** Whether Cowork commands run in an OS sandbox here; null until checked. */
 export const useSandboxStatus = () => useSyncExternalStore(sandbox.subscribe, sandbox.get);
+
+export const getWorkspaces = () => workspaces.get();
 
 export const useWorkspaces = () => useSyncExternalStore(workspaces.subscribe, workspaces.get);
 
@@ -91,15 +95,87 @@ export function useTurnChanges(threadId: string, enabled: boolean): Map<string, 
   return useMemo(() => new Map(turns.map((t) => [t.turnId, t.paths])), [turns]);
 }
 
+/** Before/after text of each file a turn changed, refreshed as files change. */
+export function useTurnDiff(threadId: string, turnId: string | undefined): FileDiff[] | null {
+  const version = useFilesVersion(threadId);
+  const [diff, setDiff] = useState<FileDiff[] | null>(null);
+  useEffect(() => {
+    if (!turnId) return setDiff(null);
+    let live = true;
+    api
+      .turnDiff(threadId, turnId)
+      .then((d) => live && setDiff(d))
+      .catch((e) => console.warn("Could not load the diff", e));
+    return () => {
+      live = false;
+    };
+  }, [threadId, turnId, version]);
+  return diff;
+}
+
+// --- git ------------------------------------------------------------------------------
+
+/** The workspace's git state, or null outside a repo; refreshed as files change. */
+export function useGitInfo(workspaceId: string | undefined): GitInfo | null {
+  const version = useFilesVersion(workspaceId);
+  const [info, setInfo] = useState<GitInfo | null>(null);
+  useEffect(() => {
+    if (!workspaceId) return setInfo(null);
+    let live = true;
+    api
+      .workspaceGit(workspaceId)
+      .then((g) => live && setInfo(g))
+      .catch(() => live && setInfo(null));
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, version]);
+  return info;
+}
+
+/** Check out another branch in the workspace folder. */
+export async function switchBranch(workspaceId: string, branch: string) {
+  await api.workspaceGitSwitch(workspaceId, branch);
+  versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1 }));
+}
+
+/**
+ * Sessions that will get their own worktree when their first message is
+ * sent, with the branch it starts from. Only untouched sessions are listed.
+ */
+const pendingWorktrees = createStore<Readonly<Record<string, string>>>("sush.pending-worktrees", {}, false);
+
+export const usePendingWorktree = (threadId: string) =>
+  useSyncExternalStore(pendingWorktrees.subscribe, () => pendingWorktrees.get()[threadId]);
+
+/** Turn "work in a new worktree" on (from `base`) or off for an untouched session. */
+export function setPendingWorktree(threadId: string, base: string | undefined) {
+  pendingWorktrees.set(({ [threadId]: _, ...rest }) => (base ? { ...rest, [threadId]: base } : rest));
+}
+
+/**
+ * If this session asked for a worktree, create it from `workspaceId` and
+ * return the new workspace; null otherwise.
+ */
+export async function takePendingWorktree(threadId: string, workspaceId: string): Promise<Workspace | null> {
+  const base = pendingWorktrees.get()[threadId];
+  if (!base) return null;
+  const created = await api.worktreeCreate(workspaceId, base);
+  setPendingWorktree(threadId, undefined);
+  workspaces.set((all) => [...all, created]);
+  return created;
+}
+
 // --- side panel -------------------------------------------------------------------------
 
 export interface PanelState {
   files: boolean;
   terminal: boolean;
+  browser: boolean;
 }
 
 /** Which parts of the Cowork side panel are open; remembered across sessions. */
-const panels = createStore<PanelState>("sush.cowork-panels", { files: true, terminal: false });
+const panels = createStore<PanelState>("sush.cowork-panels", { files: true, terminal: false, browser: false });
 
 export const usePanels = () => useSyncExternalStore(panels.subscribe, panels.get);
 
@@ -143,9 +219,9 @@ export function selectFile(workspaceId: string, path: string) {
   openFiles.set((all) => ({ ...all, [workspaceId]: { ...(all[workspaceId] ?? NO_FILES), active: path } }));
 }
 
-/** Put back every file changed since `turnId` began. */
-export async function undoTurn(threadId: string, workspaceId: string, turnId: string) {
-  const result = await api.undoTurn(threadId, turnId);
+/** Put back every file changed since `turnId` began, or only `path`. */
+export async function undoTurn(threadId: string, workspaceId: string, turnId: string, path?: string) {
+  const result = await api.undoTurn(threadId, turnId, path);
   notifyFilesChanged(threadId, workspaceId);
   return result;
 }

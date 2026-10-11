@@ -1,10 +1,12 @@
 import { MotionConfig } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { toast } from "sonner";
 
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebar, type SessionMode } from "@/components/app-sidebar";
 import { ChatView } from "@/components/chat-view";
 import { NavControls, type Nav } from "@/components/nav-controls";
+import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { PanelToggles, WorkspaceChip } from "@/components/workspace-panel";
 import { Separator } from "@/components/ui/separator";
@@ -17,27 +19,60 @@ import { useAppearance } from "@/lib/appearance";
 import { useLayout } from "@/lib/layout";
 import { openSettings, syncConnectors, useChatRequest, type ChatRequest } from "@/lib/library";
 import { deleteConversation, getOrCreateEmptyConversation, useConversations } from "@/lib/store";
+import { errorMessage } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
+import { addWorkspace, getWorkspaces } from "@/lib/workspaces";
 
 export default function App() {
   const conversations = useConversations();
   const { providers, catalog, refresh } = useProviders();
-  const [activeId, setActiveId, nav] = useSessionHistory(conversations[0]?.id ?? null, conversations.map((c) => c.id));
+  const ids = conversations.map((c) => c.id);
+  const [activeId, setActiveId, nav] = useSessionHistory(lastActiveTab() ?? conversations[0]?.id ?? null, ids);
+  const tabs = useTabs(activeId, ids, setActiveId);
   const { motion } = useAppearance();
   const layout = useLayout();
 
   const current = conversations.find((c) => c.id === activeId) ?? null;
-  const startNew = () => setActiveId(getOrCreateEmptyConversation().id);
-  const startCowork = (workspaceId: string) => setActiveId(getOrCreateEmptyConversation(workspaceId).id);
+  // New sessions open in a tab of their own; `inPlace` reuses the active tab.
+  const startChat = (inPlace = false) => (inPlace ? setActiveId : tabs.openInNewTab)(getOrCreateEmptyConversation().id);
+  const startCowork = (workspaceId: string, inPlace = false) =>
+    (inPlace ? setActiveId : tabs.openInNewTab)(getOrCreateEmptyConversation(workspaceId).id);
+  // "New" starts the same kind of session as the one open: a chat, or Cowork in the same folder.
+  const startNew = () => (current?.workspaceId ? startCowork(current.workspaceId) : startChat());
 
-  // Ctrl/⌘+N starts a session, Alt+←/→ walks the history.
-  const keys = useRef({ startNew, nav });
-  keys.current = { startNew, nav };
+  // The Chat / Cowork toggle switches the open tab's session. Cowork opens in the folder used most recently, or asks for one.
+  const mode: SessionMode = current?.workspaceId ? "cowork" : "chat";
+  const switchMode = async (to: SessionMode) => {
+    if (to === mode) return;
+    if (to === "chat") return startChat(true);
+    const known = new Set(getWorkspaces().map((w) => w.id));
+    const recent = conversations.find((c) => c.workspaceId && known.has(c.workspaceId))?.workspaceId ?? [...known][0];
+    if (recent) return startCowork(recent, true);
+    try {
+      const added = await addWorkspace();
+      if (added) startCowork(added.id, true);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+
+  // Ctrl/⌘+N or T starts a session in a new tab, Ctrl/⌘+W closes the tab, Ctrl+(Shift+)Tab cycles tabs,
+  // Alt+←/→ walks the history.
+  const keys = useRef({ startNew, nav, tabs, activeId });
+  keys.current = { startNew, nav, tabs, activeId };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") {
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+      const key = e.key.toLowerCase();
+      if (mod && !e.shiftKey && (key === "n" || key === "t")) {
         e.preventDefault();
         keys.current.startNew();
+      } else if (mod && !e.shiftKey && key === "w") {
+        e.preventDefault();
+        if (keys.current.activeId) keys.current.tabs.close(keys.current.activeId);
+      } else if (e.ctrlKey && !e.altKey && e.key === "Tab") {
+        e.preventDefault();
+        keys.current.tabs.cycle(e.shiftKey ? -1 : 1);
       } else if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         if (e.key === "ArrowLeft") keys.current.nav.back();
@@ -54,7 +89,7 @@ export default function App() {
   useEffect(() => {
     if (!chatRequest) return;
     const conversationId = getOrCreateEmptyConversation().id;
-    setActiveId(conversationId);
+    tabs.openInNewTab(conversationId);
     setPrefill({ ...chatRequest, conversationId });
   }, [chatRequest]);
   useEffect(() => {
@@ -69,7 +104,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!current) startNew();
+    if (!current) startChat();
   }, [current]);
 
   return (
@@ -85,19 +120,27 @@ export default function App() {
             onSelect={setActiveId}
             onNew={startNew}
             onNewCowork={startCowork}
+            mode={mode}
+            onSwitchMode={(m) => void switchMode(m)}
             onDelete={(id) => {
+              tabs.close(id);
               deleteConversation(id);
-              if (id === activeId) setActiveId(null);
             }}
             onOpenSettings={() => openSettings({ section: "general" })}
             nav={nav}
           />
           <SidebarInset className="min-w-0">
-            <AppHeader
-              title={current && current.messages.length > 0 ? current.title : null}
-              workspaceId={current?.workspaceId}
-              nav={nav}
-            />
+            <AppHeader workspaceId={current?.workspaceId} nav={nav}>
+              <SessionTabs
+                open={tabs.open}
+                conversations={conversations}
+                activeId={activeId}
+                onSelect={setActiveId}
+                onClose={tabs.close}
+                onReorder={tabs.reorder}
+                onNew={startNew}
+              />
+            </AppHeader>
             {current && (
               // Re-keyed on a prefill so the composer picks it up even if this chat was already open.
               <PromptInputProvider key={prefilled?.id ?? current.id} initialInput={current.messages.length === 0 ? prefilled?.prompt : undefined}>
@@ -120,8 +163,8 @@ export default function App() {
 }
 
 /** Doubles as the window's title bar: drag it to move the window, double-click to maximize. */
-/** For a Cowork session it also shows the folder chip and the side panel toggles. */
-function AppHeader({ title, workspaceId, nav }: { title: string | null; workspaceId?: string; nav: Nav }) {
+/** Holds the session tabs (`children`); for a Cowork session also the folder chip and the side panel toggles. */
+function AppHeader({ workspaceId, nav, children }: { workspaceId?: string; nav: Nav; children: ReactNode }) {
   const { state, isMobile } = useSidebar();
   // The sidebar's title bar carries these while it's showing.
   const sidebarHidden = isMobile || state === "collapsed";
@@ -138,20 +181,14 @@ function AppHeader({ title, workspaceId, nav }: { title: string | null; workspac
       {sidebarHidden && (
         <>
           <NavControls nav={nav} />
-          {title && <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />}
+          <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />
         </>
       )}
-      {title && (
-        <span data-tauri-drag-region className={cn("truncate text-sm font-medium", !sidebarHidden && "px-2")}>
-          {title}
-        </span>
-      )}
+      {children}
+      <span data-tauri-drag-region className="min-w-8 flex-1 self-stretch" />
       {workspaceId && (
         <>
-          <span className={cn(!title && !sidebarHidden && "pl-2")}>
-            <WorkspaceChip workspaceId={workspaceId} />
-          </span>
-          <span data-tauri-drag-region className="flex-1 self-stretch" />
+          <WorkspaceChip workspaceId={workspaceId} />
           <PanelToggles />
         </>
       )}

@@ -9,6 +9,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { AuthGate } from "./components/auth-gate";
 import { WindowControls } from "./components/window-controls";
+import { initBrowser } from "./lib/browser";
 import { initMemory } from "./lib/memory";
 import { initSessions } from "./lib/sessions";
 import { initWorkspaces } from "./lib/workspaces";
@@ -39,7 +40,7 @@ const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement)
 
 // Conversations and memory load from disk before anything renders, so the UI
 // can read them synchronously; then follow the runs already going.
-Promise.all([initStore(), initMemory(), initWorkspaces()])
+Promise.all([initStore(), initMemory(), initWorkspaces(), initBrowser()])
   .then(initSessions)
   .then(
   () =>

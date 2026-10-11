@@ -3,6 +3,7 @@
 //! crate can later back a CLI/TUI.
 
 pub mod agent;
+pub mod browser;
 pub mod error;
 pub mod mcp;
 pub mod memory;

@@ -169,9 +169,19 @@ interface WorkspaceApprovalCardProps {
   onDeny: () => void;
   /** Offered for file changes: stop asking for edits in this folder. */
   onAllowAll?: () => void;
+  /** Defaults to a folder. */
+  icon?: React.ComponentType<{ className?: string }>;
 }
 
-export function WorkspaceApprovalCard({ title, note, children, onAllow, onDeny, onAllowAll }: WorkspaceApprovalCardProps) {
+export function WorkspaceApprovalCard({
+  title,
+  note,
+  children,
+  onAllow,
+  onDeny,
+  onAllowAll,
+  icon: Icon = FolderIcon,
+}: WorkspaceApprovalCardProps) {
   return (
     <div className="w-full max-w-xl">
       <div
@@ -180,7 +190,7 @@ export function WorkspaceApprovalCard({ title, note, children, onAllow, onDeny, 
       >
         <div className="flex gap-3 p-3">
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <FolderIcon className="size-4" />
+            <Icon className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium break-words">{title}</div>

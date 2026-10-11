@@ -1,9 +1,9 @@
 // Cowork chrome around a session, laid out like an editor:
 //
 //   header   the folder chip (what Sush may do there, the sandbox) and the
-//            Files / Terminal toggles
+//            Browser / Terminal / Files toggles
 //   panel    beside the chat: the file tree and a tabbed, highlighted file
-//            viewer on top, the user's own terminal below
+//            viewer on top, the built-in browser, the user's own terminal below
 //
 // Settings changes apply from the next tool call, including in a run that's
 // waiting for approval.
@@ -11,12 +11,16 @@
 import "@xterm/xterm/css/xterm.css";
 
 import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   FileIcon,
   FolderIcon,
   FolderOpenIcon,
   FolderTreeIcon,
+  GlobeIcon,
+  RotateCwIcon,
   SearchIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
@@ -40,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useBrowserPage } from "@/lib/browser";
 import { api, errorMessage, type FileView, type Workspace, type WorkspaceEntry } from "@/lib/tauri";
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -50,6 +55,7 @@ import {
   selectFile,
   togglePanel,
   updateWorkspace,
+  type PanelState,
   useFilesVersion,
   useOpenFiles,
   usePanels,
@@ -143,10 +149,10 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-/** Header buttons that show or hide the terminal and the files. */
+/** Header buttons that show or hide the browser, the terminal and the files. */
 export function PanelToggles() {
   const panels = usePanels();
-  const toggle = (which: "terminal" | "files", label: string, Icon: typeof FileIcon) => (
+  const toggle = (which: keyof PanelState, label: string, Icon: typeof FileIcon) => (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
@@ -165,6 +171,7 @@ export function PanelToggles() {
   );
   return (
     <div className="flex items-center gap-0.5">
+      {toggle("browser", "Browser", GlobeIcon)}
       {toggle("terminal", "Terminal", SquareTerminalIcon)}
       {toggle("files", "Files", FolderTreeIcon)}
     </div>
@@ -180,15 +187,15 @@ interface CoworkPanelProps {
 }
 
 /**
- * Files on top, terminal below; whichever is open fills the height. Its left
- * edge drags to resize; until then it takes about half the window. CSS keeps
- * the chat at least `PANEL.chatMin` wide when the window shrinks.
+ * Files on top, then the browser, terminal below; files and browser share the
+ * height. Its left edge drags to resize; until then it takes about half the
+ * window. CSS keeps the chat at least `PANEL.chatMin` wide when the window shrinks.
  */
 export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
   const panels = usePanels();
   const { panel: width } = useLayout();
   const ref = useRef<HTMLElement>(null);
-  if (!panels.files && !panels.terminal) return null;
+  if (!panels.files && !panels.terminal && !panels.browser) return null;
   return (
     <aside
       ref={ref}
@@ -208,7 +215,8 @@ export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
         onReset={() => setLayout({ panel: null })}
       />
       {panels.files && <FilesPane workspace={workspace} changed={changed} />}
-      {panels.terminal && <TerminalPane workspace={workspace} fill={!panels.files} />}
+      {panels.browser && <BrowserPane />}
+      {panels.terminal && <TerminalPane workspace={workspace} fill={!panels.files && !panels.browser} />}
     </aside>
   );
 }
@@ -489,6 +497,129 @@ function CodeView({ workspaceId, path }: { workspaceId: string; path: string }) 
         {file?.truncated && <p className="px-4 pb-3 text-xs text-muted-foreground">Only the first 1 MB is shown.</p>}
       </div>
     </div>
+  );
+}
+
+// --- browser ---------------------------------------------------------------------------------
+
+/** Menus and dialogs, which the native browser would cover. */
+const OVERLAYS = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-radix-popper-content-wrapper]';
+
+function overlayCovers(r: DOMRect) {
+  return [...document.querySelectorAll(OVERLAYS)].some((el) => {
+    const o = el.getBoundingClientRect();
+    return o.width > 0 && o.left < r.right && o.right > r.left && o.top < r.bottom && o.bottom > r.top;
+  });
+}
+
+/**
+ * The address bar, and the place the browser sits. The page itself is a native
+ * webview Rust lays over `host`; it's drawn above everything in this window, so
+ * it steps aside while a menu or dialog overlaps it.
+ */
+function BrowserPane() {
+  const page = useBrowserPage();
+  const host = useRef<HTMLDivElement>(null);
+  const shown = page?.url && page.url !== "about:blank" ? page.url : "";
+  const [address, setAddress] = useState(shown);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => {
+    if (!editing) setAddress(shown);
+  }, [shown, editing]);
+
+  const hasPage = !!page;
+  useEffect(() => {
+    const el = host.current;
+    if (!el || !hasPage) return;
+    let frame = 0;
+    let last = "";
+    const place = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const r = el.getBoundingClientRect();
+        const bounds =
+          r.width < 1 || r.height < 1 || overlayCovers(r) ? null : { x: r.left, y: r.top, width: r.width, height: r.height };
+        const key = JSON.stringify(bounds);
+        if (key === last) return;
+        last = key;
+        void api.browserSetView(bounds).catch(() => {});
+      });
+    };
+    place();
+    const resize = new ResizeObserver(place);
+    resize.observe(el);
+    // Menus and dialogs are portalled straight into <body>.
+    const overlays = new MutationObserver(place);
+    overlays.observe(document.body, { childList: true });
+    window.addEventListener("resize", place);
+    return () => {
+      cancelAnimationFrame(frame);
+      resize.disconnect();
+      overlays.disconnect();
+      window.removeEventListener("resize", place);
+      void api.browserSetView(null).catch(() => {});
+    };
+  }, [hasPage]);
+
+  const open = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!address.trim()) return;
+    (document.activeElement as HTMLElement | null)?.blur();
+    void api.browserOpen(address).catch((err) => toast.error(errorMessage(err)));
+  };
+  const nav = (label: string, Icon: typeof FileIcon, to: "back" | "forward" | "reload", spin?: boolean) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="size-7"
+      aria-label={label}
+      title={label}
+      disabled={!hasPage}
+      onClick={() => void api.browserGo(to).catch(() => {})}
+    >
+      <Icon className={cn("size-4", spin && "animate-spin")} />
+    </Button>
+  );
+
+  return (
+    <Pane className="flex-1">
+      <div className="flex h-10 shrink-0 items-center gap-0.5 border-b px-1.5">
+        {nav("Back", ArrowLeftIcon, "back")}
+        {nav("Forward", ArrowRightIcon, "forward")}
+        {nav("Reload", RotateCwIcon, "reload", page?.loading)}
+        <form onSubmit={open} className="mx-1 min-w-0 flex-1">
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            onFocus={(e) => {
+              setEditing(true);
+              e.currentTarget.select();
+            }}
+            onBlur={() => setEditing(false)}
+            onKeyDown={(e) => e.key === "Escape" && e.currentTarget.blur()}
+            placeholder="Type a URL"
+            aria-label="Address"
+            title={page?.title || undefined}
+            spellCheck={false}
+            className="h-7 w-full rounded-md border bg-muted/40 px-2.5 text-sm outline-none focus-visible:bg-transparent focus-visible:ring-1 focus-visible:ring-ring"
+          />
+        </form>
+        <Button variant="ghost" size="icon" className="size-7" aria-label="Close browser" onClick={() => togglePanel("browser", false)}>
+          <XIcon className="size-4" />
+        </Button>
+      </div>
+      {hasPage ? (
+        <div ref={host} className="min-h-0 flex-1 bg-white" />
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+          <GlobeIcon className="size-7 text-muted-foreground" />
+          <p className="text-sm font-medium">Browse with Sush</p>
+          <p className="max-w-64 text-xs text-muted-foreground">
+            Type a URL, or ask Sush to open a site. It can read, click and type, and asks before opening a site for the first time.
+          </p>
+        </div>
+      )}
+    </Pane>
   );
 }
 
