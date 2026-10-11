@@ -90,7 +90,14 @@ export interface McpTool {
 
 export type ConnectOutcome =
   | { state: "ready"; serverName?: string | null; tools: McpTool[] }
-  | { state: "needs-auth" };
+  /** `rejected`: why the server turned down the saved sign-in, if there was one. */
+  | { state: "needs-auth"; rejected?: string | null };
+
+/** A device-flow sign-in: type `userCode` at `verificationUri` (connector_auth.rs). */
+export interface DeviceCode {
+  userCode: string;
+  verificationUri: string;
+}
 
 /** Redirect port for user-supplied OAuth clients (connector_auth.rs). */
 export const CUSTOM_CLIENT_REDIRECT = "http://localhost:33418/callback";
@@ -149,9 +156,13 @@ export const api = {
   connectorDisconnect: (id: string) => invoke<void>("connector_disconnect", { id }),
   /** Disconnect and delete the connector's stored credentials. */
   connectorForget: (id: string) => invoke<void>("connector_forget", { id }),
-  /** Sign in through the browser; resolves when the browser comes back. */
-  connectorAuthorize: (id: string, url: string, clientId?: string | null) =>
-    invoke<void>("connector_authorize", { id, url, clientId: clientId || null }),
+  /** Sign in through the browser; resolves when the browser comes back. Servers
+   *  that sign in with a typed code (GitHub) call `onCode` with it first. */
+  connectorAuthorize: (id: string, url: string, clientId: string | null | undefined, onCode: (code: DeviceCode) => void) => {
+    const channel = new Channel<DeviceCode>();
+    channel.onmessage = onCode;
+    return invoke<void>("connector_authorize", { id, url, clientId: clientId || null, onCode: channel });
+  },
   connectorCancelAuthorize: (id: string) => invoke<void>("connector_cancel_authorize", { id }),
   /** `undefined` keeps a stored value, `""` clears it. */
   connectorSaveSecrets: (id: string, url: string, secrets: { token?: string; clientSecret?: string }) =>

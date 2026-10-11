@@ -20,7 +20,8 @@ pub enum ConnectOutcome {
     #[serde(rename_all = "camelCase")]
     Ready { server_name: Option<String>, tools: Vec<McpTool> },
     /// A remote server wants a sign-in (or a fresh one) before it'll talk.
-    NeedsAuth,
+    /// `rejected` says why, when it turned down credentials we already had.
+    NeedsAuth { rejected: Option<String> },
 }
 
 fn ready(client: &McpClient) -> ConnectOutcome {
@@ -43,7 +44,11 @@ pub async fn connector_connect(state: State<'_, AppState>, id: String, server: S
         ServerSpec::Http(remote) => {
             let tokens = StoredTokens::new(&id, &remote.url, state.http.clone());
             match McpClient::connect_http(state.http.clone(), &remote.url, Some(tokens)).await {
-                Err(McpError::Unauthorized(_)) => return Ok(ConnectOutcome::NeedsAuth),
+                Err(McpError::Unauthorized(challenge)) => {
+                    let rejected = connector_auth::has_credentials(&id, &remote.url)
+                        .then(|| challenge.reason.unwrap_or_else(|| "the server turned down the saved sign-in".into()));
+                    return Ok(ConnectOutcome::NeedsAuth { rejected });
+                }
                 result => result?,
             }
         }

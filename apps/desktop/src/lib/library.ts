@@ -5,7 +5,15 @@
 import { useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
-import { api, errorMessage, type McpTool, type Plugin, type ServerCommand, type ServerSpec } from "@/lib/tauri";
+import {
+  api,
+  errorMessage,
+  type DeviceCode,
+  type McpTool,
+  type Plugin,
+  type ServerCommand,
+  type ServerSpec,
+} from "@/lib/tauri";
 
 export interface Skill {
   id: string;
@@ -88,9 +96,9 @@ const allowedTools = createStore<string[]>("sush.allowedTools", []);
 export type ConnectorStatus =
   | { state: "connecting" }
   | { state: "ready"; tools: McpTool[]; serverName?: string | null }
-  | { state: "needs-auth" }
+  | { state: "needs-auth"; rejected?: string | null }
   /** Waiting for the user to finish signing in in the browser. */
-  | { state: "authorizing" }
+  | { state: "authorizing"; code?: DeviceCode }
   | { state: "error"; error: string };
 const connectorStatus = createStore<Record<string, ConnectorStatus>>("sush.connectorStatus", {}, false);
 
@@ -218,7 +226,11 @@ export async function signIn(c: Connector) {
   if (c.server.type !== "http") return;
   setStatus(c.id, { state: "authorizing" });
   try {
-    await api.connectorAuthorize(c.id, c.server.url, c.server.oauthClientId);
+    await api.connectorAuthorize(c.id, c.server.url, c.server.oauthClientId, (code) => {
+      setStatus(c.id, { state: "authorizing", code });
+      // Ready to paste on the page that just opened.
+      void navigator.clipboard.writeText(code.userCode).catch(() => {});
+    });
   } catch (e) {
     const error = errorMessage(e);
     // Cancelling isn't an error worth showing; go back to "Sign in".
