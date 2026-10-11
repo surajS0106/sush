@@ -211,7 +211,7 @@ export const ReasoningContent = memo(
     <CollapsibleContent
       className={cn(
         // Indented under the brain icon with a guide line, so the thought reads as an aside, not the answer.
-        "mt-2 ml-[7px] border-border border-l-2 pl-4 text-[13px] leading-relaxed",
+        "mt-2 ml-1.75 border-border border-l-2 pl-4 text-[13px] leading-relaxed",
         "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground/80 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
         className
       )}

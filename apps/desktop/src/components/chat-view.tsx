@@ -7,7 +7,7 @@ import {
   SettingsIcon,
   WrenchIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -31,12 +31,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LoadingState } from "@/components/ui/loading-state";
+import { ResizeHandle } from "@/components/ui/resize-handle";
 import { SourcesProvider } from "@/components/ui/Sources";
 import { Suggestion } from "@/components/ui/Suggestion";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ProviderModels } from "@/hooks/use-providers";
 import type { ToolResult } from "@/lib/agent";
+import { setAppearance } from "@/lib/appearance";
 import { ARTIFACT_WRITE, artifactViews, type ArtifactView } from "@/lib/artifacts";
 import { useSession } from "@/lib/auth";
 import { citedSources, stripCitations } from "@/lib/citations";
@@ -252,7 +254,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   }
 
   const chat = (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <TranscriptResizer />
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 py-8">
           {messages.map((message) => (
@@ -338,6 +341,35 @@ interface WorkspaceFrameProps {
   /** The Cowork side panel (files, terminal), or nothing for a plain chat. */
   panel: React.ReactNode;
   children: React.ReactNode;
+}
+
+/**
+ * Handles on both edges of the transcript and composer column. The column is
+ * centered, so moving one edge moves both; the width is saved as a custom
+ * Transcript width (Settings → General), and double-click goes back to Medium.
+ */
+function TranscriptResizer() {
+  const ref = useRef<HTMLDivElement>(null);
+  const handle = (edge: "left" | "right") => (
+    <ResizeHandle
+      label="Resize transcript"
+      edge={edge}
+      scale={2}
+      min={480}
+      max={() => ref.current?.parentElement?.clientWidth ?? 1600}
+      measure={() => ref.current?.offsetWidth ?? 768}
+      preview={(w) => document.documentElement.style.setProperty("--transcript-width", `${w}px`)}
+      onResize={(customWidth) => setAppearance({ width: "custom", customWidth })}
+      onReset={() => setAppearance({ width: "medium" })}
+      className="pointer-events-auto"
+    />
+  );
+  return (
+    <div ref={ref} className="pointer-events-none absolute inset-y-0 left-1/2 w-full max-w-(--transcript-width) -translate-x-1/2">
+      {handle("left")}
+      {handle("right")}
+    </div>
+  );
 }
 
 /** Puts a Cowork session's side panel beside the chat; tool cards read the workspace from here. */

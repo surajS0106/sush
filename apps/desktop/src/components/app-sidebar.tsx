@@ -62,6 +62,7 @@ import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-cont
 import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { UserAvatar } from "@/components/user-avatar";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
@@ -117,6 +118,9 @@ function SidebarResizer() {
       min={SIDEBAR.min}
       max={SIDEBAR.max}
       measure={() => sidebar}
+      preview={(width) =>
+        document.querySelector<HTMLElement>("[data-slot=sidebar-wrapper]")?.style.setProperty("--sidebar-width", `${width}px`)
+      }
       onResize={(width) => setLayout({ sidebar: width })}
       onReset={() => setLayout({ sidebar: SIDEBAR.default })}
     />
@@ -254,6 +258,7 @@ export function AppSidebar({
             <ProfileMenu
               name={session?.user.name || "Sush"}
               email={session?.user.email ?? "Local workspace"}
+              image={session?.user.image}
               onOpenSettings={onOpenSettings}
             />
           </SidebarMenuItem>
@@ -424,7 +429,17 @@ function SessionsMenu({
 }
 
 /** Footer account button; opens upward with theme, settings, help and sign-out. */
-function ProfileMenu({ name, email, onOpenSettings }: { name: string; email: string; onOpenSettings: () => void }) {
+function ProfileMenu({
+  name,
+  email,
+  image,
+  onOpenSettings,
+}: {
+  name: string;
+  email: string;
+  image?: string | null;
+  onOpenSettings: () => void;
+}) {
   const { isMobile } = useSidebar();
   const { theme = "system", setTheme } = useTheme();
   const ThemeIcon = THEMES.find((t) => t.value === theme)?.icon ?? MonitorIcon;
@@ -435,7 +450,12 @@ function ProfileMenu({ name, email, onOpenSettings }: { name: string; email: str
           size="lg"
           className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
         >
-          <img src="/sush-mark.png" alt="" className="aspect-square size-6" />
+          {image ? (
+            // `!` beats the menu button's [&_svg]:size-4, which would shrink a sprite avatar.
+            <UserAvatar image={image} className="size-8!" />
+          ) : (
+            <img src="/sush-mark.png" alt="" className="aspect-square size-6" />
+          )}
           <span className="flex-1 truncate text-left text-sm font-medium">{name}</span>
           <ChevronDownIcon className="ml-auto text-muted-foreground" />
         </SidebarMenuButton>

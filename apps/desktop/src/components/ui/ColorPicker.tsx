@@ -253,7 +253,7 @@ export function ColorPicker({
           data-color-picker=""
           role="dialog"
           aria-label={label + " picker"}
-          className={cx(host ? "absolute" : "fixed", "z-[100] w-56 rounded-xl border border-stone-200 bg-white p-3 shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none dark:border-stone-700 dark:bg-stone-900")}
+          className={cx(host ? "absolute" : "fixed", "z-100 w-56 rounded-xl border border-stone-200 bg-white p-3 shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none dark:border-stone-700 dark:bg-stone-900")}
           style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? "visible" : "hidden" }}
         >
           <div
@@ -279,7 +279,7 @@ export function ColorPicker({
               else if (e.key === "ArrowUp") commit({ ...hsv, v: clamp(hsv.v + d, 0, 1) });
               else commit({ ...hsv, v: clamp(hsv.v - d, 0, 1) });
             }}
-            className="relative h-32 w-full cursor-crosshair touch-none rounded-lg outline-none ring-stone-900/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:ring-white/60"
+            className="relative h-32 w-full cursor-crosshair touch-none rounded-lg outline-none ring-stone-900/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:ring-white/60"
             style={{
               background: "linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, " + hueHex + ")",
             }}
@@ -311,7 +311,7 @@ export function ColorPicker({
                 commit({ ...hsv, h: (hsv.h - d + 360) % 360 });
               }
             }}
-            className="relative mt-3 h-3 w-full cursor-pointer touch-none rounded-full outline-none ring-stone-900/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:ring-white/60"
+            className="relative mt-3 h-3 w-full cursor-pointer touch-none rounded-full outline-none ring-stone-900/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:ring-white/60"
             style={{
               background: "linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%)",
             }}

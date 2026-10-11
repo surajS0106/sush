@@ -168,6 +168,16 @@
   to { background-position: -50% center; }
 }
 
+/* While a splitter is dragged (components/ui/resize-handle.tsx): keep the
+   resize cursor over everything, stop text selection, and drop transitions
+   so panes follow the pointer instead of easing behind it. */
+html[data-resizing],
+html[data-resizing] * {
+  cursor: col-resize !important;
+  user-select: none !important;
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-pixel-loader] > * { animation: none !important; }
 }
@@ -236,6 +246,43 @@
 .transcript-prose li + li { margin-top: 0.625em; }
 .transcript-prose li > :is(ol, ul) { margin-top: 0.5em; }
 .transcript-prose li::marker { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+
+/* GFM task lists ("- [ ] item"). Streamdown leaves remark's bare disabled
+   <input type="checkbox">, which the webview draws as a grey native box next
+   to the list bullet. Drop the bullet, hang the text off a drawn box the way
+   other list text hangs off its marker, and draw the checked state ourselves. */
+.contains-task-list[data-streamdown] { list-style: none; padding-left: 0; }
+.task-list-item[data-streamdown] { position: relative; padding-left: 1.5em; }
+.task-list-item[data-streamdown]::marker { content: none; }
+.task-list-item[data-streamdown] input[type="checkbox"] {
+  appearance: none;
+  position: absolute;
+  left: 0;
+  top: calc((1lh - 0.875em) / 2);
+  width: 0.875em;
+  height: 0.875em;
+  margin: 0;
+  border: 1.5px solid color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+  border-radius: 0.25em;
+  background: transparent;
+  opacity: 1;
+  cursor: default;
+}
+.task-list-item[data-streamdown] input[type="checkbox"]:checked {
+  border-color: var(--primary);
+  background-color: var(--primary);
+}
+.task-list-item[data-streamdown] input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 45%;
+  width: 0.3em;
+  height: 0.55em;
+  border: solid var(--primary-foreground);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
 
 /* Streamdown caps tables at tableMaxHeight and scrolls the rows, but only its
    full-screen view pins the header. Pin it inline too, opaque so rows don't

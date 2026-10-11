@@ -38,6 +38,21 @@ export const authClient = createAuthClient({
 
 export const useSession = authClient.useSession;
 
+/** Throws with the server's message when better-auth answers with an error. */
+function check<T>(res: { data: T | null; error: { message?: string; statusText?: string } | null }): T | null {
+  if (res.error) throw new Error(res.error.message || res.error.statusText || "Request failed");
+  return res.data;
+}
+
+/** Name and/or picture; `image` is a data URL, a built-in avatar id (lib/avatars.ts) or null to clear it. */
+export async function updateProfile(patch: { name?: string; image?: string | null }) {
+  check(await authClient.updateUser(patch));
+}
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  check(await authClient.changePassword({ currentPassword, newPassword, revokeOtherSessions: true }));
+}
+
 export async function signOut() {
   try {
     await authClient.signOut();

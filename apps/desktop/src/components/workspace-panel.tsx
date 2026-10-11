@@ -211,6 +211,12 @@ export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
         min={PANEL.min}
         max={() => Math.min(PANEL.max, (ref.current?.parentElement?.clientWidth ?? Infinity) - PANEL.chatMin)}
         measure={() => ref.current?.offsetWidth ?? PANEL.min}
+        preview={(w) => {
+          if (!ref.current) return;
+          ref.current.style.width = `${w}px`;
+          // Drop the default's percentage width and cap so the inline width shows.
+          ref.current.classList.remove("w-[52%]", "max-w-[min(960px,calc(100%-360px))]");
+        }}
         onResize={(panel) => setLayout({ panel })}
         onReset={() => setLayout({ panel: null })}
       />

@@ -5,17 +5,22 @@ import {
   BlocksIcon,
   BrainIcon,
   CircleUserIcon,
+  ImageIcon,
   KeyRoundIcon,
   LogOutIcon,
   MicIcon,
   PaletteIcon,
+  PencilIcon,
   PlugIcon,
   ScrollTextIcon,
   SearchIcon,
   SettingsIcon,
+  ShapesIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { toast } from "sonner";
 
 import { ConnectorsSection } from "@/components/connectors-section";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
@@ -27,9 +32,18 @@ import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu } from "@/components/ui/DropdownMenu";
+import {
+  DropdownMenu as DropdownMenuRoot,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { HoverHighlight } from "@/components/ui/motion-highlight";
+import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
-import { signOut, useSession } from "@/lib/auth";
+import { changePassword, signOut, updateProfile, useSession } from "@/lib/auth";
+import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import type { ProviderView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
@@ -47,7 +61,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Settings",
     items: [
       { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation" },
-      { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name sign out log out" },
+      { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
       { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
@@ -366,26 +380,263 @@ function AccentSwatch({ accent }: { accent: Accent }) {
 function AccountSection() {
   const { data: session } = useSession();
   const user = session?.user;
-  const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const setImage = async (image: string | null, done: string) => {
+    try {
+      await updateProfile({ image });
+      toast.success(done);
+    } catch (e) {
+      toast.error(`Couldn't update your picture: ${errorMessage(e)}`);
+    }
+  };
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      await setImage(await photoToDataUrl(file), "Photo updated");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
 
   return (
     <Page>
       <Group title="Account">
-        <div className="flex items-center gap-3 py-4">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-brand text-base font-medium text-brand-foreground">
-            {initial}
+        <div className="flex items-center gap-4 py-4">
+          <div className="relative shrink-0">
+            <UserAvatar image={user?.image} name={user?.name} email={user?.email} className="size-16 text-2xl" />
+            <DropdownMenuRoot>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Change picture"
+                  className="absolute -right-1 -bottom-1 flex size-7 items-center justify-center rounded-full border bg-background text-muted-foreground shadow-xs transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 data-[state=open]:text-foreground"
+                >
+                  <PencilIcon className="size-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="min-w-48">
+                <DropdownMenuItem onSelect={() => fileInput.current?.click()}>
+                  <ImageIcon /> Upload photo
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setPickerOpen(true)}>
+                  <ShapesIcon /> Choose an avatar
+                </DropdownMenuItem>
+                {user?.image && (
+                  <DropdownMenuItem variant="destructive" onSelect={() => void setImage(null, "Picture removed")}>
+                    <Trash2Icon /> Remove
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenuRoot>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/heic"
+              className="hidden"
+              onChange={(e) => {
+                void onFile(e.target.files?.[0]);
+                e.target.value = "";
+              }}
+            />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium">{user?.name || "Unnamed"}</p>
+            <p className="truncate text-base font-medium">{user?.name || "Unnamed"}</p>
             <p className="truncate text-sm text-muted-foreground">{user?.email}</p>
           </div>
         </div>
+        <Setting title="Full name">
+          <ProfileField
+            label="Full name"
+            value={user?.name ?? ""}
+            autoComplete="name"
+            onSave={async (name) => {
+              if (!name) throw new Error("Name can't be empty.");
+              await updateProfile({ name });
+              return "Name updated";
+            }}
+          />
+        </Setting>
+        <Setting title="Email" description="The address you sign in with.">
+          <p className="max-w-72 truncate text-sm text-muted-foreground">{user?.email}</p>
+        </Setting>
+        <Setting title="Password">
+          <Button variant="outline" size="sm" onClick={() => setPasswordOpen(true)}>
+            <KeyRoundIcon /> Change password
+          </Button>
+        </Setting>
         <Setting title="Sign out" description="Sign out of Sush on this device. Your chats stay on this computer.">
           <Button variant="outline" size="sm" onClick={() => void signOut()}>
             <LogOutIcon /> Sign out
           </Button>
         </Setting>
       </Group>
+      <AvatarPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        current={user?.image}
+        onPick={(key) => {
+          setPickerOpen(false);
+          void setImage(avatarId(key), "Avatar updated");
+        }}
+      />
+      <PasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
     </Page>
+  );
+}
+
+const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/**
+ * A text field that saves when it loses focus or on Enter. `onSave` returns
+ * the toast to show, or throws and the saved value comes back.
+ */
+function ProfileField({
+  label,
+  value,
+  autoComplete,
+  onSave,
+}: {
+  label: string;
+  value: string;
+  autoComplete?: string;
+  onSave: (value: string) => Promise<string>;
+}) {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  // Follow the account when it changes elsewhere (or after a save).
+  useEffect(() => setDraft(value), [value]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (next === value || saving) return setDraft(value);
+    setSaving(true);
+    try {
+      toast.success(await onSave(next));
+    } catch (e) {
+      toast.error(errorMessage(e));
+      setDraft(value);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Input
+      aria-label={label}
+      value={draft}
+      autoComplete={autoComplete}
+      spellCheck={false}
+      disabled={saving}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+      className="h-9 w-72"
+    />
+  );
+}
+
+function AvatarPicker({
+  open,
+  onOpenChange,
+  current,
+  onPick,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  current?: string | null;
+  onPick: (key: string) => void;
+}) {
+  const selected = builtinAvatar(current)?.key;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogTitle>Choose an avatar</DialogTitle>
+        <DialogDescription>Shown in the sidebar and on your account instead of a photo.</DialogDescription>
+        <div role="radiogroup" aria-label="Avatars" className="grid grid-cols-4 gap-3 pt-2">
+          {AVATARS.map((a) => (
+            <button
+              key={a.key}
+              type="button"
+              role="radio"
+              aria-checked={selected === a.key}
+              onClick={() => onPick(a.key)}
+              className="group flex flex-col items-center gap-2 rounded-xl p-2 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <span
+                className={cn(
+                  "rounded-full p-0.5 ring-2 transition-shadow",
+                  selected === a.key ? "ring-brand" : "ring-transparent group-hover:ring-foreground/15",
+                )}
+              >
+                <AvatarSprite avatar={a} className="size-16 rounded-full" />
+              </span>
+              <span className="text-center text-xs text-muted-foreground group-hover:text-foreground">{a.label}</span>
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PasswordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => {
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+    setError("");
+  };
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (next.length < 8) return setError("The new password needs at least 8 characters.");
+    if (next !== confirm) return setError("The new passwords don't match.");
+    setSaving(true);
+    try {
+      await changePassword(current, next);
+      toast.success("Password changed. Other devices were signed out.");
+      onOpenChange(false);
+      reset();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        onOpenChange(o);
+        if (!o) reset();
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogTitle>Change password</DialogTitle>
+        <DialogDescription>Signs you out everywhere else.</DialogDescription>
+        <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 pt-1">
+          <Input type="password" placeholder="Current password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} required className="h-9" />
+          <Input type="password" placeholder="New password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} required className="h-9" />
+          <Input type="password" placeholder="Confirm new password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required className="h-9" />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <Button type="submit" disabled={saving} className="mt-1">
+            {saving ? "Saving…" : "Change password"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

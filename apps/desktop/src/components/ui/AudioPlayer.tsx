@@ -61,7 +61,7 @@ function BarRow({ heights, color, playing, reduceMotion }: { heights: number[]; 
       {heights.map((h, i) => (
         <motion.span
           key={i}
-          className={`min-w-[2px] flex-1 rounded-full ${color}`}
+          className={`min-w-0.5 flex-1 rounded-full ${color}`}
           style={{ height: `${(h * 100).toFixed(2)}%` }}
           animate={playing && !reduceMotion ? { scaleY: [1, 1.1 + h * 0.2, 1] } : { scaleY: 1 }}
           transition={
@@ -116,7 +116,7 @@ function VolumeControl({ volume, muted, toggleMute, onVolumeChange }: { volume: 
         onClick={toggleMute}
         aria-label={muted || volume === 0 ? "Unmute" : "Mute"}
         aria-pressed={muted}
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-stone-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-stone-300"
+        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-stone-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-stone-300"
       >
         <VolumeIcon muted={muted || volume === 0} />
       </button>
@@ -133,7 +133,7 @@ function VolumeControl({ volume, muted, toggleMute, onVolumeChange }: { volume: 
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onKeyDown={onKeyDown}
-        className="group relative flex h-4 w-12 cursor-pointer items-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
+        className="group relative flex h-4 w-12 cursor-pointer items-center focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
       >
         <div className="relative h-1 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-white/10">
           <div className="h-full rounded-full bg-emerald-500" style={{ width: `${effective * 100}%` }} />
@@ -155,7 +155,7 @@ function EmptyState({ onUpload }: { onUpload: () => void }) {
     <button
       type="button"
       onClick={onUpload}
-      className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-stone-300 py-7 text-stone-500 transition-colors hover:border-emerald-400 hover:text-emerald-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/15 dark:text-stone-500 dark:hover:border-emerald-500/50 dark:hover:text-emerald-400"
+      className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-stone-300 py-7 text-stone-500 transition-colors hover:border-emerald-400 hover:text-emerald-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/15 dark:text-stone-500 dark:hover:border-emerald-500/50 dark:hover:text-emerald-400"
     >
       <UploadIcon />
       <span className="text-xs font-medium">Upload an audio file</span>
@@ -373,7 +373,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
             <button
               type="button"
               onClick={() => setSpeed((s) => SPEEDS[(SPEEDS.indexOf(s) + 1) % SPEEDS.length])}
-              className="rounded-full border border-stone-200 px-2 py-0.5 text-[11px] font-medium text-stone-500 transition-colors hover:border-stone-300 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:text-stone-400 dark:hover:border-white/20 dark:hover:text-stone-200"
+              className="rounded-full border border-stone-200 px-2 py-0.5 text-[11px] font-medium text-stone-500 transition-colors hover:border-stone-300 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:text-stone-400 dark:hover:border-white/20 dark:hover:text-stone-200"
             >
               {speed}x
             </button>
@@ -381,7 +381,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
               type="button"
               onClick={openFilePicker}
               aria-label="Change audio file"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-stone-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-stone-300"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-stone-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-stone-300"
             >
               <UploadIcon />
             </button>
@@ -389,7 +389,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
               type="button"
               onClick={deleteAudio}
               aria-label="Delete audio file"
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-red-400"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-stone-500 transition-colors hover:text-red-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:text-stone-500 dark:hover:text-red-400"
             >
               <TrashIcon />
             </button>
@@ -398,7 +398,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
           <button
             type="button"
             onClick={openFilePicker}
-            className="ml-auto rounded-full border border-stone-200 px-2.5 py-1 text-[11px] font-medium text-stone-500 transition-colors hover:border-stone-300 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:text-stone-400 dark:hover:border-white/20 dark:hover:text-stone-200"
+            className="ml-auto rounded-full border border-stone-200 px-2.5 py-1 text-[11px] font-medium text-stone-500 transition-colors hover:border-stone-300 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:text-stone-400 dark:hover:border-white/20 dark:hover:text-stone-200"
           >
             Upload
           </button>
@@ -413,7 +413,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
             type="button"
             onClick={togglePlay}
             aria-label={playing ? "Pause" : "Play"}
-            className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-white transition-colors hover:bg-emerald-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
+            className="relative inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-700 text-white transition-colors hover:bg-emerald-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
           >
             <AnimatePresence mode="wait" initial={false}>
               <motion.span
@@ -444,7 +444,7 @@ export function AudioPlayer({ title, src, durationSeconds = 0 }: { title: string
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
               onKeyDown={onKeyDown}
-              className="relative flex h-9 cursor-pointer items-center rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
+              className="relative flex h-9 cursor-pointer items-center rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400"
             >
               <BarRow heights={barHeights} color="bg-stone-200 dark:bg-stone-700" playing={playing} reduceMotion={shouldReduceMotion} />
               <div ref={fillRef} className="pointer-events-none absolute inset-0" style={{ clipPath: `inset(0 ${(1 - currentTime / duration) * 100}% 0 0)` }}>

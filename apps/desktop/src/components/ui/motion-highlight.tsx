@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
 import { cn } from "@/lib/utils";
@@ -38,7 +38,8 @@ function boxWithin(el: HTMLElement, container: Element): Box | null {
  * One background that glides to `target`, taking its size and (if it has one) corner radius. Render it inside the
  * positioned element (usually the scroll container) that holds the items; it scrolls with them, so it never
  * drifts. Items must be positioned (`relative`) so they paint above it. It appears in place rather than
- * sliding in from where it last faded out. A target with `data-variant="destructive"` tints it red.
+ * sliding in from where it last faded out, and vanishes rather than fades if it's hidden mid-glide, so a fast
+ * pointer doesn't leave a ghost fading between rows. A target with `data-variant="destructive"` tints it red.
  */
 export function MotionHighlight({
   target,
@@ -52,6 +53,8 @@ export function MotionHighlight({
 }) {
   const ref = useRef<HTMLSpanElement>(null);
   const reduceMotion = useReducedMotion();
+  /** True while the highlight is still travelling to its target. */
+  const gliding = useRef(false);
   const [state, setState] = useState<{ box: Box | null; visible: boolean; snap: boolean; variant?: string }>({
     box: null,
     visible: false,
@@ -61,11 +64,11 @@ export function MotionHighlight({
   useLayoutEffect(() => {
     const container = ref.current?.offsetParent;
     const box = target && container ? boxWithin(target, container) : null;
-    setState((prev) =>
-      box
-        ? { box, visible: true, snap: !prev.visible, variant: target?.dataset.variant }
-        : { ...prev, visible: false },
-    );
+    setState((prev) => {
+      if (!box) return { ...prev, visible: false, snap: gliding.current };
+      gliding.current = prev.visible;
+      return { box, visible: true, snap: !prev.visible, variant: target?.dataset.variant };
+    });
   }, [target, revision]);
 
   return (
@@ -79,7 +82,16 @@ export function MotionHighlight({
       )}
       initial={false}
       animate={{ ...state.box, opacity: state.visible ? 1 : 0 }}
-      transition={reduceMotion ? { duration: 0 } : state.snap ? { duration: 0, opacity: FADE } : { ...SPRING, opacity: FADE }}
+      transition={
+        reduceMotion || (state.snap && !state.visible)
+          ? { duration: 0 }
+          : state.snap
+            ? { duration: 0, opacity: FADE }
+            : { ...SPRING, opacity: FADE }
+      }
+      onAnimationComplete={() => {
+        gliding.current = false;
+      }}
     />
   );
 }
@@ -132,7 +144,11 @@ export function FollowHighlight({ selector, className }: { selector: string; cla
   );
 }
 
-/** A `relative` wrapper whose hovered item (closest match of `itemSelector`) gets a gliding highlight. */
+/**
+ * A `relative` wrapper whose hovered item (closest match of `itemSelector`) gets a gliding highlight. Scrolling
+ * hides it until the pointer moves again: rows sliding under a still pointer fire `pointerover` one after
+ * another, and the highlight would chase them through the list.
+ */
 export function HoverHighlight({
   itemSelector = "[data-hover-item]",
   className,
@@ -144,15 +160,44 @@ export function HoverHighlight({
   highlightClassName?: string;
   children: ReactNode;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const scrolling = useRef(false);
   const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    // `scroll` doesn't bubble, so catch it on the way down from whichever ancestor scrolls.
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && ref.current && e.target.contains(ref.current)) {
+        scrolling.current = true;
+        setTarget(null);
+      }
+    };
+    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
+
+  const track = (e: PointerEvent<HTMLDivElement>) => {
+    const item = (e.target as Element).closest<HTMLElement>(itemSelector);
+    setTarget(item && e.currentTarget.contains(item) ? item : null);
+  };
+
   return (
     <div
+      ref={ref}
       className={cn("relative", className)}
       onPointerOver={(e) => {
-        const item = (e.target as Element).closest<HTMLElement>(itemSelector);
-        setTarget(item && e.currentTarget.contains(item) ? item : null);
+        if (!scrolling.current) track(e);
       }}
-      onPointerLeave={() => setTarget(null)}
+      onPointerMove={(e) => {
+        // Scrolling doesn't fire `pointermove`, so a move means the pointer itself moved; pick up where it is.
+        if (!scrolling.current) return;
+        scrolling.current = false;
+        track(e);
+      }}
+      onPointerLeave={() => {
+        scrolling.current = false;
+        setTarget(null);
+      }}
     >
       <MotionHighlight target={target} className={highlightClassName} />
       {children}

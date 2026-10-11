@@ -83,7 +83,7 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
         <ModelSelectorInput placeholder="Search models…" value={search} onValueChange={setSearch} />
         <ModelSelectorList
           data-lenis-prevent
-          className="max-h-[min(28rem,60vh)] [scrollbar-width:thin]! [scrollbar-gutter:stable]"
+          className="max-h-[min(28rem,60vh)] scrollbar-thin! scrollbar-gutter-stable"
         >
           <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
           {catalog.map(({ provider, models, error }, i) => {

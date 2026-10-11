@@ -3,8 +3,6 @@ import * as React from "react";
 import { cn } from "@/lib/utils";
 
 const KEY_STEP = 16;
-/** Pointer travel before a press counts as a drag rather than a click. */
-const DRAG_THRESHOLD = 3;
 
 export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "onChange"> {
   /** Names what it resizes, for screen readers. */
@@ -15,6 +13,9 @@ export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "on
   max: number | (() => number);
   /** The container's current width in px; read when a drag or key press starts. */
   measure: () => number;
+  /** Shows a width mid-drag by writing it straight to the DOM, without a React render. */
+  preview: (width: number) => void;
+  /** Saves the width: once when a drag ends, and on each key press. */
   onResize: (width: number) => void;
   /** Double-click (or Enter) puts the default width back. */
   onReset?: () => void;
@@ -24,9 +25,10 @@ export interface ResizeHandleProps extends Omit<React.ComponentProps<"div">, "on
 
 /**
  * A vertical splitter on a container's edge. Drag it, or focus it and use the
- * arrow keys (Home/End jump to the limits). While a drag is on,
- * `data-resizing` on <html> pins the cursor and turns off width transitions
- * (index.css), so the container tracks the pointer exactly.
+ * arrow keys (Home/End jump to the limits). A drag only calls `preview`
+ * until it ends, so nothing re-renders or hits storage per pointer move.
+ * While it's on, `data-resizing` on <html> pins the cursor and turns off
+ * width transitions (index.css), so the container tracks the pointer exactly.
  */
 export function ResizeHandle({
   label,
@@ -34,6 +36,7 @@ export function ResizeHandle({
   min,
   max,
   measure,
+  preview,
   onResize,
   onReset,
   scale = 1,
@@ -52,23 +55,21 @@ export function ResizeHandle({
     handle.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const start = measure();
-    let dragging = false;
+    let width: number | null = null;
+    document.documentElement.dataset.resizing = "";
 
     const move = (ev: PointerEvent) => {
-      const dx = ev.clientX - startX;
-      if (!dragging) {
-        if (Math.abs(dx) < DRAG_THRESHOLD) return;
-        dragging = true;
-        document.documentElement.dataset.resizing = "";
-      }
-      const width = clamp(start + sign * dx * scale);
-      setNow(width);
-      onResize(width);
+      width = clamp(start + sign * (ev.clientX - startX) * scale);
+      preview(width);
     };
     const up = () => {
       handle.removeEventListener("pointermove", move);
       handle.removeEventListener("pointerup", up);
       handle.removeEventListener("pointercancel", up);
+      if (width !== null) {
+        setNow(width);
+        onResize(width);
+      }
       delete document.documentElement.dataset.resizing;
     };
     handle.addEventListener("pointermove", move);
@@ -89,6 +90,7 @@ export function ResizeHandle({
       e.preventDefault();
       const width = clamp(next);
       setNow(width);
+      preview(width);
       onResize(width);
     } else if (e.key === "Enter" && onReset) {
       e.preventDefault();
@@ -119,7 +121,7 @@ export function ResizeHandle({
     >
       <span
         aria-hidden
-        className="h-full w-0.5 rounded-full bg-transparent transition-colors duration-150 group-hover/resize:bg-border group-focus-visible/resize:bg-ring group-active/resize:bg-ring"
+        className="h-full w-0.5 rounded-full bg-transparent group-hover/resize:bg-border group-focus-visible/resize:bg-ring group-active/resize:bg-ring"
       />
     </div>
   );
