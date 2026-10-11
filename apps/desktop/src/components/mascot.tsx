@@ -1,13 +1,17 @@
 // Sush's mascot: a pixel-art nigiri (salmon on rice, a teal nori band) that
-// stands on the composer. Its eyes follow the pointer (and drop to the input
-// while you type), it breathes, blinks, wanders along the composer's edge now
-// and then, runs in place while a run is working, and falls asleep when the
-// app is left alone. Clicking it hops and pops a heart; three quick clicks do
-// a backflip. Purely decorative.
+// stands on the composer, or any built-in avatar picked in Settings → Sushi.
+// Its eyes follow the pointer (and drop to the input while you type), it
+// breathes, blinks, wanders along the composer's edge now and then, runs in
+// place while a run is working, and falls asleep when the app is left alone.
+// Clicking it hops and pops a heart; three quick clicks do a backflip.
+// Switching characters pops the new one in with a puff of sparkles. Purely
+// decorative.
 
 import { motion, useAnimationControls, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
+import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
+import { DEFAULT_MASCOT, useMascot } from "@/lib/mascot";
 import { cn } from "@/lib/utils";
 
 // One character per pixel; "." is transparent. Eyes and legs are drawn
@@ -30,6 +34,7 @@ const LEG_FRAMES = ["...L..L....L..L.", "....LL......LL.."];
 
 const HEART = ["HH.HH", "HHHHH", ".HHH.", "..H.."];
 const ZED = ["ZZZ", ".Z.", "ZZZ"];
+const STAR = [".Y.", "YYY", ".Y."];
 
 const COLORS: Record<string, string> = {
   S: "#f0533f", // salmon
@@ -41,16 +46,9 @@ const COLORS: Record<string, string> = {
   P: "#f7a39b", // blush
   L: "#3d3d3d", // legs
   H: "#f0533f", // heart
+  Y: "#f6c945", // sparkle
   Z: "currentColor", // sleep z
 };
-
-const PX = 2.5;
-const WIDTH = SPRITE[0].length;
-const HEIGHT = SPRITE.length + 1;
-
-/** Each eye's top-left pixel when looking straight ahead; eyes are 2×2. */
-const EYES = [3, 11];
-const EYE_Y = 5;
 
 /** How far left of its spot it may wander, in CSS px, and how fast it walks. */
 const WANDER = 72;
@@ -60,7 +58,7 @@ const SLEEP_AFTER = 60_000;
 type Run = { x: number; y: number; w: number; fill: string };
 
 /** Horizontal runs of one colour, so each row is a few rects rather than sixteen. */
-function runs(rows: string[], y0 = 0) {
+function runs(rows: string[], colors = COLORS, y0 = 0) {
   const out: Run[] = [];
   rows.forEach((row, y) => {
     let x = 0;
@@ -68,15 +66,102 @@ function runs(rows: string[], y0 = 0) {
       const c = row[x];
       let w = 1;
       while (row[x + w] === c) w++;
-      if (c !== ".") out.push({ x, y: y + y0, w, fill: COLORS[c] });
+      if (c !== ".") out.push({ x, y: y + y0, w, fill: colors[c] });
       x += w;
     }
   });
   return out;
 }
 
-const BODY = runs(SPRITE);
-const LEGS = LEG_FRAMES.map((row) => runs([row], SPRITE.length));
+/** Everything the mascot needs to draw one character. Eyes are 2×2 and drawn on top of the body. */
+interface Character {
+  width: number;
+  height: number;
+  /** CSS px per sprite pixel. */
+  px: number;
+  body: Run[];
+  eyes: { x: number; y: number }[];
+  eyeColor: string;
+  legs: Run[][];
+}
+
+const SUSHI: Character = {
+  width: SPRITE[0].length,
+  height: SPRITE.length + 1,
+  px: 2.5,
+  body: runs(SPRITE),
+  eyes: [3, 11].map((x) => ({ x, y: 5 })),
+  eyeColor: COLORS.E,
+  legs: LEG_FRAMES.map((row) => runs([row], COLORS, SPRITE.length)),
+};
+
+/**
+ * An avatar as a mascot. Its sprite is drawn at double resolution so the
+ * eyes (one pixel in the avatar) become 2×2 and can glance and blink half a
+ * pixel at a time like Sushi's. The eye pixels are painted over with their
+ * neighbour, blank rows trimmed, and legs added under its bottom row: two
+ * pairs under a wide base, one pair under a narrow one.
+ */
+function avatarCharacter(avatar: AvatarDef): Character {
+  const palette = { ...avatarPalette(avatar), L: COLORS.L };
+  const isEye = (c: string | undefined) => c === "E" || c === "W";
+  const blank = (row: string) => !/[^.]/.test(row);
+
+  let rows = avatar.sprite;
+  while (rows.length && blank(rows[0])) rows = rows.slice(1);
+  while (rows.length && blank(rows[rows.length - 1])) rows = rows.slice(0, -1);
+
+  const eyes: { x: number; y: number }[] = [];
+  let eyeColor = palette.E;
+  const body = rows.map((row, y) =>
+    [...row]
+      .map((c, x) => {
+        if (!isEye(c)) return c;
+        eyes.push({ x: x * 2, y: y * 2 });
+        eyeColor = palette[c];
+        return [row[x - 1], row[x + 1]].find((n) => n && n !== "." && !isEye(n)) ?? ".";
+      })
+      .join(""),
+  );
+  const big = body.flatMap((row) => {
+    const doubled = [...row].map((c) => c + c).join("");
+    return [doubled, doubled];
+  });
+
+  const width = big[0].length;
+  const bottom = big[big.length - 1];
+  const left = bottom.search(/[^.]/);
+  const right = bottom.length - [...bottom].reverse().join("").search(/[^.]/);
+  const span = right - left;
+  const feet = span >= 14 ? [left + span / 4, left + (span * 3) / 4] : [left + span / 2];
+  // Each leg is 2×2: apart (a gap between them), then together.
+  const legRow = (offsets: number[]) => {
+    const row = Array<string>(width).fill(".");
+    for (const c of feet)
+      for (const o of offsets)
+        for (const i of [0, 1]) {
+          const x = Math.round(c + o) + i;
+          if (x >= 0 && x < width) row[x] = "L";
+        }
+    return row.join("");
+  };
+  const legs = [legRow([-3, 1]), legRow([-2, 0])].map((row) => runs([row, row], palette, big.length));
+
+  return { width, height: big.length + 2, px: 1.5, body: runs(big, palette), eyes, eyeColor, legs };
+}
+
+const characters = new Map<string, Character>([[DEFAULT_MASCOT, SUSHI]]);
+
+function characterFor(key: string): Character {
+  let c = characters.get(key);
+  if (!c) {
+    const avatar = AVATARS.find((a) => a.key === key);
+    if (!avatar) return SUSHI;
+    c = avatarCharacter(avatar);
+    characters.set(key, c);
+  }
+  return c;
+}
 
 function Pixels({ runs }: { runs: Run[] }) {
   return runs.map((r, i) => <rect key={i} x={r.x} y={r.y} width={r.w} height={1} fill={r.fill} />);
@@ -101,7 +186,64 @@ type Look = { x: -1 | 0 | 1; y: -1 | 0 | 1 };
 
 const sign = (d: number, dead: number): -1 | 0 | 1 => (d < -dead ? -1 : d > dead ? 1 : 0);
 
-export function Mascot({ busy, draft, className }: { busy: boolean; draft: string; className?: string }) {
+/** A character standing still, eyes front, e.g. for the picker in Settings. */
+export function MascotSprite({ kind, scale = 1, closed, className }: { kind: string; scale?: number; closed?: boolean; className?: string }) {
+  const c = characterFor(kind);
+  return (
+    <svg
+      viewBox={`0 0 ${c.width} ${c.height}`}
+      width={c.width * c.px * scale}
+      height={c.height * c.px * scale}
+      shapeRendering="crispEdges"
+      className={className}
+      aria-hidden
+    >
+      <Pixels runs={c.body} />
+      {c.eyes.map((e) => (
+        <rect key={`${e.x},${e.y}`} x={e.x} y={e.y + (closed ? 1 : 0)} width={2} height={closed ? 1 : 2} fill={c.eyeColor} />
+      ))}
+      <Pixels runs={c.legs[0]} />
+    </svg>
+  );
+}
+
+interface MascotProps {
+  busy: boolean;
+  draft: string;
+  /** Which character; the one picked in Settings when left out. */
+  kind?: string;
+  className?: string;
+}
+
+export function Mascot({ kind, ...props }: MascotProps) {
+  const picked = useMascot();
+  const key = kind ?? picked;
+  // Celebrate a switch, but not the first appearance (or a remount when the composer's menus close).
+  const [shown, setShown] = useState(key);
+  const [switched, setSwitched] = useState(false);
+  if (shown !== key) {
+    setShown(key);
+    setSwitched(true);
+  }
+  return <MascotBody key={key} character={characterFor(key)} entrance={switched} {...props} />;
+}
+
+const SPARKS = [
+  { x: -18, y: -14 },
+  { x: 18, y: -16 },
+  { x: -22, y: 2 },
+  { x: 22, y: 0 },
+  { x: 0, y: -24 },
+];
+
+function MascotBody({
+  busy,
+  draft,
+  className,
+  character,
+  entrance,
+}: Omit<MascotProps, "kind"> & { character: Character; entrance: boolean }) {
+  const { width, height, px, body, eyes, eyeColor, legs } = character;
   const reduceMotion = useReducedMotion();
   const hopControls = useAnimationControls();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -114,6 +256,7 @@ export function Mascot({ busy, draft, className }: { busy: boolean; draft: strin
   const [x, setX] = useState(0);
   const [walking, setWalking] = useState(false);
   const [hearts, setHearts] = useState<number[]>([]);
+  const [sparks, setSparks] = useState(entrance && !reduceMotion);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -202,16 +345,26 @@ export function Mascot({ busy, draft, className }: { busy: boolean; draft: strin
         scaleX: [1.06, 0.96, 1.04],
         transition: { duration: 0.45, repeat: Infinity, repeatDelay: 0.15, ease: "easeOut" },
       });
+    } else if (entrance) {
+      // Pop in: drop from a little above, squash on landing, wobble upright.
+      void hopControls.start({
+        y: [-18, 0, -4, 0],
+        scaleX: [0.6, 1.2, 0.95, 1],
+        scaleY: [1.3, 0.8, 1.05, 1],
+        rotate: [0, -8, 4, 0],
+        opacity: [0, 1, 1, 1],
+        transition: { duration: 0.55, times: [0, 0.45, 0.75, 1], ease: "easeOut" },
+      });
     } else void hopControls.start({ y: 0, scaleX: 1, scaleY: 1, transition: { duration: 0.2 } });
-  }, [busy, reduceMotion, hopControls]);
+  }, [busy, reduceMotion, hopControls, entrance]);
 
   // Pitter-patter legs while walking or working.
   const moving = walking || busy;
   useEffect(() => {
     if (reduceMotion || !moving) return setLegFrame(0);
-    const id = setInterval(() => setLegFrame((f) => (f + 1) % LEGS.length), busy ? 90 : 150);
+    const id = setInterval(() => setLegFrame((f) => (f + 1) % legs.length), busy ? 90 : 150);
     return () => clearInterval(id);
-  }, [moving, busy, reduceMotion]);
+  }, [moving, busy, reduceMotion, legs.length]);
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
@@ -289,6 +442,19 @@ export function Mascot({ busy, draft, className }: { busy: boolean; draft: strin
           <Glyph rows={HEART} />
         </motion.div>
       ))}
+      {sparks &&
+        SPARKS.map((s, i) => (
+          <motion.div
+            key={i}
+            className="pointer-events-none absolute top-1/2 left-1/2 -mt-[3px] -ml-[3px]"
+            initial={{ x: 0, y: 0, opacity: 0, scale: 0.4, rotate: 0 }}
+            animate={{ x: s.x, y: s.y, opacity: [0, 1, 0], scale: [0.4, 1.2, 0.6], rotate: 90 }}
+            transition={{ duration: 0.7, delay: 0.15 + i * 0.03, ease: "easeOut" }}
+            onAnimationComplete={() => i === SPARKS.length - 1 && setSparks(false)}
+          >
+            <Glyph rows={STAR} />
+          </motion.div>
+        ))}
       {sleeping &&
         !reduceMotion &&
         [0, 1, 2].map((i) => (
@@ -304,9 +470,9 @@ export function Mascot({ busy, draft, className }: { busy: boolean; draft: strin
         ))}
       <motion.div animate={hopControls} style={{ transformOrigin: "50% 100%" }}>
         <motion.svg
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-          width={WIDTH * PX}
-          height={HEIGHT * PX}
+          viewBox={`0 0 ${width} ${height}`}
+          width={width * px}
+          height={height * px}
           shapeRendering="crispEdges"
           style={{ transformOrigin: "50% 100%" }}
           animate={reduceMotion || moving ? { scaleY: 1 } : { scaleY: sleeping ? [1, 1.05, 1] : [1, 1.03, 1] }}
@@ -317,18 +483,18 @@ export function Mascot({ busy, draft, className }: { busy: boolean; draft: strin
           }
           className="drop-shadow-[0_1px_0_rgb(0_0_0/0.08)]"
         >
-          <Pixels runs={BODY} />
-          {EYES.map((ex) => (
+          <Pixels runs={body} />
+          {eyes.map((e) => (
             <rect
-              key={ex}
-              x={ex + look.x}
-              y={EYE_Y + look.y + (closed ? 1 : 0)}
+              key={`${e.x},${e.y}`}
+              x={e.x + look.x}
+              y={e.y + look.y + (closed ? 1 : 0)}
               width={2}
               height={closed ? 1 : 2}
-              fill={COLORS.E}
+              fill={eyeColor}
             />
           ))}
-          <Pixels runs={LEGS[legFrame]} />
+          <Pixels runs={legs[legFrame]} />
         </motion.svg>
       </motion.div>
     </motion.div>

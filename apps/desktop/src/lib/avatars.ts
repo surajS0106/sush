@@ -210,9 +210,12 @@ export function builtinAvatar(image: string | null | undefined): AvatarDef | und
   return AVATARS.find((a) => a.key === key);
 }
 
+/** Every color a sprite's characters name, the shared ones included. */
+export const avatarPalette = (avatar: AvatarDef): Record<string, string> => ({ ...BASE, ...avatar.colors });
+
 /** One rect per horizontal run of same-colored pixels. */
 export function spriteRects(avatar: AvatarDef): { x: number; y: number; w: number; fill: string }[] {
-  const colors = { ...BASE, ...avatar.colors };
+  const colors = avatarPalette(avatar);
   const rects: { x: number; y: number; w: number; fill: string }[] = [];
   avatar.sprite.forEach((row, y) => {
     let x = 0;

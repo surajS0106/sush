@@ -108,9 +108,10 @@ interface AppSidebarProps {
   onSwitchMode: (mode: SessionMode) => void;
 }
 
-/** The sidebar's right edge: drag it to set the width; double-click puts the default back. */
+/** The sidebar's right edge: drag it to set the width, or past the minimum to close; double-click puts the default back. */
 function SidebarResizer() {
   const { sidebar } = useLayout();
+  const { setOpen } = useSidebar();
   return (
     <ResizeHandle
       label="Resize sidebar"
@@ -123,6 +124,7 @@ function SidebarResizer() {
       }
       onResize={(width) => setLayout({ sidebar: width })}
       onReset={() => setLayout({ sidebar: SIDEBAR.default })}
+      onCollapse={() => setOpen(false)}
     />
   );
 }

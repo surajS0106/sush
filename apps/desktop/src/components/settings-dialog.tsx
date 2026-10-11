@@ -5,6 +5,7 @@ import {
   BlocksIcon,
   BrainIcon,
   CircleUserIcon,
+  FishIcon,
   ImageIcon,
   KeyRoundIcon,
   LogOutIcon,
@@ -28,6 +29,7 @@ import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
+import { SushiSection } from "@/components/sushi-section";
 import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/ColorPicker";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -62,6 +64,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation" },
       { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out" },
+      { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
       { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
@@ -149,6 +152,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {state?.section === "general" && <GeneralSection />}
           {state?.section === "account" && <AccountSection />}
+          {state?.section === "sushi" && <SushiSection />}
           {state?.section === "providers" && <ProvidersSection providers={providers} onChanged={onProvidersChanged} />}
           {state?.section === "speech" && <SpeechSection providers={providers} />}
           {state?.section === "memory" && <MemorySection />}

@@ -328,6 +328,7 @@ export function removePlugin(id: string) {
 export type SettingsSection =
   | "general"
   | "account"
+  | "sushi"
   | "providers"
   | "speech"
   | "memory"
