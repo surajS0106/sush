@@ -2,12 +2,15 @@
 //! provider implementations. Nothing in here knows about Tauri, so the same
 //! crate can later back a CLI/TUI.
 
+pub mod agent;
 pub mod error;
 pub mod mcp;
+pub mod memory;
 pub mod message;
 pub mod provider;
 pub mod providers;
 pub mod sse;
+pub mod store;
 pub mod transcribe;
 
 pub use error::ProviderError;

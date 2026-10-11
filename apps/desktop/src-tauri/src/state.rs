@@ -3,6 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, RwLock};
 
 use sush_core::mcp::{McpClient, ServerSpec};
+use sush_core::memory::MemoryDir;
+use sush_core::store::Store;
 use sush_core::ProviderConfig;
 use tokio_util::sync::CancellationToken;
 
@@ -11,19 +13,23 @@ use crate::error::AppResult;
 pub struct AppState {
     providers_path: PathBuf,
     pub providers: RwLock<Vec<ProviderConfig>>,
+    /// Conversations and attachments (`sush.db`, `blobs/` in the app data dir).
+    pub store: std::sync::Arc<Store>,
+    /// Agent runs in flight, by thread.
+    pub runs: crate::runs::Runs,
+    /// Long-term memory files (`memory/` in the app data dir).
+    pub memory: std::sync::Arc<MemoryDir>,
     /// In-flight chat streams by id, so the UI can cancel them.
     pub streams: Mutex<HashMap<String, CancellationToken>>,
     pub http: reqwest::Client,
     /// Running connectors by id, with the server they were started for.
     pub connectors: tokio::sync::Mutex<HashMap<String, (ServerSpec, std::sync::Arc<McpClient>)>>,
-    /// Connector tool calls in flight by call id, so Stop can cancel them.
-    pub tool_calls: Mutex<HashMap<String, CancellationToken>>,
     /// Browser sign-ins in progress by connector id, so a new attempt or Cancel can stop one.
     pub authorizing: Mutex<HashMap<String, CancellationToken>>,
 }
 
 impl AppState {
-    pub fn load(config_dir: PathBuf) -> AppResult<Self> {
+    pub fn load(config_dir: PathBuf, data_dir: PathBuf) -> AppResult<Self> {
         std::fs::create_dir_all(&config_dir)?;
         let providers_path = config_dir.join("providers.json");
         let providers = match std::fs::read_to_string(&providers_path) {
@@ -34,9 +40,11 @@ impl AppState {
         Ok(Self {
             providers_path,
             providers: RwLock::new(providers),
+            store: std::sync::Arc::new(Store::open(&data_dir)?),
+            runs: Default::default(),
+            memory: std::sync::Arc::new(MemoryDir::open(&data_dir.join("memory"))?),
             streams: Mutex::new(HashMap::new()),
             connectors: Default::default(),
-            tool_calls: Default::default(),
             authorizing: Default::default(),
             http: reqwest::Client::builder().user_agent(concat!("Sush/", env!("CARGO_PKG_VERSION"))).build()
                 .map_err(sush_core::ProviderError::from)?,

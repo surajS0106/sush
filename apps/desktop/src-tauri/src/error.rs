@@ -17,6 +17,8 @@ pub enum AppError {
     Connector(#[from] sush_core::mcp::McpError),
     #[error(transparent)]
     OAuth(#[from] sush_core::mcp::oauth::OAuthError),
+    #[error(transparent)]
+    Store(#[from] sush_core::store::StoreError),
     #[error("{0}")]
     NotFound(String),
     #[error("{0}")]

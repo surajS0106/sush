@@ -1,5 +1,7 @@
 // Long-term memory: a few short markdown files about the user, shared across
-// chats and stored only on this device.
+// chats and stored only on this device (`memory/` in the app data folder, see
+// `sush_core::memory`). Loaded once by `initMemory`, then kept in memory here
+// and written through to disk.
 //
 //   profile          who the user is: role, background, location
 //   topics/<slug>    cross-cutting: communication style, interests, skills
@@ -10,9 +12,11 @@
 // Settings → Memory, by hand or by asking the model (reviseMemory).
 
 import { useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
 import { complete, extractJson } from "@/lib/complete";
 import { createStore, getConversations } from "@/lib/store";
+import { api, errorMessage } from "@/lib/tauri";
 import type { ModelTarget } from "@/lib/transport";
 
 export type MemoryKind = "profile" | "topic" | "area";
@@ -28,7 +32,41 @@ export interface MemoryFile {
   updatedAt: number;
 }
 
-const files = createStore<MemoryFile[]>("sush.memory", []);
+const files = createStore<MemoryFile[]>("sush.memory-cache", [], false);
+
+/** Where earlier versions kept memory files; moved to disk once. */
+const LEGACY_KEY = "sush.memory";
+
+// Disk writes run one at a time, in order.
+let writes = Promise.resolve();
+
+function persist(write: () => Promise<unknown>) {
+  writes = writes.then(write).then(
+    () => undefined,
+    (e) => {
+      console.error("Could not save memory", e);
+      toast.error("Couldn’t save memory", { description: errorMessage(e) });
+    },
+  );
+}
+
+/** Load memory files from disk, moving any left in localStorage by earlier versions. Call before rendering. */
+export async function initMemory() {
+  const legacy = localStorage.getItem(LEGACY_KEY);
+  if (legacy) {
+    try {
+      const old = JSON.parse(legacy) as MemoryFile[];
+      for (const f of Array.isArray(old) ? old : []) {
+        if (normalizePath(f.path) === f.path) await api.memoryWrite(f);
+      }
+      localStorage.removeItem(LEGACY_KEY);
+    } catch (e) {
+      console.warn("Could not move memory to disk", e);
+    }
+  }
+  files.set(await api.memoryList());
+  migrateFacts();
+}
 
 export const useMemoryFiles = () => useSyncExternalStore(files.subscribe, files.get);
 export const getMemoryFiles = () => files.get();
@@ -79,16 +117,23 @@ export function writeMemory(w: MemoryWrite): MemoryFile {
     updatedAt: Date.now(),
   };
   files.set((all) => (existing ? all.map((f) => (f.path === path ? file : f)) : [...all, file]));
+  persist(() => api.memoryWrite(file));
   return file;
 }
 
 export function deleteMemory(path: string): boolean {
   const exists = files.get().some((f) => f.path === path);
-  if (exists) files.set((all) => all.filter((f) => f.path !== path));
+  if (exists) {
+    files.set((all) => all.filter((f) => f.path !== path));
+    persist(() => api.memoryDelete(path));
+  }
   return exists;
 }
 
-export const clearMemory = () => files.set([]);
+export function clearMemory() {
+  files.set([]);
+  persist(() => api.memoryClear());
+}
 
 function titleFromSlug(path: string) {
   const slug = path.split("/")[1] ?? path;
@@ -220,25 +265,15 @@ export interface ChatHit {
   snippet: string;
 }
 
-/** Keyword search over saved chats: every term must appear; title matches rank higher. */
-export function searchChats(query: string, limit = 8): ChatHit[] {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return [];
-  return getConversations()
-    .filter((c) => c.messages.length > 0)
-    .map((c) => {
-      const text = chatText(c);
-      const haystack = `${c.title}\n${text}`.toLowerCase();
-      if (!terms.every((t) => haystack.includes(t))) return null;
-      const score = terms.reduce((n, t) => n + haystack.split(t).length - 1 + (c.title.toLowerCase().includes(t) ? 5 : 0), 0);
-      const at = text.toLowerCase().indexOf(terms[0]);
-      const snippet = at < 0 ? text.slice(0, 200) : text.slice(Math.max(0, at - 80), at + 160);
-      return { score, updatedAt: c.updatedAt, hit: { id: c.id, title: c.title, updated: new Date(c.updatedAt).toISOString().slice(0, 10), snippet: snippet.replace(/\s+/g, " ").trim() } };
-    })
-    .filter((x) => x !== null)
-    .sort((a, b) => b.score - a.score || b.updatedAt - a.updatedAt)
-    .slice(0, limit)
-    .map((x) => x.hit);
+/** Full-text search over saved chats: every word must match (as a prefix); title matches rank higher. */
+export async function searchChats(query: string, limit = 8): Promise<ChatHit[]> {
+  const hits = await api.chatsSearch(query, limit);
+  return hits.map((h) => ({
+    id: h.id,
+    title: h.title,
+    updated: new Date(h.updatedAt).toISOString().slice(0, 10),
+    snippet: h.snippet,
+  }));
 }
 
 const MAX_CHAT_CHARS = 30_000;
@@ -253,6 +288,3 @@ export function readChat(id: string): { title: string; transcript: string } | nu
     transcript: text.length > MAX_CHAT_CHARS ? `[earlier messages omitted]\n\n${text.slice(-MAX_CHAT_CHARS)}` : text,
   };
 }
-
-// Last, so the constants it relies on are initialised.
-migrateFacts();

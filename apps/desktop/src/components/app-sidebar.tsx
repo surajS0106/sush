@@ -57,7 +57,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { IS_MAC } from "@/components/window-controls";
 import { signOut, useSession } from "@/lib/auth";
 import { openSettings } from "@/lib/library";
-import { togglePinned, useRunningId, type Conversation } from "@/lib/store";
+import { useSessionStatus } from "@/lib/sessions";
+import { togglePinned, type Conversation } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 /** Sessions listed before the "More" toggle. */
@@ -218,12 +219,15 @@ function SessionRow({
   onDelete: (id: string) => void;
 }) {
   const { isMobile } = useSidebar();
-  const running = useRunningId() === c.id;
+  const status = useSessionStatus(c.id);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton isActive={active} onClick={() => onSelect(c.id)}>
-        {running && <LoaderCircleIcon className="animate-spin text-muted-foreground" />}
+        {status === "working" && <LoaderCircleIcon className="animate-spin text-muted-foreground" />}
         <span>{c.title}</span>
+        {status === "needs-input" && (
+          <span className="ml-auto size-2 shrink-0 rounded-full bg-brand" aria-label="Waiting for you" title="Waiting for you" />
+        )}
       </SidebarMenuButton>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
