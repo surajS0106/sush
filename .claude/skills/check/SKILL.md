@@ -1,9 +1,12 @@
 ---
 name: check
-description: Run the same checks CI runs (TypeScript typecheck, desktop production build, Rust workspace tests) and report failures. Use after making changes, before committing, or when asked to verify, check, or "make sure CI passes".
+description: Run the same checks CI runs (TypeScript typecheck, desktop production build, Rust workspace tests) and report failures, without committing or pushing. Only when the user explicitly asks to check, verify, or build; never automatically after edits.
+disable-model-invocation: true
 ---
 
 # Run the CI checks locally
+
+Only run this when the user asks. Don't build or test after each edit; to build and push a finished feature, the user runs `/ship`.
 
 CI (`.github/workflows/ci.yml`) has two jobs. Run both from the repo root, in this order (the fast TS checks first):
 

@@ -12,7 +12,7 @@ Target version: `$ARGUMENTS`. If it's empty, ask for it. It must be plain semver
 ## 1. Preconditions
 
 - On `main`, with a clean working tree (`git status`). If not, stop and tell the user.
-- Run the `check` skill. Don't tag a failing build.
+- Run the checks from `.claude/skills/check/SKILL.md` (all three commands). Don't tag a failing build.
 
 ## 2. Bump the version (all five must match)
 

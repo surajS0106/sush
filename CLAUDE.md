@@ -47,9 +47,10 @@ Three parts:
 
 `apps/chat-ui.ts` is a standalone component file outside every workspace package; nothing imports it.
 
-Project skills in `.claude/skills/` cover the common multi-file workflows: `check`, `run-app`, `add-tauri-command`, `add-agent-tool`, `add-provider`, `release`.
+Project skills in `.claude/skills/` cover the common multi-file workflows: `check`, `ship`, `run-app`, `add-tauri-command`, `add-agent-tool`, `add-provider`, `release`.
 
 ## Gotchas
 
+- Don't build, test, or typecheck after making changes (no `bun run typecheck`, `bun --filter desktop build`, `cargo build/check/test`, `tauri build`). Builds run only when the user asks, once a feature is complete and right before pushing: that's the `/ship` skill (or `/check` to verify without pushing).
 - The CSP in `tauri.conf.json` (and `tauri.release.conf.json` for release) restricts `connect-src`. If you point `VITE_AUTH_URL` at a new origin, or the webview needs to reach a new host, add it there.
 - Server env: `BETTER_AUTH_SECRET` (required in production), `BETTER_AUTH_URL`, `PORT`, `DATABASE_PATH`.
