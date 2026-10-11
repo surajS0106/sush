@@ -10,7 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { IS_MAC } from "@/components/window-controls";
+import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { useProviders } from "@/hooks/use-providers";
 import { useAppearance } from "@/lib/appearance";
 import { openSettings, syncConnectors, useChatRequest, type ChatRequest } from "@/lib/library";
@@ -112,13 +112,14 @@ function AppHeader({ title, nav }: { title: string | null; nav: Nav }) {
   const { state, isMobile } = useSidebar();
   // The sidebar's title bar carries these while it's showing.
   const sidebarHidden = isMobile || state === "collapsed";
+  const trafficLights = useTrafficLights();
   return (
     <header
       data-tauri-drag-region
       className={cn(
         "flex h-12 shrink-0 items-center gap-0.5 px-2 select-none",
         // Clear the custom window controls, or the macOS traffic lights once the sidebar is hidden.
-        IS_MAC ? sidebarHidden && "pl-20" : "pr-36",
+        IS_MAC ? trafficLights && sidebarHidden && "pl-20" : "pr-36",
       )}
     >
       {sidebarHidden && (

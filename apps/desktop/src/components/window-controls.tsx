@@ -7,6 +7,34 @@ import { cn } from "@/lib/utils";
 /** macOS keeps its native traffic lights (overlay title bar); elsewhere the window is undecorated. */
 export const IS_MAC = navigator.userAgent.includes("Mac");
 
+/** Whether the macOS traffic lights are drawn over the title bar; they're hidden in full screen. */
+export function useTrafficLights() {
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!IS_MAC) return;
+    const win = getCurrentWindow();
+    const check = () => void win.isFullscreen().then(setFullscreen);
+    // Resize events arrive while the full-screen animation is still running, so check again once it settles.
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      check();
+      clearTimeout(settle);
+      settle = setTimeout(check, 800);
+    };
+    check();
+    const unlisten = win.onResized(sync);
+    window.addEventListener("focus", check);
+    return () => {
+      clearTimeout(settle);
+      window.removeEventListener("focus", check);
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  return IS_MAC && !fullscreen;
+}
+
 /** Minimize / maximize / close, pinned to the window's top-right corner. Renders nothing on macOS. */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);

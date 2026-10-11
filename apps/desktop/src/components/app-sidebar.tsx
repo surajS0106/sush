@@ -6,7 +6,6 @@ import {
   LogOutIcon,
   GitPullRequestIcon,
   LoaderCircleIcon,
-  MenuIcon,
   MessageSquareIcon,
   MonitorIcon,
   MoonIcon,
@@ -36,6 +35,9 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -54,7 +56,7 @@ import {
 } from "@/components/ui/sidebar";
 import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-controls";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { IS_MAC } from "@/components/window-controls";
+import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { openSettings } from "@/lib/library";
@@ -90,6 +92,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ conversations, activeId, onSelect, onNew, onDelete, onOpenSettings, nav }: AppSidebarProps) {
   const { data: session } = useSession();
+  const trafficLights = useTrafficLights();
   // Empty means no filter; the field is always shown.
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
@@ -108,8 +111,7 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onDelete,
   return (
     <Sidebar collapsible="offcanvas">
       {/* Title bar: drag to move the window; on macOS the traffic lights sit at its left. */}
-      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-0.5 px-2 select-none", IS_MAC && "pl-20")}>
-        <MoreMenu onOpenSettings={onOpenSettings} />
+      <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-0.5 px-2 select-none", trafficLights && "pl-20")}>
         <NavControls nav={nav} />
       </div>
 
@@ -283,9 +285,11 @@ function SessionsMenu({
   );
 }
 
-/** Footer account button; opens upward with settings, help and sign-out. */
+/** Footer account button; opens upward with theme, settings, help and sign-out. */
 function ProfileMenu({ name, email, onOpenSettings }: { name: string; email: string; onOpenSettings: () => void }) {
   const { isMobile } = useSidebar();
+  const { theme = "system", setTheme } = useTheme();
+  const ThemeIcon = THEMES.find((t) => t.value === theme)?.icon ?? MonitorIcon;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -305,9 +309,27 @@ function ProfileMenu({ name, email, onOpenSettings }: { name: string; email: str
         sideOffset={4}
       >
         <DropdownMenuLabel className="truncate font-normal text-muted-foreground">{email}</DropdownMenuLabel>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>
+            <ThemeIcon /> <span>Theme</span>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="w-36">
+            <DropdownMenuRadioGroup value={theme} onValueChange={(t) => transitionTheme(() => setTheme(t))}>
+              {THEMES.map(({ value, label, icon: Icon }) => (
+                <DropdownMenuRadioItem key={value} value={value}>
+                  <Icon /> {label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuItem onSelect={() => openSettings({ section: "skills" })}>
+          <SlidersHorizontalIcon /> <span>Customize</span>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={onOpenSettings}>
           <SettingsIcon /> <span>Settings</span>
         </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => comingSoon("Help")}>
           <CircleHelpIcon /> <span>Get help</span>
         </DropdownMenuItem>
@@ -328,39 +350,3 @@ const THEMES = [
   { value: "light", label: "Light", icon: SunIcon },
   { value: "dark", label: "Dark", icon: MoonIcon },
 ];
-
-/** The title bar's menu button: theme and settings. */
-function MoreMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { theme = "system", setTheme } = useTheme();
-  return (
-    <DropdownMenu>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <button type="button" aria-label="Menu" className={toolbarButtonClass}>
-              <MenuIcon />
-            </button>
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">Menu</TooltipContent>
-      </Tooltip>
-      <DropdownMenuContent className="w-44" align="start" sideOffset={4}>
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={(t) => transitionTheme(() => setTheme(t))}>
-          {THEMES.map(({ value, label, icon: Icon }) => (
-            <DropdownMenuRadioItem key={value} value={value}>
-              <Icon /> {label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => openSettings({ section: "skills" })}>
-          <SlidersHorizontalIcon /> <span>Customize</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={onOpenSettings}>
-          <SettingsIcon /> <span>Settings</span>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}

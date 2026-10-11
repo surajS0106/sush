@@ -65,7 +65,7 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
     >
       <ModelSelectorTrigger asChild>
         <PromptInputButton
-          className="max-w-56 gap-1.5 rounded-full text-muted-foreground"
+          className="max-w-56 gap-1.5 rounded-full text-foreground/90 hover:text-foreground"
           tooltip={current && value ? `${current.name} / ${value.model}` : undefined}
         >
           {value ? (

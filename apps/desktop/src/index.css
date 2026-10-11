@@ -75,7 +75,7 @@
     --destructive: oklch(0.577 0.245 27.325);
     --border: oklch(0.92 0.01 190);
     --input: oklch(0.92 0.01 190);
-    --ring: oklch(0.72 0.08 185);
+    --ring: var(--brand);
     /* Logo teal in tints and shades, with the coral. */
     --chart-1: oklch(0.7 0.12 182);
     --chart-2: oklch(0.65 0.21 25);
@@ -92,7 +92,7 @@
     --sidebar-accent: oklch(0.955 0.01 190);
     --sidebar-accent-foreground: oklch(0.22 0.02 205);
     --sidebar-border: oklch(0.92 0.01 190);
-    --sidebar-ring: oklch(0.72 0.08 185);
+    --sidebar-ring: var(--brand);
 }
 
 .dark {
@@ -114,7 +114,7 @@
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.55 0.07 185);
+    --ring: var(--brand);
     --chart-1: oklch(0.72 0.12 182);
     --chart-2: oklch(0.68 0.19 25);
     --chart-3: oklch(0.55 0.09 190);
@@ -129,7 +129,7 @@
     --sidebar-accent: oklch(0.23 0.01 205);
     --sidebar-accent-foreground: oklch(0.975 0.004 190);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.55 0.07 185);
+    --sidebar-ring: var(--brand);
 }
 
 @layer base {
@@ -185,6 +185,17 @@
 [data-text-size="large"] { --transcript-text: 1rem; }
 [data-transcript-width="narrow"] { --transcript-width: 40rem; }
 [data-transcript-width="wide"] { --transcript-width: 64rem; }
+
+/* Streamdown caps tables at tableMaxHeight and scrolls the rows, but only its
+   full-screen view pins the header. Pin it inline too, opaque so rows don't
+   show through, with a drawn bottom border since the divide-y one scrolls away. */
+[data-streamdown="table-header"] {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: color-mix(in oklab, var(--muted) 80%, var(--background));
+  box-shadow: inset 0 -1px var(--border);
+}
 
 /* Theme switches cross-fade the whole page (transitionTheme in lib/appearance.ts). */
 ::view-transition-old(root),
