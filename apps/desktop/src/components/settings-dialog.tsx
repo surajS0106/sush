@@ -25,9 +25,9 @@ import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
 import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/ColorPicker";
-import { DropdownMenu } from "@/components/ui/DropdownMenu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu } from "@/components/ui/DropdownMenu";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
@@ -109,25 +109,28 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
               className="h-9 w-full rounded-lg border bg-background/50 pr-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
             />
           </div>
-          {groups.map(({ group, items }) => (
-            <div key={group} className="flex flex-col gap-0.5">
-              <p className="px-2.5 pb-1 text-xs text-muted-foreground">{group}</p>
-              {items.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => openSettings({ section: id })}
-                  className={cn(
-                    "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground",
-                    state?.section === id && "bg-sidebar-accent font-medium text-sidebar-foreground",
-                  )}
-                >
-                  <Icon className="size-4" /> {label}
-                </button>
-              ))}
-            </div>
-          ))}
-          {groups.length === 0 && <p className="px-2.5 text-sm text-muted-foreground">No matching settings</p>}
+          <HoverHighlight className="flex flex-col gap-4" highlightClassName="rounded-lg bg-sidebar-accent">
+            {groups.map(({ group, items }) => (
+              <div key={group} className="flex flex-col gap-0.5">
+                <p className="px-2.5 pb-1 text-xs text-muted-foreground">{group}</p>
+                {items.map(({ id, label, icon: Icon }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    data-hover-item
+                    onClick={() => openSettings({ section: id })}
+                    className={cn(
+                      "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-sidebar-foreground/80 hover:text-sidebar-foreground",
+                      state?.section === id && "bg-sidebar-accent font-medium text-sidebar-foreground",
+                    )}
+                  >
+                    <Icon className="size-4" /> {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+            {groups.length === 0 && <p className="px-2.5 text-sm text-muted-foreground">No matching settings</p>}
+          </HoverHighlight>
         </nav>
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
           {state?.section === "general" && <GeneralSection />}
@@ -147,16 +150,18 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
 
 // --- general -----------------------------------------------------------------------
 
+// "mono" is DM Mono so a monospace preference saved before the second one
+// existed still resolves.
 const FONTS: { value: ChatFont; label: string; family: string }[] = [
-  { value: "sans", label: "Geist Sans", family: '"Geist Variable", sans-serif' },
-  { value: "serif", label: "Serif", family: 'ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif' },
-  { value: "mono", label: "Monospace", family: 'ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace' },
+  { value: "sans", label: "Plus Jakarta Sans", family: '"Plus Jakarta Sans Variable", sans-serif' },
+  { value: "serif", label: "Lora", family: '"Lora Variable", Georgia, serif' },
+  { value: "mono", label: "DM Mono", family: '"DM Mono", ui-monospace, monospace' },
+  { value: "space-mono", label: "Space Mono", family: '"Space Mono", ui-monospace, monospace' },
 ];
 
 function GeneralSection() {
   const { theme = "system", setTheme } = useTheme();
   const appearance = useAppearance();
-  const font = FONTS.find((f) => f.value === appearance.chatFont) ?? FONTS[0];
 
   return (
     <Page>
@@ -173,22 +178,13 @@ function GeneralSection() {
           />
         </Setting>
         <Setting title="Chat font">
-          <Select value={appearance.chatFont} onValueChange={(v) => setAppearance({ chatFont: v as ChatFont })}>
-            <SelectTrigger
-              aria-label="Chat font"
-              className="border-none bg-transparent shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent"
-              style={{ fontFamily: font.family }}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align="end">
-              {FONTS.map((f) => (
-                <SelectItem key={f.value} value={f.value} style={{ fontFamily: f.family }}>
-                  {f.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <DropdownMenu
+            label="Chat font"
+            align="end"
+            value={appearance.chatFont}
+            onChange={(chatFont) => setAppearance({ chatFont })}
+            items={FONTS.map((f) => ({ value: f.value, label: f.label, style: { fontFamily: f.family } }))}
+          />
         </Setting>
         <Setting title="Transcript text size" description="Size of the conversation transcript text.">
           <Segmented
@@ -338,23 +334,24 @@ function AccentPicker({
         align="end"
         value={value}
         onChange={onChange}
-        items={ACCENTS.map((a) => ({
-          ...a,
-          icon:
-            a.value === "custom" ? (
-              <span
-                className="size-3.5 shrink-0 rounded-full"
-                style={{ background: "conic-gradient(#f43f5e, #f59e0b, #22c55e, #06b6d4, #6366f1, #d946ef, #f43f5e)" }}
-                aria-hidden
-              />
-            ) : (
-              // data-accent scopes --brand to this swatch (index.css).
-              <span data-accent={a.value} className="size-3.5 shrink-0 rounded-full bg-brand" aria-hidden />
-            ),
-        }))}
+        items={ACCENTS.map((a) => ({ ...a, icon: <AccentSwatch accent={a.value} /> }))}
       />
     </div>
   );
+}
+
+function AccentSwatch({ accent }: { accent: Accent }) {
+  if (accent === "custom") {
+    return (
+      <span
+        className="size-3.5 shrink-0 rounded-full"
+        style={{ background: "conic-gradient(#f43f5e, #f59e0b, #22c55e, #06b6d4, #6366f1, #d946ef, #f43f5e)" }}
+        aria-hidden
+      />
+    );
+  }
+  // data-accent scopes --brand to this swatch (index.css).
+  return <span data-accent={accent} className="size-3.5 shrink-0 rounded-full bg-brand" aria-hidden />;
 }
 
 // --- account -----------------------------------------------------------------------

@@ -7,11 +7,16 @@ import { toast } from "sonner";
 import { Logo } from "@/components/model-picker";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu } from "@/components/ui/DropdownMenu";
+import {
+  DropdownMenu as ActionMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { providerLogo } from "@/lib/logos";
 import { api, errorMessage, type ProviderConfig, type ProviderView, type WireFormat } from "@/lib/tauri";
@@ -82,7 +87,7 @@ export function ProvidersSection({ providers, onChanged }: ProvidersSectionProps
             </div>
           </ScrollArea>
           <div className="p-3">
-            <DropdownMenu>
+            <ActionMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" className="h-10 w-full">
                   <PlusIcon /> Add provider
@@ -96,7 +101,7 @@ export function ProvidersSection({ providers, onChanged }: ProvidersSectionProps
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
-            </DropdownMenu>
+            </ActionMenu>
           </div>
         </div>
         <ScrollArea className="min-h-0 flex-1">
@@ -208,18 +213,13 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
       </Field>
 
       <Field label="API format">
-        <Select value={form.format} onValueChange={(v) => set("format", v as WireFormat)}>
-          <SelectTrigger className="w-full data-[size=default]:h-10">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(FORMAT_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <DropdownMenu
+          label="API format"
+          variant="field"
+          value={form.format}
+          onChange={(format) => set("format", format)}
+          items={(Object.entries(FORMAT_LABELS) as [WireFormat, string][]).map(([value, label]) => ({ value, label }))}
+        />
       </Field>
 
       <Field label="Base URL" hint="Requests go to {base}/chat/completions or {base}/messages.">
@@ -233,18 +233,16 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
       </Field>
 
       <Field label="Authentication">
-        <Select
+        <DropdownMenu
+          label="Authentication"
+          variant="field"
           value={form.auth.type}
-          onValueChange={(v) => set("auth", v === "none" ? { type: "none" } : { type: "api-key", header: null })}
-        >
-          <SelectTrigger className="w-full data-[size=default]:h-10">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="api-key">API key</SelectItem>
-            <SelectItem value="none">None (local server)</SelectItem>
-          </SelectContent>
-        </Select>
+          onChange={(v) => set("auth", v === "none" ? { type: "none" } : { type: "api-key", header: null })}
+          items={[
+            { value: "api-key", label: "API key" },
+            { value: "none", label: "None (local server)" },
+          ]}
+        />
       </Field>
 
       {form.auth.type === "api-key" && (

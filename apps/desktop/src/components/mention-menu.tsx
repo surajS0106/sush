@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { catalogEntry, connectorIcon } from "@/lib/connector-catalog";
 import { useConnectors, useConnectorStatus, usePlugins, type Connector } from "@/lib/library";
 import { mentionables, mentionName, mentionQuery } from "@/lib/mentions";
+import { FollowHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 
 export const MENTION_MENU_ID = "mention-menu";
@@ -97,6 +98,7 @@ export function MentionMenu({ connectors, active, onHover, onPick }: MentionMenu
       aria-label="Connectors"
       className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-72 overflow-y-auto rounded-2xl border bg-popover p-1.5 text-popover-foreground shadow-lg"
     >
+      <FollowHighlight selector='[role="option"][aria-selected="true"]' />
       <p className="px-2.5 pt-1 pb-1.5 text-xs font-medium text-muted-foreground">Connectors</p>
       {connectors.map((c, i) => {
         const state = status[c.id]?.state;
@@ -115,8 +117,8 @@ export function MentionMenu({ connectors, active, onHover, onPick }: MentionMenu
             }}
             onMouseMove={() => onHover(i)}
             className={cn(
-              "flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm",
-              i === active && "bg-accent text-accent-foreground",
+              "relative flex cursor-default items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm",
+              i === active && "text-accent-foreground",
             )}
           >
             <ConnectorGlyph connector={c} />

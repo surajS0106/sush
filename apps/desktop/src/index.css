@@ -2,6 +2,18 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+/* Chat font choices (Settings → General). The variable fonts cover every
+   weight; the monospaces ship only the static weights they have. */
+@import "@fontsource-variable/plus-jakarta-sans/wght.css";
+@import "@fontsource-variable/plus-jakarta-sans/wght-italic.css";
+@import "@fontsource-variable/lora/wght.css";
+@import "@fontsource-variable/lora/wght-italic.css";
+@import "@fontsource/dm-mono/400.css";
+@import "@fontsource/dm-mono/400-italic.css";
+@import "@fontsource/dm-mono/500.css";
+@import "@fontsource/space-mono/400.css";
+@import "@fontsource/space-mono/400-italic.css";
+@import "@fontsource/space-mono/700.css";
 
 /* Streamdown renders markdown with Tailwind classes; let Tailwind see them.
    Bun hoists workspace deps to the repo root. */
@@ -175,16 +187,55 @@
    The transcript reads the variables: chat-view.tsx for width, message.tsx
    for font and size. */
 :root {
-  --transcript-font: 'Geist Variable', sans-serif;
+  --transcript-font: 'Plus Jakarta Sans Variable', sans-serif;
   --transcript-text: 0.875rem;
   --transcript-width: 48rem;
+  /* Plus Jakarta Sans sets words close together; the other fonts don't need it. */
+  --transcript-word-spacing: 0.05em;
 }
-[data-chat-font="serif"] { --transcript-font: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif; }
-[data-chat-font="mono"] { --transcript-font: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace; }
+[data-chat-font]:not([data-chat-font="sans"]) { --transcript-word-spacing: normal; }
+[data-chat-font="serif"] { --transcript-font: 'Lora Variable', Georgia, serif; }
+[data-chat-font="mono"] { --transcript-font: 'DM Mono', ui-monospace, monospace; }
+[data-chat-font="space-mono"] { --transcript-font: 'Space Mono', ui-monospace, monospace; }
 [data-text-size="small"] { --transcript-text: 0.8125rem; }
 [data-text-size="large"] { --transcript-text: 1rem; }
 [data-transcript-width="narrow"] { --transcript-width: 40rem; }
 [data-transcript-width="wide"] { --transcript-width: 64rem; }
+
+/* Assistant replies (chat-view.tsx). Streamdown spaces every block a fixed
+   16px apart and draws list markers inside the text, so list items read as
+   paragraphs and wrapped lines start under the number. Space blocks relative
+   to the text size, hang list text off its marker, keep items closer together
+   than paragraphs, and give headings more room above than below so they bind
+   to their section. Line height stays well under the gap between items, or
+   wrapped items blur into each other. Body text sits a step below the
+   foreground so bold lead-ins carry the hierarchy at semibold instead of a
+   heavy bold. */
+.transcript-prose {
+  line-height: 1.6;
+  color: color-mix(in oklab, var(--foreground) 88%, transparent);
+  word-spacing: var(--transcript-word-spacing);
+}
+/* Cap running text at a comfortable line length; tables and code blocks still
+   use the full transcript width, which is what the width setting widens. */
+.transcript-prose > :is(p, ul, ol, blockquote, h1, h2, h3, h4, h5, h6) { max-width: 70ch; }
+.transcript-prose > * { margin-block: 0; }
+.transcript-prose > * + * { margin-top: 1em; }
+.transcript-prose > :is(h1, h2, h3, h4, h5, h6) { margin-top: 1.75em; line-height: 1.3; }
+.transcript-prose > :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+.transcript-prose > :is(h1, h2, h3, h4, h5, h6) + * { margin-top: 0.5em; }
+.transcript-prose :is(strong, b, h1, h2, h3, h4, h5, h6) { color: var(--foreground); font-weight: 600; }
+/* A lead-in like "A few key points:" belongs to the list after it. */
+.transcript-prose > p + :is(ol, ul) { margin-top: 0.625em; }
+.transcript-prose h1 { font-size: 1.5em; }
+.transcript-prose h2 { font-size: 1.25em; }
+.transcript-prose h3 { font-size: 1.125em; }
+.transcript-prose :is(h4, h5, h6) { font-size: 1em; }
+.transcript-prose :is(ol, ul) { list-style-position: outside; padding-left: 1.25em; }
+.transcript-prose li { padding-block: 0; padding-left: 0.125em; }
+.transcript-prose li + li { margin-top: 0.625em; }
+.transcript-prose li > :is(ol, ul) { margin-top: 0.5em; }
+.transcript-prose li::marker { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
 
 /* Streamdown caps tables at tableMaxHeight and scrolls the rows, but only its
    full-screen view pins the header. Pin it inline too, opaque so rows don't

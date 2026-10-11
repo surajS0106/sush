@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { hasMentions, mentionSegments } from "@/lib/mentions";
 import { leadingCommand, slashCommands, type SlashCommand } from "@/lib/skills";
+import { FollowHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 
 export const SLASH_MENU_ID = "slash-menu";
@@ -81,6 +82,7 @@ export function SlashMenu({ commands, active, onHover, onPick }: SlashMenuProps)
       aria-label="Commands"
       className="absolute inset-x-0 bottom-full z-20 mb-2 max-h-72 overflow-y-auto rounded-2xl border bg-popover p-1.5 text-popover-foreground shadow-lg"
     >
+      <FollowHighlight selector='[role="option"][aria-selected="true"]' />
       {commands.map((c, i) => {
         const Icon = c.skill ? ScrollTextIcon : SparklesIcon;
         return (
@@ -96,8 +98,8 @@ export function SlashMenu({ commands, active, onHover, onPick }: SlashMenuProps)
             }}
             onMouseMove={() => onHover(i)}
             className={cn(
-              "flex cursor-default items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm",
-              i === active && "bg-accent text-accent-foreground",
+              "relative flex cursor-default items-start gap-2.5 rounded-lg px-2.5 py-2 text-sm",
+              i === active && "text-accent-foreground",
             )}
           >
             <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />

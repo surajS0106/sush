@@ -6,7 +6,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu } from "@/components/ui/DropdownMenu";
 import {
   BUILTIN,
   canTranscribe,
@@ -61,22 +61,24 @@ type Form = ReturnType<typeof useSpeechForm>;
 
 function ProviderSelect({ form, providers }: { form: Form; providers: ProviderView[] }) {
   return (
-    <Select value={form.providerId} onValueChange={form.pickProvider}>
-      <SelectTrigger aria-label="Speech provider" className="w-full sm:w-56">
-        <SelectValue placeholder="Choose a provider" />
-      </SelectTrigger>
-      <SelectContent align="end">
-        <SelectItem value={BUILTIN}>
-          Built-in Whisper<span className="text-muted-foreground"> · 142 MB, offline</span>
-        </SelectItem>
-        {providers.map((p) => (
-          <SelectItem key={p.id} value={p.id} disabled={!canTranscribe(p)}>
-            {p.name}
-            {!canTranscribe(p) && <span className="text-muted-foreground"> · no audio input</span>}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <DropdownMenu
+      label="Speech provider"
+      align="end"
+      variant="field"
+      className="w-full sm:w-56"
+      placeholder="Choose a provider"
+      value={form.providerId}
+      onChange={form.pickProvider}
+      items={[
+        { value: BUILTIN, label: "Built-in Whisper", hint: "142 MB, offline" },
+        ...providers.map((p) => ({
+          value: p.id,
+          label: p.name,
+          hint: canTranscribe(p) ? undefined : "no audio input",
+          disabled: !canTranscribe(p),
+        })),
+      ]}
+    />
   );
 }
 

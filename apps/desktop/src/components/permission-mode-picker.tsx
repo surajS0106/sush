@@ -37,19 +37,19 @@ export function PermissionModePicker() {
           <ChevronDownIcon className="size-3.5 opacity-60" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72 rounded-xl p-1.5">
+      <DropdownMenuContent align="end" className="w-72">
         <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Permission mode</DropdownMenuLabel>
         {MODES.map((m) => (
           <DropdownMenuItem
             key={m.id}
             onSelect={() => setPrefs({ permissionMode: m.id })}
-            className="items-start gap-3 rounded-lg px-2 py-2"
+            className="items-start gap-3 py-2"
           >
             <div className="min-w-0 flex-1">
               <div className="text-sm">{m.label}</div>
               <p className="text-xs text-muted-foreground">{m.description}</p>
             </div>
-            <CheckIcon className={cn("mt-0.5 size-4 text-brand", m.id !== mode && "invisible")} />
+            <CheckIcon className={cn("mt-0.5 size-4 text-muted-foreground", m.id !== mode && "invisible")} />
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

@@ -518,7 +518,7 @@ function ChatMessage({
         return (
           <MessageContent key={key}>
             {message.role === "assistant" ? (
-              <MessageResponse isAnimating={streaming} components={markdownComponents}>
+              <MessageResponse className="transcript-prose" isAnimating={streaming} components={markdownComponents}>
                 {part.text}
               </MessageResponse>
             ) : (

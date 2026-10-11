@@ -58,6 +58,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-controls";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
@@ -150,56 +151,63 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowo
       </div>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu>
-            <CoworkMenu onNewCowork={onNewCowork} />
-            {PLANNED.map(({ label, icon: Icon }) => (
-              <SidebarMenuItem key={label}>
-                <SidebarMenuButton tooltip={label} onClick={() => comingSoon(label)}>
-                  <Icon /> <span>{label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
-        </SidebarGroup>
+        {/* One background glides between rows on hover; the buttons' own hover fill is turned off. */}
+        <HoverHighlight
+          itemSelector='[data-sidebar="menu-item"]'
+          className="flex flex-col [&_[data-sidebar=menu-button]:hover]:bg-transparent"
+          highlightClassName="rounded-md bg-sidebar-accent"
+        >
+          <SidebarGroup>
+            <SidebarMenu>
+              <CoworkMenu onNewCowork={onNewCowork} />
+              {PLANNED.map(({ label, icon: Icon }) => (
+                <SidebarMenuItem key={label}>
+                  <SidebarMenuButton tooltip={label} onClick={() => comingSoon(label)}>
+                    <Icon /> <span>{label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
 
-        <SidebarGroup>
-          <div className="flex items-center pr-1">
-            <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Sessions</SidebarGroupLabel>
-            <SessionsMenu showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} onNew={onNew} />
-          </div>
+          <SidebarGroup>
+            <div className="flex items-center pr-1">
+              <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Sessions</SidebarGroupLabel>
+              <SessionsMenu showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} onNew={onNew} />
+            </div>
 
-          {pinned.length > 0 && (
-            <Collapsible defaultOpen className="group/pinned">
-              <SidebarGroupLabel asChild>
-                <CollapsibleTrigger className="w-full gap-1.5 hover:bg-sidebar-accent">
-                  <PinIcon /> Pinned <span className="tabular-nums">{pinned.length}</span>
-                  <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/pinned:rotate-90" />
-                </CollapsibleTrigger>
-              </SidebarGroupLabel>
-              <CollapsibleContent>
-                <SidebarMenu>{pinned.map(row)}</SidebarMenu>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
+            {pinned.length > 0 && (
+              <Collapsible defaultOpen className="group/pinned">
+                <SidebarGroupLabel asChild>
+                  <CollapsibleTrigger className="w-full gap-1.5 hover:bg-sidebar-accent">
+                    <PinIcon /> Pinned <span className="tabular-nums">{pinned.length}</span>
+                    <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/pinned:rotate-90" />
+                  </CollapsibleTrigger>
+                </SidebarGroupLabel>
+                <CollapsibleContent>
+                  <SidebarMenu>{pinned.map(row)}</SidebarMenu>
+                </CollapsibleContent>
+              </Collapsible>
+            )}
 
-          <SidebarMenu>
-            {visible.map(row)}
-            {!searching && rest.length > RECENT_LIMIT && (
-              <SidebarMenuItem>
-                <SidebarMenuButton className="text-muted-foreground" onClick={() => setShowAll(!showAll)}>
-                  <MoreHorizontalIcon /> <span>{showAll ? "Show less" : "More"}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-            {searching && matches.length === 0 && (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">No sessions found</p>
-            )}
-            {!searching && started.length === 0 && (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">No sessions yet</p>
-            )}
-          </SidebarMenu>
-        </SidebarGroup>
+            <SidebarMenu>
+              {visible.map(row)}
+              {!searching && rest.length > RECENT_LIMIT && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton className="text-muted-foreground" onClick={() => setShowAll(!showAll)}>
+                    <MoreHorizontalIcon /> <span>{showAll ? "Show less" : "More"}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+              {searching && matches.length === 0 && (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">No sessions found</p>
+              )}
+              {!searching && started.length === 0 && (
+                <p className="px-2 py-1.5 text-sm text-muted-foreground">No sessions yet</p>
+              )}
+            </SidebarMenu>
+          </SidebarGroup>
+        </HoverHighlight>
       </SidebarContent>
 
       <SidebarFooter>

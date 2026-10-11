@@ -7,7 +7,7 @@ import { flushSync } from "react-dom";
 
 import { createStore } from "@/lib/store";
 
-export type ChatFont = "sans" | "serif" | "mono";
+export type ChatFont = "sans" | "serif" | "mono" | "space-mono";
 export type TextSize = "small" | "medium" | "large";
 export type TranscriptWidth = "narrow" | "medium" | "wide";
 export type Motion = "system" | "reduced";
