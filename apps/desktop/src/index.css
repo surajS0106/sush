@@ -96,20 +96,20 @@
 }
 
 .dark {
-    /* Deep teal-black, like the dark app icon. */
-    --background: oklch(0.155 0.012 215);
+    /* Near-black with a faint teal cast; raised surfaces step up from it. */
+    --background: oklch(0.115 0.004 215);
     --foreground: oklch(0.975 0.004 190);
-    --card: oklch(0.2 0.014 210);
+    --card: oklch(0.17 0.008 210);
     --card-foreground: oklch(0.975 0.004 190);
-    --popover: oklch(0.2 0.014 210);
+    --popover: oklch(0.17 0.008 210);
     --popover-foreground: oklch(0.975 0.004 190);
     --primary: var(--brand);
     --primary-foreground: var(--brand-foreground);
-    --secondary: oklch(0.26 0.016 205);
+    --secondary: oklch(0.23 0.01 205);
     --secondary-foreground: oklch(0.975 0.004 190);
-    --muted: oklch(0.26 0.016 205);
+    --muted: oklch(0.23 0.01 205);
     --muted-foreground: oklch(0.7 0.018 200);
-    --accent: oklch(0.26 0.016 205);
+    --accent: oklch(0.23 0.01 205);
     --accent-foreground: oklch(0.975 0.004 190);
     --destructive: oklch(0.704 0.191 22.216);
     --border: oklch(1 0 0 / 10%);
@@ -122,11 +122,11 @@
     --chart-5: oklch(0.42 0.06 205);
     --brand: oklch(0.7 0.12 182);
     --brand-foreground: oklch(1 0 0);
-    --sidebar: oklch(0.185 0.013 212);
+    --sidebar: oklch(0.145 0.006 212);
     --sidebar-foreground: oklch(0.975 0.004 190);
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
-    --sidebar-accent: oklch(0.26 0.016 205);
+    --sidebar-accent: oklch(0.23 0.01 205);
     --sidebar-accent-foreground: oklch(0.975 0.004 190);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.55 0.07 185);
@@ -185,6 +185,13 @@
 [data-text-size="large"] { --transcript-text: 1rem; }
 [data-transcript-width="narrow"] { --transcript-width: 40rem; }
 [data-transcript-width="wide"] { --transcript-width: 64rem; }
+
+/* Theme switches cross-fade the whole page (transitionTheme in lib/appearance.ts). */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 360ms;
+  animation-timing-function: cubic-bezier(0.42, 0, 0.58, 1);
+}
 
 [data-motion="reduced"] *,
 [data-motion="reduced"] *::before,

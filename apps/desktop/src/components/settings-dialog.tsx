@@ -8,14 +8,11 @@ import {
   KeyRoundIcon,
   LogOutIcon,
   MicIcon,
-  MonitorIcon,
-  MoonIcon,
   PaletteIcon,
   PlugIcon,
   ScrollTextIcon,
   SearchIcon,
   SettingsIcon,
-  SunIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useState } from "react";
@@ -31,7 +28,7 @@ import { ColorPicker } from "@/components/ui/ColorPicker";
 import { DropdownMenu } from "@/components/ui/DropdownMenu";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ACCENTS, setAppearance, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
+import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import type { ProviderView } from "@/lib/tauri";
@@ -165,16 +162,7 @@ function GeneralSection() {
     <Page>
       <Group title="Appearance">
         <Setting title="Theme">
-          <Segmented
-            label="Theme"
-            value={theme}
-            onChange={setTheme}
-            options={[
-              { value: "system", label: "System", icon: MonitorIcon },
-              { value: "light", label: "Light", icon: SunIcon },
-              { value: "dark", label: "Dark", icon: MoonIcon },
-            ]}
-          />
+          <ThemePicker value={theme} onChange={(t) => transitionTheme(() => setTheme(t))} />
         </Setting>
         <Setting title="Accent color" description="Highlight color for the send button, commands and other accents.">
           <AccentPicker
@@ -239,6 +227,87 @@ function GeneralSection() {
         </Setting>
       </Group>
     </Page>
+  );
+}
+
+const THEMES = [
+  { value: "system", label: "Auto" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+] as const;
+
+/** Theme choices as little window previews, like macOS's Appearance setting. */
+function ThemePicker({ value, onChange }: { value: string; onChange: (theme: string) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Theme" className="flex gap-4">
+      {THEMES.map((t) => {
+        const selected = value === t.value;
+        return (
+          <button
+            key={t.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(t.value)}
+            className="group flex flex-col items-center gap-2 rounded-lg outline-none"
+          >
+            <span
+              className={cn(
+                "rounded-[10px] p-0.5 ring-2 transition-shadow",
+                selected ? "ring-brand" : "ring-transparent group-hover:ring-foreground/15",
+                "group-focus-visible:ring-ring/50",
+              )}
+            >
+              <span className="relative block h-14 w-20 overflow-hidden rounded-lg ring-1 ring-foreground/10">
+                {t.value === "system" ? (
+                  <>
+                    <ThemePreview mode="light" />
+                    {/* The dark half, cut on a slant like the macOS Auto tile. */}
+                    <span className="absolute inset-0" style={{ clipPath: "polygon(55% 0, 100% 0, 100% 100%, 45% 100%)" }}>
+                      <ThemePreview mode="dark" />
+                    </span>
+                  </>
+                ) : (
+                  <ThemePreview mode={t.value} />
+                )}
+              </span>
+            </span>
+            <span className={cn("text-xs", selected ? "font-semibold text-foreground" : "text-muted-foreground")}>
+              {t.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A miniature desktop: accent wallpaper, a menu bar strip and a window with traffic lights. */
+function ThemePreview({ mode }: { mode: "light" | "dark" }) {
+  const dark = mode === "dark";
+  const panel = dark ? "#1c1c1e" : "#ffffff";
+  return (
+    <span
+      className="absolute inset-0 bg-brand"
+      style={{
+        backgroundImage: dark
+          ? "linear-gradient(135deg, rgb(0 0 0 / 0.55), rgb(0 0 0 / 0.15) 60%, rgb(255 255 255 / 0.1))"
+          : "linear-gradient(135deg, rgb(255 255 255 / 0.75), rgb(255 255 255 / 0.35) 60%, rgb(255 255 255 / 0.1))",
+      }}
+      aria-hidden
+    >
+      <span
+        className="absolute top-1.5 left-1.5 flex h-3.5 w-11 items-center rounded-sm px-1 shadow-sm"
+        style={{ background: dark ? "rgb(28 28 30 / 0.85)" : "rgb(255 255 255 / 0.85)" }}
+      >
+        <span className="h-1.5 w-full rounded-full bg-brand" />
+      </span>
+      <span className="absolute top-7 left-5 flex h-10 w-16 gap-1 rounded-md p-1.5 shadow-md" style={{ background: panel }}>
+        <span className="size-1.5 rounded-full bg-[#ff5f57]" />
+        <span className="size-1.5 rounded-full bg-[#febc2e]" />
+        <span className="size-1.5 rounded-full bg-[#28c840]" />
+      </span>
+    </span>
   );
 }
 

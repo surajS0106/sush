@@ -55,6 +55,7 @@ import {
 import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-controls";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_MAC } from "@/components/window-controls";
+import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
 import { openSettings } from "@/lib/library";
 import { useSessionStatus } from "@/lib/sessions";
@@ -345,7 +346,7 @@ function MoreMenu({ onOpenSettings }: { onOpenSettings: () => void }) {
       </Tooltip>
       <DropdownMenuContent className="w-44" align="start" sideOffset={4}>
         <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
+        <DropdownMenuRadioGroup value={theme} onValueChange={(t) => transitionTheme(() => setTheme(t))}>
           {THEMES.map(({ value, label, icon: Icon }) => (
             <DropdownMenuRadioItem key={value} value={value}>
               <Icon /> {label}

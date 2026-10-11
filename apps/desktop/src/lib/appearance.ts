@@ -3,6 +3,7 @@
 // the transcript's font, size and width, the accent color, and reduced motion.
 
 import { useSyncExternalStore } from "react";
+import { flushSync } from "react-dom";
 
 import { createStore } from "@/lib/store";
 
@@ -111,3 +112,18 @@ appearance.subscribe(() => apply(appearance.get()));
 
 export const useAppearance = () => useSyncExternalStore(appearance.subscribe, appearance.get);
 export const setAppearance = (patch: Partial<Appearance>) => appearance.set((a) => ({ ...a, ...patch }));
+
+/**
+ * Runs `update` (a next-themes setTheme call) as a cross-fade between the old
+ * and new theme. The View Transitions API snapshots the whole page, so every
+ * color changes in one fade instead of element by element; index.css sets the
+ * timing. flushSync makes next-themes commit and swap the class on <html>
+ * inside the callback, before the new snapshot is taken. Without the API, or
+ * with reduced motion, the theme changes instantly.
+ */
+export function transitionTheme(update: () => void) {
+  const reduced =
+    appearance.get().motion === "reduced" || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced || !("startViewTransition" in document)) return update();
+  document.startViewTransition(() => flushSync(update));
+}
