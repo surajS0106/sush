@@ -1,6 +1,7 @@
 // Remote MCP servers offered under Customize → Connectors → Discover. Each was
-// checked to speak MCP over HTTP; "oauth" ones also support dynamic client
-// registration, so adding one just opens the browser to sign in.
+// checked to speak MCP over HTTP; "oauth" ones support dynamic client
+// registration or have a client Sush ships, so adding one just opens the
+// browser to sign in.
 
 import type { Connector } from "@/lib/library";
 
@@ -170,12 +171,9 @@ export const CATALOG: CatalogEntry[] = [
     description: "Browse repositories, issues, pull requests and Actions",
     publisher: "GitHub",
     url: "https://api.githubcopilot.com/mcp/",
-    auth: "token",
+    // No dynamic registration; signs in with Sush's own OAuth app (connector_auth.rs).
+    auth: "oauth",
     category: "Developer tools",
-    tokenHelp: {
-      url: "https://github.com/settings/personal-access-tokens/new",
-      hint: "A fine-grained personal access token. Give it access to the repositories you want, with read access to contents, issues and pull requests (add write to let Sush make changes).",
-    },
   },
   {
     id: "gitlab",

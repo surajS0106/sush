@@ -9,6 +9,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use sush_core::mcp::oauth::{self, AuthServer, OAuthClient, Pkce, TokenSet};
 use sush_core::mcp::TokenSource;
+use tauri::ipc::Channel;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -22,6 +23,28 @@ use crate::state::AppState;
 /// Redirect port for user-supplied OAuth clients, which must register it up front.
 pub const CUSTOM_CLIENT_PORT: u16 = 33418;
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Sush's GitHub OAuth app (Device Flow enabled). GitHub can't register
+/// clients on the fly, so its connector signs in with this one. Client IDs
+/// are public, and the device flow needs no secret.
+const GITHUB_CLIENT_ID: &str = "Ov23liS0sBzUxPYaM3F2";
+
+/// Client IDs Sush ships, by authorization server issuer.
+fn builtin_client(issuer: &str) -> Option<&'static str> {
+    match issuer.trim_end_matches('/') {
+        "https://github.com/login/oauth" => Some(GITHUB_CLIENT_ID),
+        _ => None,
+    }
+    .filter(|id| !id.is_empty())
+}
+
+/// The code to type into the browser during a device-flow sign-in.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeviceCode {
+    user_code: String,
+    verification_uri: String,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,6 +82,12 @@ fn load(id: &str, url: &str) -> Credentials {
 
 fn save(id: &str, creds: &Credentials) -> AppResult<()> {
     secrets::connector_set(id, &serde_json::to_string(creds)?)
+}
+
+/// Whether there's a pasted token or a sign-in saved for this connector.
+pub fn has_credentials(id: &str, url: &str) -> bool {
+    let creds = load(id, url);
+    creds.token.is_some() || creds.oauth.is_some()
 }
 
 pub fn forget(id: &str) -> AppResult<()> {
@@ -119,7 +148,8 @@ pub fn connector_save_secrets(id: String, url: String, token: Option<String>, cl
 }
 
 /// Sign in through the browser and store the tokens. Resolves once the
-/// browser comes back; the UI reconnects afterwards.
+/// browser comes back; the UI reconnects afterwards. For servers that sign in
+/// with a code instead of a redirect, the code is sent on `on_code` first.
 #[tauri::command]
 pub async fn connector_authorize(
     app: AppHandle,
@@ -127,13 +157,14 @@ pub async fn connector_authorize(
     id: String,
     url: String,
     client_id: Option<String>,
+    on_code: Channel<DeviceCode>,
 ) -> AppResult<()> {
     let cancel = CancellationToken::new();
     if let Some(previous) = state.authorizing.lock().unwrap().insert(id.clone(), cancel.clone()) {
         previous.cancel();
     }
     let result = tokio::select! {
-        r = authorize(&app, &state.http, &id, &url, client_id) => r,
+        r = authorize(&app, &state.http, &id, &url, client_id, &on_code) => r,
         _ = cancel.cancelled() => Err(AppError::Invalid("Sign-in cancelled".into())),
         _ = tokio::time::sleep(SIGN_IN_TIMEOUT) => Err(AppError::Invalid("Sign-in timed out. Try again.".into())),
     };
@@ -151,13 +182,39 @@ pub fn connector_cancel_authorize(state: State<'_, AppState>, id: String) {
     }
 }
 
-async fn authorize(app: &AppHandle, http: &reqwest::Client, id: &str, url: &str, client_id: Option<String>) -> AppResult<()> {
+async fn authorize(
+    app: &AppHandle,
+    http: &reqwest::Client,
+    id: &str,
+    url: &str,
+    client_id: Option<String>,
+    on_code: &Channel<DeviceCode>,
+) -> AppResult<()> {
     let challenge = oauth::challenge(http, url).await?;
     let server = oauth::discover(http, url, &challenge).await?;
     let mut creds = load(id, url);
-    let previous = creds.oauth.take().filter(|s| s.issuer == server.issuer);
+    // A pasted token wins over a sign-in, so signing in replaces it.
+    creds.token = None;
+    let client_id = client_id.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
 
-    let (client, callback, redirect_uri) = match client_id.map(|c| c.trim().to_string()).filter(|c| !c.is_empty()) {
+    if client_id.is_none() && server.registration_endpoint.is_none() && server.device_authorization_endpoint.is_some() {
+        if let Some(builtin) = builtin_client(&server.issuer) {
+            let client = OAuthClient { client_id: builtin.to_string(), client_secret: None, auth_method: None };
+            let tokens = authorize_device(app, http, &server, &client, on_code).await?;
+            creds.oauth = Some(OAuthSession {
+                issuer: server.issuer,
+                token_endpoint: server.token_endpoint,
+                resource: server.resource,
+                client,
+                redirect_uri: String::new(),
+                tokens,
+            });
+            return save(id, &creds);
+        }
+    }
+
+    let previous = creds.oauth.take().filter(|s| s.issuer == server.issuer);
+    let (client, callback, redirect_uri) = match client_id {
         Some(client_id) => {
             let callback = Callback::bind(CUSTOM_CLIENT_PORT).await.map_err(|e| {
                 AppError::Invalid(format!("Port {CUSTOM_CLIENT_PORT} is busy, so the sign-in redirect can't be received ({e})"))
@@ -189,6 +246,25 @@ async fn authorize(app: &AppHandle, http: &reqwest::Client, id: &str, url: &str,
         tokens,
     });
     save(id, &creds)
+}
+
+/// Show the user a code, open the page to enter it, and wait for approval.
+async fn authorize_device(
+    app: &AppHandle,
+    http: &reqwest::Client,
+    server: &AuthServer,
+    client: &OAuthClient,
+    on_code: &Channel<DeviceCode>,
+) -> AppResult<TokenSet> {
+    let device = oauth::device_authorization(http, server, client).await?;
+    on_code
+        .send(DeviceCode { user_code: device.user_code.clone(), verification_uri: device.verification_uri.clone() })
+        .map_err(|e| AppError::Invalid(format!("couldn't show the sign-in code: {e}")))?;
+    let page = device.verification_uri_complete.clone().unwrap_or_else(|| device.verification_uri.clone());
+    app.opener()
+        .open_url(page, None::<&str>)
+        .map_err(|e| AppError::Invalid(format!("couldn't open the browser: {e}")))?;
+    Ok(oauth::poll_device_token(http, server, client, &device).await?)
 }
 
 fn redirect_uri(port: u16) -> String {

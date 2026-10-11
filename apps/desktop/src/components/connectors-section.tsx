@@ -399,9 +399,28 @@ function statusLine(c: Connector, s: ConnectorStatus | undefined): React.ReactNo
         ? `${s.tools.length} tools · ${s.tools.map((t) => t.name).join(", ")}`
         : "Connected, no tools";
     case "needs-auth":
-      return "Sign in to use it";
+      return s.rejected ? `Sign-in was turned down: ${s.rejected}` : "Sign in to use it";
     case "authorizing":
-      return "Finish signing in in your browser…";
+      if (!s.code) return "Finish signing in in your browser…";
+      return (
+        <>
+          Enter{" "}
+          <button
+            type="button"
+            className="font-mono font-medium text-foreground hover:underline"
+            title="Copy code"
+            onClick={() =>
+              void navigator.clipboard.writeText(s.code!.userCode).then(() => toast.success("Code copied"))
+            }
+          >
+            {s.code.userCode}
+          </button>{" "}
+          at{" "}
+          <button type="button" className="hover:underline" onClick={() => void openUrl(s.code!.verificationUri)}>
+            {s.code.verificationUri.replace(/^https?:\/\//, "")}
+          </button>
+        </>
+      );
     case "error":
       return <span className="text-destructive">{s.error}</span>;
     default:

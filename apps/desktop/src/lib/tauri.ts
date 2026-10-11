@@ -90,7 +90,14 @@ export interface McpTool {
 
 export type ConnectOutcome =
   | { state: "ready"; serverName?: string | null; tools: McpTool[] }
-  | { state: "needs-auth" };
+  /** `rejected`: why the server turned down the saved sign-in, if there was one. */
+  | { state: "needs-auth"; rejected?: string | null };
+
+/** A device-flow sign-in: type `userCode` at `verificationUri` (connector_auth.rs). */
+export interface DeviceCode {
+  userCode: string;
+  verificationUri: string;
+}
 
 /** Redirect port for user-supplied OAuth clients (connector_auth.rs). */
 export const CUSTOM_CLIENT_REDIRECT = "http://localhost:33418/callback";
@@ -123,6 +130,82 @@ export interface Plugin {
   connectors: (ServerCommand & { name: string })[];
 }
 
+/** A stored conversation (`sush_core::store::Thread`). Messages are the UI's own JSON. */
+export interface StoredThread {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  target?: { providerId: string; model: string };
+  pinned?: boolean;
+  messages: unknown[];
+}
+
+export type ThreadMeta = Omit<StoredThread, "messages">;
+
+export interface ChatHit {
+  id: string;
+  title: string;
+  updatedAt: number;
+  snippet: string;
+}
+
+export interface StoredMemoryFile {
+  path: string;
+  title: string;
+  description: string;
+  content: string;
+  updatedAt: number;
+}
+
+/** A change to a thread's messages (`sush_core::agent::Op`); all but reset/push target the last message. */
+export type ThreadOp =
+  | { type: "reset"; messages: unknown[] }
+  | { type: "push"; message: unknown }
+  | { type: "push-part"; part: unknown }
+  | { type: "append-text"; index: number; delta: string }
+  | { type: "set-part"; index: number; part: unknown }
+  | { type: "set-metadata"; metadata: Record<string, unknown> };
+
+export type RunStatus = "submitted" | "streaming" | "awaiting" | "ready" | "error";
+
+export type RunFrame =
+  | { type: "op"; threadId: string; op: ThreadOp }
+  | { type: "status"; threadId: string; status: RunStatus; error: string | null }
+  | { type: "tool-running"; threadId: string; callId: string; running: boolean }
+  | { type: "client-tool"; threadId: string; callId: string; name: string; input: unknown }
+  | { type: "saved"; thread: ThreadMeta };
+
+export interface LiveRun {
+  threadId: string;
+  thread: ThreadMeta;
+  messages: unknown[];
+  status: RunStatus;
+  error: string | null;
+}
+
+export type ToolResponse = { type: "approve" } | { type: "output"; output: unknown } | { type: "error"; errorText: string };
+
+export type RunAction =
+  | { type: "send"; message: unknown; replace: string | null }
+  | { type: "regenerate"; messageId: string | null }
+  | { type: "respond"; callId: string; response: ToolResponse };
+
+export interface RunTool extends ToolSpec {
+  exec: { type: "connector"; connectorId: string; tool: string } | { type: "client" };
+  approval: "auto" | "ask";
+}
+
+export interface RunConfig {
+  providerId: string;
+  model: string;
+  system: string | null;
+  tools: RunTool[];
+  research: boolean;
+  /** Text sent to the model in place of a user message's first text, by message id. */
+  expansions: Record<string, string>;
+}
+
 export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
 
 /** How a provider transcribes: OpenAI-style `/audio/transcriptions`, or Ollama chat with an audio-capable model. */
@@ -138,20 +221,36 @@ export const api = {
   chatStream: (streamId: string, providerId: string, request: ChatRequest, onEvent: Channel<StreamFrame>) =>
     invoke<void>("chat_stream", { streamId, providerId, request, onEvent }),
   cancelStream: (streamId: string) => invoke<void>("cancel_stream", { streamId }),
+  runsSubscribe: (onFrame: Channel<RunFrame>) => invoke<LiveRun[]>("runs_subscribe", { onFrame }),
+  runStart: (thread: ThreadMeta, action: RunAction, config: RunConfig) => invoke<void>("run_start", { thread, action, config }),
+  runCancel: (threadId: string) => invoke<void>("run_cancel", { threadId }),
+  toolResult: (callId: string, result: { output: unknown } | { errorText: string }) => invoke<void>("tool_result", { callId, result }),
+  threadsLoad: () => invoke<StoredThread[]>("threads_load"),
+  /** Without `messages`, only the metadata (title, pin, model) is updated. */
+  threadSave: (thread: ThreadMeta, messages: unknown[] | null) => invoke<void>("thread_save", { thread, messages }),
+  threadDelete: (id: string) => invoke<void>("thread_delete", { id }),
+  threadsImport: (threads: StoredThread[]) => invoke<number>("threads_import", { threads }),
+  blobPut: (dataUrl: string) => invoke<string>("blob_put", { dataUrl }),
+  chatsSearch: (query: string, limit: number) => invoke<ChatHit[]>("chats_search", { query, limit }),
+  memoryList: () => invoke<StoredMemoryFile[]>("memory_list"),
+  memoryWrite: (file: StoredMemoryFile) => invoke<void>("memory_write", { file }),
+  memoryDelete: (path: string) => invoke<boolean>("memory_delete", { path }),
+  memoryClear: () => invoke<void>("memory_clear"),
   readFolder: (path: string) => invoke<Folder>("read_folder", { path }),
   saveTextFile: (path: string, contents: string) => invoke<void>("save_text_file", { path, contents }),
   loadPlugin: (path: string) => invoke<Plugin>("load_plugin", { path }),
   connectorConnect: (id: string, server: ServerSpec) => invoke<ConnectOutcome>("connector_connect", { id, server }),
   /** `callId` lets `connectorCancelCall` stop it. */
-  connectorCall: (id: string, tool: string, args: unknown, callId: string) =>
-    invoke<ToolOutput>("connector_call", { id, tool, arguments: args, callId }),
-  connectorCancelCall: (callId: string) => invoke<void>("connector_cancel_call", { callId }),
   connectorDisconnect: (id: string) => invoke<void>("connector_disconnect", { id }),
   /** Disconnect and delete the connector's stored credentials. */
   connectorForget: (id: string) => invoke<void>("connector_forget", { id }),
-  /** Sign in through the browser; resolves when the browser comes back. */
-  connectorAuthorize: (id: string, url: string, clientId?: string | null) =>
-    invoke<void>("connector_authorize", { id, url, clientId: clientId || null }),
+  /** Sign in through the browser; resolves when the browser comes back. Servers
+   *  that sign in with a typed code (GitHub) call `onCode` with it first. */
+  connectorAuthorize: (id: string, url: string, clientId: string | null | undefined, onCode: (code: DeviceCode) => void) => {
+    const channel = new Channel<DeviceCode>();
+    channel.onmessage = onCode;
+    return invoke<void>("connector_authorize", { id, url, clientId: clientId || null, onCode: channel });
+  },
   connectorCancelAuthorize: (id: string) => invoke<void>("connector_cancel_authorize", { id }),
   /** `undefined` keeps a stored value, `""` clears it. */
   connectorSaveSecrets: (id: string, url: string, secrets: { token?: string; clientSecret?: string }) =>

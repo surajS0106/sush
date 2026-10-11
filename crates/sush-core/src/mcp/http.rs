@@ -52,12 +52,19 @@ pub struct AuthChallenge {
     /// Where the server's protected-resource metadata is (RFC 9728).
     pub resource_metadata: Option<String>,
     pub scope: Option<String>,
+    /// Why the server turned the request down (`error_description`, else `error`).
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 impl AuthChallenge {
     pub fn from_response(resp: &Response) -> Self {
         let header = resp.headers().get(WWW_AUTHENTICATE).and_then(|v| v.to_str().ok()).unwrap_or_default();
-        Self { resource_metadata: auth_param(header, "resource_metadata"), scope: auth_param(header, "scope") }
+        Self {
+            resource_metadata: auth_param(header, "resource_metadata"),
+            scope: auth_param(header, "scope"),
+            reason: auth_param(header, "error_description").or_else(|| auth_param(header, "error")),
+        }
     }
 }
 
@@ -317,6 +324,10 @@ mod tests {
         assert_eq!(auth_param(h, "resource_metadata").as_deref(), Some("https://mcp.example.com/.well-known/oauth-protected-resource"));
         assert_eq!(auth_param(h, "scope").as_deref(), Some("read write"));
         assert_eq!(auth_param(h, "realm"), None);
+        // `error` isn't matched inside `error_description`'s name, and vice versa.
+        let gh = r#"Bearer error="invalid_token", error_description="The access token is invalid", resource_metadata="x""#;
+        assert_eq!(auth_param(gh, "error").as_deref(), Some("invalid_token"));
+        assert_eq!(auth_param(gh, "error_description").as_deref(), Some("The access token is invalid"));
         assert_eq!(auth_param("Bearer realm=x, scope=files", "scope").as_deref(), Some("files"));
         // `scope` inside another parameter's name doesn't count.
         assert_eq!(auth_param(r#"Bearer xscope="no""#, "scope"), None);

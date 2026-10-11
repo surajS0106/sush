@@ -8,7 +8,6 @@ use serde::Serialize;
 use serde_json::Value;
 use sush_core::mcp::{McpClient, McpError, McpTool, ServerSpec, ToolOutput};
 use tauri::State;
-use tokio_util::sync::CancellationToken;
 
 use crate::connector_auth::{self, StoredTokens};
 use crate::error::{AppError, AppResult};
@@ -20,7 +19,8 @@ pub enum ConnectOutcome {
     #[serde(rename_all = "camelCase")]
     Ready { server_name: Option<String>, tools: Vec<McpTool> },
     /// A remote server wants a sign-in (or a fresh one) before it'll talk.
-    NeedsAuth,
+    /// `rejected` says why, when it turned down credentials we already had.
+    NeedsAuth { rejected: Option<String> },
 }
 
 fn ready(client: &McpClient) -> ConnectOutcome {
@@ -43,7 +43,11 @@ pub async fn connector_connect(state: State<'_, AppState>, id: String, server: S
         ServerSpec::Http(remote) => {
             let tokens = StoredTokens::new(&id, &remote.url, state.http.clone());
             match McpClient::connect_http(state.http.clone(), &remote.url, Some(tokens)).await {
-                Err(McpError::Unauthorized(_)) => return Ok(ConnectOutcome::NeedsAuth),
+                Err(McpError::Unauthorized(challenge)) => {
+                    let rejected = connector_auth::has_credentials(&id, &remote.url)
+                        .then(|| challenge.reason.unwrap_or_else(|| "the server turned down the saved sign-in".into()));
+                    return Ok(ConnectOutcome::NeedsAuth { rejected });
+                }
                 result => result?,
             }
         }
@@ -53,34 +57,8 @@ pub async fn connector_connect(state: State<'_, AppState>, id: String, server: S
     Ok(outcome)
 }
 
-/// Call a tool. `call_id` lets `connector_cancel_call` stop it midway.
-#[tauri::command]
-pub async fn connector_call(
-    state: State<'_, AppState>,
-    id: String,
-    tool: String,
-    arguments: Value,
-    call_id: String,
-) -> AppResult<ToolOutput> {
-    let cancel = CancellationToken::new();
-    state.tool_calls.lock().unwrap().insert(call_id.clone(), cancel.clone());
-    // Dropping the call on cancel tells the server to stop too (see `McpClient::request`).
-    let result = tokio::select! {
-        result = call(&state, id, tool, arguments) => result,
-        _ = cancel.cancelled() => Err(AppError::Invalid("Stopped by the user.".into())),
-    };
-    state.tool_calls.lock().unwrap().remove(&call_id);
-    result
-}
-
-#[tauri::command]
-pub fn connector_cancel_call(state: State<'_, AppState>, call_id: String) {
-    if let Some(token) = state.tool_calls.lock().unwrap().remove(&call_id) {
-        token.cancel();
-    }
-}
-
-async fn call(state: &AppState, id: String, tool: String, arguments: Value) -> AppResult<ToolOutput> {
+/// Call a tool on a running connector (agent runs do, see `runs.rs`).
+pub(crate) async fn call(state: &AppState, id: String, tool: String, arguments: Value) -> AppResult<ToolOutput> {
     // Don't hold the map lock across a long tool call.
     let client = state
         .connectors

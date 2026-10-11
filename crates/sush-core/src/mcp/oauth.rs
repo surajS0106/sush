@@ -2,11 +2,13 @@
 //! find the authorization server from the server's protected-resource metadata
 //! (RFC 9728), register a client on the fly where allowed (RFC 7591), then
 //! authorization code + PKCE with the `resource` parameter (RFC 8707).
+//! Servers that can't register clients but offer the device flow (RFC 8628),
+//! such as GitHub, sign in with a client ID Sush ships instead.
 //!
 //! Opening the browser and catching the redirect is the app's job; this module
 //! only talks HTTP.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -37,6 +39,9 @@ pub struct AuthServer {
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     pub registration_endpoint: Option<String>,
+    /// For signing in with a code typed into the browser (RFC 8628).
+    #[serde(default)]
+    pub device_authorization_endpoint: Option<String>,
     /// Space-separated scopes to ask for, if the server named any.
     pub scope: Option<String>,
     /// The MCP server's canonical URI, sent as `resource` so tokens are bound to it.
@@ -154,6 +159,7 @@ pub async fn discover(http: &reqwest::Client, mcp_url: &str, challenge: &AuthCha
         authorization_endpoint,
         token_endpoint,
         registration_endpoint: endpoint("registration_endpoint", "/register"),
+        device_authorization_endpoint: endpoint("device_authorization_endpoint", ""),
         scope,
         resource,
     })
@@ -257,6 +263,84 @@ pub fn authorize_url(server: &AuthServer, client: &OAuthClient, redirect_uri: &s
     Ok(url.into())
 }
 
+/// A device-flow sign-in in progress: the user enters `user_code` at
+/// `verification_uri` while we poll for the token.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeviceAuthorization {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    /// The verification page with the code already filled in, where offered.
+    pub verification_uri_complete: Option<String>,
+    pub interval: Duration,
+    pub expires_in: Duration,
+}
+
+impl DeviceAuthorization {
+    fn from_response(doc: &Value) -> Option<Self> {
+        let text = |key: &str| doc[key].as_str().map(str::to_owned);
+        Some(Self {
+            device_code: text("device_code")?,
+            user_code: text("user_code")?,
+            // Some servers predate the RFC and say `verification_url`.
+            verification_uri: text("verification_uri").or_else(|| text("verification_url"))?,
+            verification_uri_complete: text("verification_uri_complete"),
+            interval: Duration::from_secs(doc["interval"].as_u64().unwrap_or(5)),
+            expires_in: Duration::from_secs(doc["expires_in"].as_u64().unwrap_or(900)),
+        })
+    }
+}
+
+/// Start a device-flow sign-in. Unlike the code flow this sends no `resource`:
+/// GitHub binds the token to it and its MCP server then rejects the token
+/// ("Token is not authorized").
+pub async fn device_authorization(http: &reqwest::Client, server: &AuthServer, client: &OAuthClient) -> Result<DeviceAuthorization, OAuthError> {
+    let Some(endpoint) = &server.device_authorization_endpoint else {
+        return Err(OAuthError::Unsupported("this server doesn't support signing in with a code".into()));
+    };
+    let mut form = vec![("client_id", client.client_id.as_str())];
+    if let Some(scope) = &server.scope {
+        form.push(("scope", scope));
+    }
+    let resp = http.post(endpoint).header(ACCEPT, "application/json").form(&form).send().await?;
+    let status = resp.status();
+    let doc: Value = resp.json().await.unwrap_or_default();
+    match DeviceAuthorization::from_response(&doc) {
+        Some(device) if status.is_success() => Ok(device),
+        _ => Err(OAuthError::Server(describe(status, &doc))),
+    }
+}
+
+/// Poll until the user approves (or denies) the device sign-in, or its code expires.
+pub async fn poll_device_token(
+    http: &reqwest::Client,
+    server: &AuthServer,
+    client: &OAuthClient,
+    device: &DeviceAuthorization,
+) -> Result<TokenSet, OAuthError> {
+    let deadline = Instant::now() + device.expires_in;
+    let mut interval = device.interval;
+    let params = [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ("device_code", device.device_code.as_str()),
+    ];
+    loop {
+        tokio::time::sleep(interval).await;
+        if Instant::now() >= deadline {
+            return Err(OAuthError::Server("the code expired before sign-in finished".into()));
+        }
+        let (status, doc) = post_token(http, &server.token_endpoint, client, &params).await?;
+        match doc["error"].as_str() {
+            Some("authorization_pending") => {}
+            // RFC 8628 3.5: back off by 5 seconds; GitHub also says by how much.
+            Some("slow_down") => {
+                interval = doc["interval"].as_u64().map(Duration::from_secs).unwrap_or(interval + Duration::from_secs(5));
+            }
+            _ => return tokens_from(status, &doc, None),
+        }
+    }
+}
+
 pub async fn exchange_code(
     http: &reqwest::Client,
     server: &AuthServer,
@@ -293,6 +377,16 @@ async fn token_request(
     params: &[(&str, &str)],
     previous_refresh: Option<&str>,
 ) -> Result<TokenSet, OAuthError> {
+    let (status, doc) = post_token(http, endpoint, client, params).await?;
+    tokens_from(status, &doc, previous_refresh)
+}
+
+async fn post_token(
+    http: &reqwest::Client,
+    endpoint: &str,
+    client: &OAuthClient,
+    params: &[(&str, &str)],
+) -> Result<(StatusCode, Value), OAuthError> {
     let mut form: Vec<(&str, &str)> = params.to_vec();
     form.push(("client_id", &client.client_id));
     let mut req = http.post(endpoint).header(ACCEPT, "application/json");
@@ -305,9 +399,12 @@ async fn token_request(
     }
     let resp = req.form(&form).send().await?;
     let status = resp.status();
-    let doc: Value = resp.json().await.unwrap_or_default();
+    Ok((status, resp.json().await.unwrap_or_default()))
+}
+
+fn tokens_from(status: StatusCode, doc: &Value, previous_refresh: Option<&str>) -> Result<TokenSet, OAuthError> {
     let Some(access_token) = doc["access_token"].as_str().filter(|_| status.is_success()) else {
-        return Err(OAuthError::Server(describe(status, &doc)));
+        return Err(OAuthError::Server(describe(status, doc)));
     };
     Ok(TokenSet {
         access_token: access_token.to_string(),
@@ -360,6 +457,7 @@ mod tests {
             authorization_endpoint: "https://auth.example.com/authorize?tenant=1".into(),
             token_endpoint: "https://auth.example.com/token".into(),
             registration_endpoint: None,
+            device_authorization_endpoint: None,
             scope: Some("read write".into()),
             resource: "https://mcp.example.com/mcp".into(),
         };
@@ -374,6 +472,33 @@ mod tests {
         assert_eq!(q["resource"], "https://mcp.example.com/mcp");
         assert_eq!(q["scope"], "read write");
         assert_eq!(q["redirect_uri"], "http://localhost:5000/callback");
+    }
+
+    #[test]
+    fn reads_device_authorization_responses() {
+        // GitHub's shape: no `verification_uri_complete`.
+        let doc = json!({"device_code": "dc", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": 899, "interval": 5});
+        let d = DeviceAuthorization::from_response(&doc).unwrap();
+        assert_eq!((d.user_code.as_str(), d.verification_uri.as_str()), ("ABCD-1234", "https://github.com/login/device"));
+        assert_eq!((d.interval, d.expires_in), (Duration::from_secs(5), Duration::from_secs(899)));
+        assert_eq!(d.verification_uri_complete, None);
+
+        let legacy = json!({"device_code": "dc", "user_code": "x", "verification_url": "https://example.com/device"});
+        let d = DeviceAuthorization::from_response(&legacy).unwrap();
+        assert_eq!(d.verification_uri, "https://example.com/device");
+        assert_eq!(d.interval, Duration::from_secs(5));
+
+        assert_eq!(DeviceAuthorization::from_response(&json!({"error": "unauthorized_client"})), None);
+    }
+
+    #[test]
+    fn device_token_errors_read_as_sentences() {
+        // GitHub answers the token poll with 200 and an `error` field.
+        let denied = json!({"error": "access_denied", "error_description": "The authorization request was denied."});
+        let err = tokens_from(StatusCode::OK, &denied, None).unwrap_err();
+        assert_eq!(err.to_string(), "sign-in failed: The authorization request was denied.");
+        let ok = tokens_from(StatusCode::OK, &json!({"access_token": "gho_x", "token_type": "bearer", "scope": "repo"}), None).unwrap();
+        assert_eq!((ok.access_token.as_str(), ok.refresh_token, ok.expires_at), ("gho_x", None, None));
     }
 
     /// Hits live servers; run with `cargo test -p sush-core -- --ignored discovers`.

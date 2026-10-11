@@ -1,17 +1,12 @@
-// Web citations inside assistant text. The transport writes each citation the
+// Web citations inside assistant text. The agent loop writes each citation the
 // provider reports as a markdown link with the text "cite" right after the
-// text it backs; the message view turns those into numbered markers.
+// text it backs (`citation_marker` in `sush_core::agent::ui`); the message view
+// turns those into numbered markers.
 
 import type { SushUIMessage } from "@/lib/transport";
 
 const CITE_TEXT = "cite";
 const CITE_RE = /\s?\[cite\]\((\S+?)(?: "([^"]*)")?\)/g;
-
-/** The markdown written into the text stream for one citation. */
-export function citationMarker(url: string, title?: string | null): string {
-  const href = url.replace(/[\s()]/g, encodeURIComponent);
-  return title ? ` [${CITE_TEXT}](${href} "${title.replace(/"/g, "'")}")` : ` [${CITE_TEXT}](${href})`;
-}
 
 /** Whether a rendered link's text marks it as a citation. */
 export const isCitationText = (text: unknown) => text === CITE_TEXT;

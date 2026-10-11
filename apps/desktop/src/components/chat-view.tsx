@@ -1,7 +1,5 @@
-import { useChat } from "@ai-sdk/react";
-import { lastAssistantMessageIsCompleteWithToolCalls } from "ai";
 import { ArrowDownIcon, ArrowUpIcon, CopyIcon, PencilIcon, RefreshCcwIcon, SettingsIcon, WrenchIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   Conversation,
@@ -25,16 +23,9 @@ import { Suggestion } from "@/components/ui/Suggestion";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ProviderModels } from "@/hooks/use-providers";
-import {
-  buildContext,
-  cancelToolCalls,
-  runsWithoutApproval,
-  runTool,
-  toolKind,
-  useRunningToolCalls,
-  type ToolResult,
-} from "@/lib/agent";
+import type { ToolResult } from "@/lib/agent";
 import { ARTIFACT_WRITE, artifactViews, type ArtifactView } from "@/lib/artifacts";
+import { useSession } from "@/lib/auth";
 import { citedSources, stripCitations } from "@/lib/citations";
 import { usePrefs } from "@/lib/library";
 import { modelLogo, providerLogo } from "@/lib/logos";
@@ -42,14 +33,20 @@ import { mentionSegments } from "@/lib/mentions";
 import { parseSlash } from "@/lib/skills";
 import { formatCost, isLocalUrl } from "@/lib/pricing";
 import {
-  saveMessages,
-  setRunning,
-  setTarget,
-  useAskUser,
-  useTarget,
-  type Conversation as StoredConversation,
-} from "@/lib/store";
-import { TauriChatTransport, type ModelTarget, type SushUIMessage } from "@/lib/transport";
+  clearError,
+  editMessage,
+  regenerate,
+  respond,
+  sendMessage,
+  sessionTarget,
+  setSessionResearch,
+  setSessionTarget,
+  stop,
+  toResponse,
+  useThread,
+} from "@/lib/sessions";
+import { setTarget, type Conversation as StoredConversation } from "@/lib/store";
+import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 
 interface ChatViewProps {
   conversation: StoredConversation;
@@ -60,95 +57,37 @@ interface ChatViewProps {
 }
 
 export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }: ChatViewProps) {
-  const globalTarget = useTarget();
-  // A conversation keeps the model it was last used with; new chats start
-  // from the most recently picked one.
-  const [target, setLocalTarget] = useState<ModelTarget | null>(conversation.target ?? globalTarget);
-  // The transport reads the current target lazily, so switching models
-  // mid-conversation applies to the next message without recreating the chat.
-  const targetRef = useRef(target);
-  targetRef.current = target;
+  const id = conversation.id;
+  // The run lives in Rust, so it keeps going when another chat is opened.
+  const { messages, status: runStatus, error } = useThread(id);
+
+  const [target, setLocalTarget] = useState<ModelTarget | null>(() => sessionTarget(id));
   const pickModel = (t: ModelTarget) => {
-    // Update the ref now so a retry fired in the same tick uses the new model.
-    targetRef.current = t;
+    setSessionTarget(id, t);
     setLocalTarget(t);
     setTarget(t);
   };
-  const askUser = useAskUser();
   const prefs = usePrefs();
+  const { data: session } = useSession();
+  const firstName = session?.user.name?.trim().split(/\s+/)[0];
   // Research uses Anthropic's server-side web tools, so only Claude providers get it.
   const researchAvailable = catalog.find((c) => c.provider.id === target?.providerId)?.provider.format === "anthropic-messages";
-  const contextRef = useRef({ askUser, research: prefs.research && researchAvailable });
-  contextRef.current = { askUser, research: prefs.research && researchAvailable };
-  const transport = useMemo(
-    () => new TauriChatTransport(() => targetRef.current, () => buildContext(contextRef.current)),
-    [],
-  );
+  setSessionResearch(id, prefs.research && researchAvailable);
 
-  const addToolOutputRef = useRef<(toolName: string, toolCallId: string, result: ToolResult) => void>(() => {});
-  // Set by Stop so the stopped calls' results don't send the turn back to the model.
-  const stoppedRef = useRef(false);
-  const { messages, sendMessage, status, stop, regenerate, error, clearError, addToolOutput } = useChat<SushUIMessage>({
-    id: conversation.id,
-    messages: conversation.messages,
-    transport,
-    // Once every tool call has a result, hand the turn straight back to the model.
-    sendAutomaticallyWhen: (opts) => !stoppedRef.current && lastAssistantMessageIsCompleteWithToolCalls(opts),
-    // Memory and pre-approved connector tools run right away; the rest wait in the chat.
-    onToolCall: ({ toolCall }) => {
-      const { toolName, toolCallId, input } = toolCall;
-      if (toolKind(toolName) === "unknown") {
-        addToolOutputRef.current(toolName, toolCallId, { errorText: `Unknown tool ${toolName}.` });
-      } else if (runsWithoutApproval(toolName)) {
-        void runTool(toolName, input, toolCallId).then((r) => addToolOutputRef.current(toolName, toolCallId, r));
-      }
-    },
-  });
-  addToolOutputRef.current = (tool, toolCallId, result) =>
-    void addToolOutput(
-      "output" in result
-        ? { tool, toolCallId, output: result.output }
-        : { tool, toolCallId, state: "output-error", errorText: result.errorText },
-    );
-
-  // Persist whenever a turn settles (not on every streamed token).
-  const busy = status === "submitted" || status === "streaming";
-  // Between model steps the stream is done but connector calls may still be running.
-  const runningCalls = useRunningToolCalls();
-  const callIds = (messages.at(-1)?.parts ?? []).flatMap((p) => ("toolCallId" in p ? [p.toolCallId] : []));
-  const toolsRunning = callIds.some((id) => runningCalls.has(id));
-  const working = busy || toolsRunning;
-  const stopAll = () => {
-    stoppedRef.current = true;
-    void stop();
-    cancelToolCalls(callIds);
-  };
-  useEffect(() => {
-    if (!busy && messages !== conversation.messages && messages.length > 0) {
-      saveMessages(conversation.id, messages, targetRef.current);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, messages]);
-
-  useEffect(() => {
-    setRunning(conversation.id, working);
-    return () => setRunning(conversation.id, false);
-  }, [conversation.id, working]);
+  // `streaming` also covers tools running between model steps.
+  const busy = runStatus === "submitted" || runStatus === "streaming";
+  const status = runStatus === "awaiting" ? "ready" : runStatus;
 
   const submit = (msg: PromptInputMessage) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
-    stoppedRef.current = false;
-    clearError();
-    void sendMessage({ text: msg.text, files: msg.files });
+    void storeAttachments(msg.files).then((files) => sendMessage(id, msg.text, files));
   };
 
   // Replacing a user message drops everything after it and asks the model again.
   // Attachments on the original message are kept.
   const edit = (message: SushUIMessage, text: string) => {
     const files = message.parts.filter((p) => p.type === "file");
-    stoppedRef.current = false;
-    clearError();
-    void sendMessage({ text, files, messageId: message.id });
+    editMessage(id, message.id, text, files);
   };
 
   // Providers served from this machine (Ollama, LM Studio) cost nothing per token.
@@ -158,13 +97,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   );
 
   // Small local models (e.g. gemma3:1b on Ollama) reject any request that carries tools.
-  const toolsUnsupported = !!error && isToolsUnsupported(error.message);
-  const [dismissedError, setDismissedError] = useState<Error | undefined>();
+  const toolsUnsupported = !!error && isToolsUnsupported(error);
+  const [dismissedError, setDismissedError] = useState<string | undefined>();
   const retryWith = (t: ModelTarget) => {
     pickModel(t);
-    stoppedRef.current = false;
-    clearError();
-    void regenerate();
+    clearError(id);
+    regenerate(id);
   };
 
   // Each artifact card shows its versions up to that call, so the history is built from the whole chat.
@@ -180,9 +118,9 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       catalog={catalog}
       target={target}
       onPickModel={pickModel}
-      status={toolsRunning && !busy ? "streaming" : status}
+      status={status}
       onSubmit={submit}
-      onStop={stopAll}
+      onStop={() => stop(id)}
       onOpenSettings={onOpenSettings}
       researchAvailable={researchAvailable}
       messages={messages}
@@ -194,7 +132,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-[10vh]">
         <div className="w-full max-w-2xl">
           {hasProviders === null ? null : hasProviders ? (
-            <h1 className="mb-7 text-center text-[28px] font-medium tracking-tight">{greeting()}</h1>
+            <h1 className="mb-7 text-center text-[28px] font-medium tracking-tight">{greeting(firstName)}</h1>
           ) : (
             <div className="mb-7 flex flex-col items-center gap-3 text-center">
               <h1 className="text-[28px] font-medium tracking-tight">Connect a model to get started</h1>
@@ -232,12 +170,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               local={localProviders.has(message.metadata?.providerId ?? "")}
               logo={messageLogo(message, catalog)}
               canRegenerate={!busy && message.id === lastAssistantId}
-              onRegenerate={() => void regenerate({ messageId: message.id })}
+              onRegenerate={() => regenerate(id, message.id)}
               canEdit={!busy}
               onEdit={(text) => edit(message, text)}
               // Only the latest turn's questions can still be answered.
               canAnswer={!busy && message.id === last?.id}
-              onToolOutput={(toolName, toolCallId, result) => addToolOutputRef.current(toolName, toolCallId, result)}
+              onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
+              onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
             />
           ))}
@@ -252,7 +191,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               <AlertDescription className="break-words">
                 {toolsUnsupported
                   ? `${target?.model ?? "The selected model"} doesn’t support tool calling, which Sush needs for skills, memory and connectors. Switch to a different model and try again.`
-                  : error.message}
+                  : error}
               </AlertDescription>
             </Alert>
           )}
@@ -298,12 +237,13 @@ function isToolsUnsupported(message: string) {
   );
 }
 
-function greeting(hour = new Date().getHours()) {
-  if (hour < 5) return "Burning the midnight oil?";
-  if (hour < 12) return "Good morning. What’s on your mind?";
-  if (hour < 17) return "Good afternoon. What’s on your mind?";
-  if (hour < 22) return "Good evening. What’s on your mind?";
-  return "Late night? Let’s think it through.";
+function greeting(name?: string, hour = new Date().getHours()) {
+  const to = name ? `, ${name}` : "";
+  if (hour < 5) return `Burning the midnight oil${to}?`;
+  if (hour < 12) return `Good morning${to}. What’s on your mind?`;
+  if (hour < 17) return `Good afternoon${to}. What’s on your mind?`;
+  if (hour < 22) return `Good evening${to}. What’s on your mind?`;
+  return `Late night${to}? Let’s think it through.`;
 }
 
 // Starter prompts under the empty-state composer. Each is complete, so picking
@@ -362,7 +302,10 @@ interface ChatMessageProps {
   canEdit: boolean;
   onEdit: (text: string) => void;
   canAnswer: boolean;
-  onToolOutput: (toolName: string, toolCallId: string, result: ToolResult) => void;
+  /** A waiting tool call answered in its card (ask_user, skill_save, a denial). */
+  onToolResult: (toolCallId: string, result: ToolResult) => void;
+  /** A waiting connector call the user allowed; Rust runs it. */
+  onApprove: (toolCallId: string) => void;
   artifacts: Map<string, ArtifactView>;
 }
 
@@ -427,7 +370,8 @@ function ChatMessage({
   canEdit,
   onEdit,
   canAnswer,
-  onToolOutput,
+  onToolResult,
+  onApprove,
   artifacts,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
@@ -494,7 +438,8 @@ function ChatMessage({
                   key={key}
                   part={part}
                   canAnswer={canAnswer}
-                  onResult={(result) => onToolOutput(part.toolName, part.toolCallId, result)}
+                  onResult={(result) => onToolResult(part.toolCallId, result)}
+                  onApprove={() => onApprove(part.toolCallId)}
                 />
               );
             case "data-web":

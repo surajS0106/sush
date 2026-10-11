@@ -14,7 +14,6 @@ import {
   CHATS_SEARCH,
   findConnectorTool,
   MEMORY_DELETE,
-  runTool,
   STOPPED,
   toolKind,
   useRunningToolCalls,
@@ -33,6 +32,8 @@ interface ToolPartProps {
   /** Only the latest turn's pending calls can still be answered or approved. */
   canAnswer: boolean;
   onResult: (result: ToolResult) => void;
+  /** Let a waiting connector call run; Rust calls the connector. */
+  onApprove: () => void;
 }
 
 export function ToolPart(props: ToolPartProps) {
@@ -213,7 +214,7 @@ function SkillSavePart({ part, canAnswer, onResult }: ToolPartProps) {
 
 export const DENIED = "The user denied this tool call.";
 
-function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
+function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
   const [running, setRunning] = useState(false);
   const inFlight = useRunningToolCalls().has(part.toolCallId);
   const found = findConnectorTool(part.toolName);
@@ -261,7 +262,7 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
         />
       );
     default:
-      // Calls that need no approval are started from useChat's onToolCall.
+      // The run starts calls that need no approval itself and reports them as running.
       if (running || inFlight) {
         return <LoadingState label={`Running ${toolName}`} />;
       }
@@ -276,7 +277,7 @@ function ConnectorPart({ part, canAnswer, onResult }: ToolPartProps) {
           onAllow={(always) => {
             if (always) allowTool(found.connector.id, found.tool);
             setRunning(true);
-            void runTool(part.toolName, part.input, part.toolCallId).then(onResult);
+            onApprove();
           }}
         />
       );

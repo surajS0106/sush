@@ -1,5 +1,7 @@
 // What each request carries beyond the messages (system prompt, tools,
-// research) and how tool calls that come back are run.
+// research), which tools need the user's approval, and how the tools the UI
+// owns are run. The loop itself runs in Rust (`sush_core::agent`): it calls
+// connector tools directly and asks the UI (`sessions.ts`) to run the rest.
 //
 // Tool kinds:
 //   ask_user        answered by the user in the chat (AskUserCard)
@@ -30,7 +32,7 @@ import {
 } from "@/lib/memory";
 import { loadSkill, SKILL, SKILL_SAVE, skillSaveTool, skillsPrompt, skillTool } from "@/lib/skills";
 import { createStore } from "@/lib/store";
-import { api, type McpTool, type ToolSpec } from "@/lib/tauri";
+import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
 
 export const MEMORY_WRITE = "memory_write";
 export const MEMORY_DELETE = "memory_delete";
@@ -232,17 +234,30 @@ export function runsWithoutApproval(name: string): boolean {
 
 export const STOPPED = "Stopped by the user.";
 
-/** Connector calls in flight, by tool call id, so Stop can cancel them. */
+/** Connector calls in flight, by tool call id, as the run reports them. */
 const runningCalls = createStore<ReadonlySet<string>>("sush.running-tool-calls", new Set(), false);
 export const useRunningToolCalls = () => useSyncExternalStore(runningCalls.subscribe, runningCalls.get);
 
-/** Stop connector calls in flight; each one's `runTool` then resolves with `STOPPED`. */
-export function cancelToolCalls(ids: Iterable<string>) {
-  for (const id of ids) if (runningCalls.get().has(id)) void api.connectorCancelCall(id);
+export function setToolRunning(callId: string, running: boolean) {
+  runningCalls.set((prev) => {
+    const next = new Set(prev);
+    if (running) next.add(callId);
+    else next.delete(callId);
+    return next;
+  });
 }
 
-/** Run a memory, chats, skill, artifact or connector tool. Never throws; failures become error results the model can read. */
-export async function runTool(name: string, input: unknown, callId: string): Promise<ToolResult> {
+/** Tool specs with where each runs and whether it needs the user's approval, for a run's config. */
+export function runTools(specs: ToolSpec[]): RunTool[] {
+  return specs.map((spec) => {
+    const approval = runsWithoutApproval(spec.name) ? "auto" : "ask";
+    const t = toolKind(spec.name) === "connector" ? findConnectorTool(spec.name) : undefined;
+    return { ...spec, approval, exec: t ? { type: "connector", connectorId: t.connector.id, tool: t.tool } : { type: "client" } };
+  });
+}
+
+/** Run a memory, chats, skill or artifact tool. Never throws; failures become error results the model can read. */
+export async function runTool(name: string, input: unknown): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
     if (name === MEMORY_WRITE) {
@@ -266,7 +281,7 @@ export async function runTool(name: string, input: unknown, callId: string): Pro
     }
     if (name === MEMORY_SAVE) return { errorText: "memory_save was replaced by memory_write." };
     if (name === CHATS_SEARCH) {
-      const hits = searchChats(String(args.query ?? ""));
+      const hits = await searchChats(String(args.query ?? ""));
       return { output: hits.length > 0 ? JSON.stringify(hits, null, 1) : "No chats matched. Try fewer or different words." };
     }
     if (name === CHAT_READ) {
@@ -278,18 +293,6 @@ export async function runTool(name: string, input: unknown, callId: string): Pro
     if (name === ARTIFACT_WRITE) {
       const invalid = validateArtifact(args);
       return invalid ? { errorText: invalid } : { output: `Showed ${args.filename} to the user as an artifact.` };
-    }
-    const t = findConnectorTool(name);
-    if (t) {
-      runningCalls.set((prev) => new Set(prev).add(callId));
-      const out = await api.connectorCall(t.connector.id, t.tool, input ?? {}, callId).finally(() =>
-        runningCalls.set((prev) => {
-          const next = new Set(prev);
-          next.delete(callId);
-          return next;
-        }),
-      );
-      return out.isError ? { errorText: out.text || "The tool reported an error." } : { output: out.text };
     }
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {

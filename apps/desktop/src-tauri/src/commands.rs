@@ -35,7 +35,7 @@ fn view(config: ProviderConfig) -> AppResult<ProviderView> {
     Ok(ProviderView { config, has_key })
 }
 
-fn provider_for(state: &AppState, id: &str) -> AppResult<std::sync::Arc<dyn Provider>> {
+pub(crate) fn provider_for(state: &AppState, id: &str) -> AppResult<std::sync::Arc<dyn Provider>> {
     let cfg = state.provider(id).ok_or_else(|| AppError::NotFound(format!("provider {id} not found")))?;
     let secret = match cfg.auth {
         AuthKind::ApiKey { .. } => secrets::get(&cfg.id)?,
@@ -116,9 +116,14 @@ pub async fn chat_stream(
     state: State<'_, AppState>,
     stream_id: String,
     provider_id: String,
-    request: ChatRequest,
+    mut request: ChatRequest,
     on_event: Channel<StreamFrame>,
 ) -> AppResult<()> {
+    // Attachments arrive as blob URLs; providers need the bytes.
+    let store = state.store.clone();
+    request = tauri::async_runtime::spawn_blocking(move || store.resolve_blobs(&mut request).map(|()| request))
+        .await
+        .map_err(|e| AppError::Invalid(format!("Could not read attachments: {e}")))??;
     let token = CancellationToken::new();
     state.streams.lock().unwrap().insert(stream_id.clone(), token.clone());
     let result = run_stream(&state, &provider_id, request, &on_event, &token).await;
