@@ -198,7 +198,14 @@ function GeneralSection() {
             ]}
           />
         </Setting>
-        <Setting title="Transcript width" description="Maximum width of the transcript and composer columns.">
+        <Setting
+          title="Transcript width"
+          description={
+            appearance.width === "custom"
+              ? `Custom, ${appearance.customWidth}px. Drag the column's edges in a chat, or pick a preset.`
+              : "Maximum width of the transcript and composer columns. You can also drag the column's edges in a chat."
+          }
+        >
           <Segmented
             label="Transcript width"
             value={appearance.width}

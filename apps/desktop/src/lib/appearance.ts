@@ -9,7 +9,8 @@ import { createStore } from "@/lib/store";
 
 export type ChatFont = "sans" | "serif" | "mono" | "space-mono";
 export type TextSize = "small" | "medium" | "large";
-export type TranscriptWidth = "narrow" | "medium" | "wide";
+/** "custom" is a width the user dragged the column to, kept in `customWidth`. */
+export type TranscriptWidth = "narrow" | "medium" | "wide" | "custom";
 export type Motion = "system" | "reduced";
 export type Accent = "sush" | "orange" | "red" | "pink" | "violet" | "blue" | "teal" | "green" | "graphite" | "custom";
 
@@ -35,6 +36,8 @@ export interface Appearance {
   chatFont: ChatFont;
   textSize: TextSize;
   width: TranscriptWidth;
+  /** The transcript column in px, used while `width` is "custom". */
+  customWidth: number;
   motion: Motion;
   accent: Accent;
   /** The color picked for the "custom" accent, as #rrggbb. */
@@ -47,6 +50,7 @@ const DEFAULTS: Appearance = {
   chatFont: "sans",
   textSize: "medium",
   width: "medium",
+  customWidth: 768,
   motion: "system",
   accent: "sush",
   customAccent: "#d946ef",
@@ -63,11 +67,13 @@ appearance.set((a) => ({
   ...((a.palette ?? 1) < 2 && { accent: a.accent === "orange" ? "sush" : a.accent, palette: 2 }),
 }));
 
-function apply({ chatFont, textSize, width, motion, accent, customAccent }: Appearance) {
+function apply({ chatFont, textSize, width, customWidth, motion, accent, customAccent }: Appearance) {
   const { dataset, style } = document.documentElement;
   dataset.chatFont = chatFont;
   dataset.textSize = textSize;
   dataset.transcriptWidth = width;
+  if (width === "custom") style.setProperty("--transcript-width", `${customWidth}px`);
+  else style.removeProperty("--transcript-width");
   dataset.motion = motion;
   dataset.accent = accent;
   // Set even when another accent is active: the picker's swatch for "custom"

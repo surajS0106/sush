@@ -28,6 +28,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { ResizeHandle } from "@/components/ui/resize-handle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,6 +41,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, errorMessage, type FileView, type Workspace, type WorkspaceEntry } from "@/lib/tauri";
+import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import {
   closeFile,
@@ -177,12 +179,34 @@ interface CoworkPanelProps {
   changed: ReadonlySet<string>;
 }
 
-/** Files on top, terminal below; whichever is open fills the height. */
+/**
+ * Files on top, terminal below; whichever is open fills the height. Its left
+ * edge drags to resize; until then it takes about half the window. CSS keeps
+ * the chat at least `PANEL.chatMin` wide when the window shrinks.
+ */
 export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
   const panels = usePanels();
+  const { panel: width } = useLayout();
+  const ref = useRef<HTMLElement>(null);
   if (!panels.files && !panels.terminal) return null;
   return (
-    <aside className="flex w-[52%] max-w-[960px] min-w-[420px] shrink-0 flex-col gap-2 p-2 pl-0">
+    <aside
+      ref={ref}
+      className={cn(
+        "relative flex max-w-[calc(100%-360px)] min-w-[320px] shrink-0 flex-col gap-2 p-2 pl-0",
+        width === null && "w-[52%] max-w-[min(960px,calc(100%-360px))]",
+      )}
+      style={width === null ? undefined : { width }}
+    >
+      <ResizeHandle
+        label="Resize side panel"
+        edge="left"
+        min={PANEL.min}
+        max={() => Math.min(PANEL.max, (ref.current?.parentElement?.clientWidth ?? Infinity) - PANEL.chatMin)}
+        measure={() => ref.current?.offsetWidth ?? PANEL.min}
+        onResize={(panel) => setLayout({ panel })}
+        onReset={() => setLayout({ panel: null })}
+      />
       {panels.files && <FilesPane workspace={workspace} changed={changed} />}
       {panels.terminal && <TerminalPane workspace={workspace} fill={!panels.files} />}
     </aside>

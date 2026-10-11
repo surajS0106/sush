@@ -54,15 +54,16 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-controls";
 import { HoverHighlight } from "@/components/ui/motion-highlight";
+import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
+import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
 import { errorMessage } from "@/lib/tauri";
 import { useSessionStatus } from "@/lib/sessions";
@@ -96,6 +97,22 @@ interface AppSidebarProps {
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   nav: Nav;
+}
+
+/** The sidebar's right edge: drag it to set the width; double-click puts the default back. */
+function SidebarResizer() {
+  const { sidebar } = useLayout();
+  return (
+    <ResizeHandle
+      label="Resize sidebar"
+      edge="right"
+      min={SIDEBAR.min}
+      max={SIDEBAR.max}
+      measure={() => sidebar}
+      onResize={(width) => setLayout({ sidebar: width })}
+      onReset={() => setLayout({ sidebar: SIDEBAR.default })}
+    />
+  );
 }
 
 export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowork, onDelete, onOpenSettings, nav }: AppSidebarProps) {
@@ -221,7 +238,7 @@ export function AppSidebar({ conversations, activeId, onSelect, onNew, onNewCowo
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <SidebarRail />
+      <SidebarResizer />
     </Sidebar>
   );
 }

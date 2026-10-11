@@ -14,6 +14,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { useProviders } from "@/hooks/use-providers";
 import { useAppearance } from "@/lib/appearance";
+import { useLayout } from "@/lib/layout";
 import { openSettings, syncConnectors, useChatRequest, type ChatRequest } from "@/lib/library";
 import { deleteConversation, getOrCreateEmptyConversation, useConversations } from "@/lib/store";
 import { cn, focusComposer } from "@/lib/utils";
@@ -23,6 +24,7 @@ export default function App() {
   const { providers, catalog, refresh } = useProviders();
   const [activeId, setActiveId, nav] = useSessionHistory(conversations[0]?.id ?? null, conversations.map((c) => c.id));
   const { motion } = useAppearance();
+  const layout = useLayout();
 
   const current = conversations.find((c) => c.id === activeId) ?? null;
   const startNew = () => setActiveId(getOrCreateEmptyConversation().id);
@@ -73,7 +75,10 @@ export default function App() {
   return (
     <MotionConfig reducedMotion={motion === "reduced" ? "always" : "user"}>
       <TooltipProvider>
-        <SidebarProvider className="h-svh overflow-hidden">
+        <SidebarProvider
+          className="h-svh overflow-hidden"
+          style={{ "--sidebar-width": `${layout.sidebar}px` } as React.CSSProperties}
+        >
           <AppSidebar
             conversations={conversations}
             activeId={activeId}
