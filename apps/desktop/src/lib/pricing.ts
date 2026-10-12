@@ -42,6 +42,21 @@ export function isLocalUrl(baseUrl: string) {
   }
 }
 
+/** Estimated USD for a reply: 0 for local models, undefined when the price is unknown. */
+export function costUsd(model: string | undefined, inputTokens: number | undefined, outputTokens: number, local: boolean) {
+  if (local) return 0;
+  const price = model && priceFor(model);
+  if (!price) return undefined;
+  return ((inputTokens ?? 0) * price.input + outputTokens * price.output) / 1_000_000;
+}
+
+/** "$0.0123", "$4.21", "<$0.0001". */
+export function formatUsd(usd: number) {
+  if (usd === 0) return "$0";
+  if (usd < 0.0001) return "<$0.0001";
+  return `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(usd < 1 ? 3 : 2)}`;
+}
+
 /**
  * "$0.0123", "Free" for local models, or undefined when the price is unknown.
  */
@@ -53,10 +68,6 @@ export function formatCost(
 ): string | undefined {
   if (outputTokens === undefined) return undefined;
   if (local) return "Free";
-  const price = model && priceFor(model);
-  if (!price) return undefined;
-  const usd = ((inputTokens ?? 0) * price.input + outputTokens * price.output) / 1_000_000;
-  if (usd === 0) return "$0";
-  if (usd < 0.0001) return "<$0.0001";
-  return `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(usd < 1 ? 3 : 2)}`;
+  const usd = costUsd(model, inputTokens, outputTokens, false);
+  return usd === undefined ? undefined : formatUsd(usd);
 }

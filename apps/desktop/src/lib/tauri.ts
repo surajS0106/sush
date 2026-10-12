@@ -140,6 +140,10 @@ export interface StoredThread {
   pinned?: boolean;
   /** Set for Cowork sessions: the workspace they work in. */
   workspaceId?: string;
+  /** The project it's filed under (`lib/projects.ts`). */
+  projectId?: string;
+  /** Never written to disk; Rust keeps its messages in memory until it's deleted. */
+  incognito?: boolean;
   messages: unknown[];
 }
 
@@ -238,6 +242,12 @@ export type TerminalEvent =
   | { kind: "prompt"; cwd: string }
   | { kind: "exit" };
 
+/** A file or folder completing the word typed at the Cowork terminal's prompt (Tab). */
+export interface TerminalCompletion {
+  name: string;
+  dir: boolean;
+}
+
 export interface TerminalInfo {
   id: string;
   shell: "powershell" | "bash" | "sh";
@@ -327,11 +337,17 @@ export const api = {
   runCancel: (threadId: string) => invoke<void>("run_cancel", { threadId }),
   toolResult: (callId: string, result: { output: unknown } | { errorText: string }) => invoke<void>("tool_result", { callId, result }),
   threadsLoad: () => invoke<StoredThread[]>("threads_load"),
-  /** Without `messages`, only the metadata (title, pin, model) is updated. */
+  /** Without `messages`, only the metadata (title, pin, project, model) is updated. */
   threadSave: (thread: ThreadMeta, messages: unknown[] | null) => invoke<void>("thread_save", { thread, messages }),
   threadDelete: (id: string) => invoke<void>("thread_delete", { id }),
   threadsImport: (threads: StoredThread[]) => invoke<number>("threads_import", { threads }),
   blobPut: (dataUrl: string) => invoke<string>("blob_put", { dataUrl }),
+  /** A stored blob's bytes as a `data:` URL. */
+  blobDataUrl: (url: string) => invoke<string>("blob_data_url", { url }),
+  /** Downloads an https image into the blob store and returns its blob URL. */
+  imageFetch: (url: string) => invoke<string>("image_fetch", { url }),
+  /** Finds a picture of `query` on Wikipedia / Wikimedia Commons, stores it and returns its blob URL. */
+  imageSearch: (query: string) => invoke<string>("image_search", { query }),
   chatsSearch: (query: string, limit: number) => invoke<ChatHit[]>("chats_search", { query, limit }),
   memoryList: () => invoke<StoredMemoryFile[]>("memory_list"),
   memoryWrite: (file: StoredMemoryFile) => invoke<void>("memory_write", { file }),
@@ -341,6 +357,8 @@ export const api = {
   pickFolderAttachment: () => invoke<Folder | null>("pick_folder_attachment"),
   /** Opens a save dialog (in Rust) and writes the file; false if cancelled. */
   saveTextFileAs: (fileName: string, contents: string) => invoke<boolean>("save_text_file_as", { fileName, contents }),
+  /** Like `saveTextFileAs`, for binary data passed as base64. */
+  saveBytesFileAs: (fileName: string, data: string) => invoke<boolean>("save_bytes_file_as", { fileName, data }),
   workspacesList: () => invoke<Workspace[]>("workspaces_list"),
   /** Opens a folder picker (in Rust); null if cancelled. */
   workspaceAdd: () => invoke<Workspace | null>("workspace_add"),
@@ -364,6 +382,8 @@ export const api = {
   workspaceWriteFile: (id: string, path: string, text: string) => invoke<void>("workspace_write_file", { id, path, text }),
   /** Show a workspace file or folder in the system file manager. */
   workspaceReveal: (id: string, path: string) => invoke<void>("workspace_reveal", { id, path }),
+  /** Open a workspace's folder in VS Code or the system file manager. */
+  workspaceOpenIn: (id: string, target: "vscode" | "files") => invoke<void>("workspace_open_in", { id, target }),
   /** Start the user's shell in a workspace; what it prints arrives on `onEvent`, starting with a prompt. */
   terminalOpen: (workspaceId: string, onEvent: (event: TerminalEvent) => void) => {
     const channel = new Channel<TerminalEvent>();
@@ -376,6 +396,8 @@ export const api = {
   terminalWrite: (id: string, data: string) => invoke<void>("terminal_write", { id, data }),
   /** Stop the running command: the shell restarts where it was. */
   terminalInterrupt: (id: string) => invoke<void>("terminal_interrupt", { id }),
+  /** Files and folders completing `word` (unquoted) in the shell's current folder. */
+  terminalComplete: (id: string, word: string) => invoke<TerminalCompletion[]>("terminal_complete", { id, word }),
   terminalClose: (id: string) => invoke<void>("terminal_close", { id }),
   /** Follow the built-in browser; returns the page it shows, or null before one is opened. */
   browserSubscribe: (onEvent: (event: BrowserEvent) => void) => {
@@ -411,7 +433,16 @@ export const api = {
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),
   transcribeLocal: (audioBase64Wav: string) => invoke<string>("transcribe_local", { audioBase64Wav }),
+  /** A tab was dragged out of this window's strip and let go (`windows.rs`); `last` if it was the only one. */
+  tabDrop: (threadId: string, last: boolean) => invoke<TabDrop>("tab_drop", { threadId, last }),
+  /** A torn-off tab is being dragged (null: the drag is over); true while another window's strip is under the cursor. */
+  tabHover: (threadId: string | null) => invoke<boolean>("tab_hover", { threadId }),
+  /** Open a session in a new window (`windows.rs`). */
+  sessionWindow: (threadId: string) => invoke<void>("session_window", { threadId }),
 };
+
+/** Where a dragged-out tab went: a new window, another window's strip, or nowhere. */
+export type TabDrop = "detached" | "attached" | "stayed";
 
 /** Commands reject with the Rust error's message string. */
 export function errorMessage(e: unknown): string {

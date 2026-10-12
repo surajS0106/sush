@@ -2,6 +2,8 @@
 //! bundles (skills, connectors and design systems shipped as a folder).
 
 use std::io::Read;
+
+use base64::Engine;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -56,6 +58,22 @@ pub async fn save_text_file_as(app: AppHandle, file_name: String, contents: Stri
         let Some(picked) = app.dialog().file().set_file_name(file_name).blocking_save_file() else { return Ok(false) };
         let path = picked.into_path().map_err(|e| AppError::Invalid(format!("Can't save there: {e}")))?;
         std::fs::write(path, contents)?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| AppError::Invalid(e.to_string()))?
+}
+
+/// Save binary data (base64, e.g. an exported .pptx) where the user picks in a save dialog. Returns whether it was saved.
+#[tauri::command]
+pub async fn save_bytes_file_as(app: AppHandle, file_name: String, data: String) -> AppResult<bool> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| AppError::Invalid(format!("The file's data was malformed: {e}")))?;
+    tokio::task::spawn_blocking(move || {
+        let Some(picked) = app.dialog().file().set_file_name(file_name).blocking_save_file() else { return Ok(false) };
+        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("Can't save there: {e}")))?;
+        std::fs::write(path, bytes)?;
         Ok(true)
     })
     .await

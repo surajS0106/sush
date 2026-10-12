@@ -10,13 +10,16 @@
 //   chat_read       run immediately against saved chats
 //   skill           runs immediately: returns a skill's instructions (skills.ts)
 //   skill_save      saves a skill, after the user approves
+//   automation_save saves an automation, after the user approves (automations.ts)
 //   artifact_write  runs immediately: the chat shows it as a versioned artifact (artifacts.ts)
+//   slides_write    runs immediately: the deck opens in the slides panel (slides.ts)
 //   <connector>__*  sent to an MCP connector, after the user approves
 
 import { useSyncExternalStore } from "react";
 
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
+import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
 import { activeConnectors, activeDesignSystem, isToolAllowed, library, type Connector } from "@/lib/library";
 import {
   deleteMemory,
@@ -31,6 +34,7 @@ import {
   writeMemory,
 } from "@/lib/memory";
 import { loadSkill, SKILL, SKILL_SAVE, skillSaveTool, skillsPrompt, skillTool } from "@/lib/skills";
+import { SLIDES_WRITE, slidesTool, validateSlides } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
 
@@ -138,9 +142,30 @@ export interface RequestContext {
   research: boolean;
 }
 
-export function buildContext({ askUser, research }: { askUser: boolean; research: boolean }): RequestContext {
+export function buildContext({
+  askUser,
+  research,
+  incognito = false,
+  project,
+}: {
+  askUser: boolean;
+  research: boolean;
+  /** Leave out memory and past chats, both ways: nothing is read from them or written to them. */
+  incognito?: boolean;
+  /** The project the chat is filed under, for its instructions. */
+  project?: { name: string; instructions: string };
+}): RequestContext {
   const prefs = library.prefs();
+  const memory = prefs.memory && !incognito;
+  const referenceChats = prefs.referenceChats && !incognito;
   const sections: string[] = [];
+
+  if (project?.instructions.trim()) {
+    sections.push(
+      `This chat is part of the user's "${project.name}" project. Follow the project's instructions:\n\n` +
+        `<project_instructions>\n${project.instructions.trim()}\n</project_instructions>`,
+    );
+  }
 
   const skills = skillsPrompt();
   if (skills) sections.push(skills);
@@ -153,7 +178,7 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     );
   }
 
-  if (prefs.memory) {
+  if (memory) {
     sections.push(
       "You have a long-term memory about this user, shared across conversations and stored on their device. " +
         "Use it to personalise answers without mentioning it unless it's relevant. Keep it current with " +
@@ -162,7 +187,7 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     );
   }
 
-  if (prefs.referenceChats) {
+  if (referenceChats) {
     sections.push(
       "You can look up the user's past chats with chats_search and chat_read. Do so when they refer to an " +
         "earlier conversation or when past context would clearly help; don't search on every message.",
@@ -182,9 +207,11 @@ export function buildContext({ askUser, research }: { askUser: boolean; research
     ...(askUser ? [askUserTool] : []),
     ...(skills ? [skillTool] : []),
     skillSaveTool,
+    automationSaveTool,
     artifactTool,
-    ...(prefs.memory ? memoryTools : []),
-    ...(prefs.referenceChats ? chatTools : []),
+    slidesTool,
+    ...(memory ? memoryTools : []),
+    ...(referenceChats ? chatTools : []),
     ...connectors.map((t) => t.spec),
   ];
 
@@ -201,6 +228,7 @@ export type ToolKind =
   | "chats"
   | "skill"
   | "skill-save"
+  | "automation-save"
   | "artifact"
   | "workspace"
   | "browser"
@@ -231,7 +259,8 @@ export function toolKind(name: string): ToolKind {
   if (name === CHATS_SEARCH || name === CHAT_READ) return "chats";
   if (name === SKILL) return "skill";
   if (name === SKILL_SAVE) return "skill-save";
-  if (name === ARTIFACT_WRITE) return "artifact";
+  if (name === AUTOMATION_SAVE) return "automation-save";
+  if (name === ARTIFACT_WRITE || name === SLIDES_WRITE) return "artifact";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
 }
@@ -321,6 +350,12 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
     if (name === ARTIFACT_WRITE) {
       const invalid = validateArtifact(args);
       return invalid ? { errorText: invalid } : { output: `Showed ${args.filename} to the user as an artifact.` };
+    }
+    if (name === SLIDES_WRITE) {
+      const invalid = validateSlides(args);
+      if (invalid) return { errorText: invalid };
+      const n = (args.slides as unknown[]).length;
+      return { output: `Showed "${args.title}" (${n} ${n === 1 ? "slide" : "slides"}) to the user in the slides panel.` };
     }
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {

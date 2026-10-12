@@ -1,12 +1,13 @@
 // Settings → Sushi: pick which character stands on the composer. A little
 // stage at the top runs the real mascot on a pretend composer, so typing,
-// "working" and clicking can be tried before going back to a chat.
+// each stage of a reply (thinking, tools, writing) and clicking can be tried
+// before going back to a chat.
 
 import { PlayIcon, SquareIcon } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { Mascot, MascotSprite } from "@/components/mascot";
+import { Mascot, MascotSprite, type MascotStage } from "@/components/mascot";
 import { Group, Page } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { AVATARS } from "@/lib/avatars";
@@ -39,14 +40,24 @@ export function SushiSection() {
   );
 }
 
+const STAGES: MascotStage[] = ["thinking", "tools", "writing"];
+
 function Stage({ kind, label }: { kind: string; label: string }) {
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState(0);
+
+  // A pretend reply moves through each stage in turn.
+  useEffect(() => {
+    if (!busy) return setStep(0);
+    const id = setInterval(() => setStep((s) => s + 1), 3500);
+    return () => clearInterval(id);
+  }, [busy]);
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border bg-muted/30 p-4">
       <div className="relative mt-12 rounded-xl border bg-background shadow-xs">
-        <Mascot kind={kind} busy={busy} draft={draft} className="absolute right-10 bottom-full z-10 -mb-px" />
+        <Mascot kind={kind} busy={busy} stage={STAGES[step % STAGES.length]} draft={draft} className="absolute right-10 bottom-full z-10 -mb-px" />
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

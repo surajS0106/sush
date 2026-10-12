@@ -10,6 +10,11 @@ import {
   ArrowsOutIcon as PhArrowsOut,
   XIcon as PhX,
 } from "@phosphor-icons/react";
+import { MessageResponse } from "@/components/ai-elements/message";
+
+type ViewMode = "preview" | "raw";
+
+const isMarkdown = (title: string) => /\.(md|markdown|mdx)$/i.test(title);
 
 export interface Version {
   label: string;
@@ -48,7 +53,7 @@ function ShimmerLines() {
         <div key={i} className="relative h-3 overflow-hidden rounded bg-stone-200 dark:bg-white/10" style={{ width: `${w}%` }}>
           <motion.span
             aria-hidden
-            className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent dark:via-white/25"
+            className="absolute inset-0 -translate-x-full bg-linear-to-r from-transparent via-white/60 to-transparent dark:via-white/25"
             animate={{ x: ["-100%", "200%"] }}
             transition={{ duration: 1.2, repeat: Infinity, ease: "linear", delay: i * 0.08 }}
           />
@@ -83,7 +88,17 @@ function CodeLines({ code }: { code: string }) {
   );
 }
 
-function ArtifactBody({ generating, code, versionKey }: { generating: boolean; code: string; versionKey: string }) {
+function ArtifactBody({
+  generating,
+  code,
+  versionKey,
+  mode,
+}: {
+  generating: boolean;
+  code: string;
+  versionKey: string;
+  mode: ViewMode;
+}) {
   return (
     <div className="overflow-hidden rounded-xl bg-stone-50 dark:bg-stone-950">
       <AnimatePresence mode="wait" initial={false}>
@@ -93,11 +108,39 @@ function ArtifactBody({ generating, code, versionKey }: { generating: boolean; c
           </motion.div>
         ) : (
           // Keyed by version, not content, so streamed lines append instead of remounting the body.
-          <motion.div key={versionKey} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
-            <CodeLines code={code} />
+          <motion.div key={`${versionKey}-${mode}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
+            {mode === "preview" ? (
+              <div className="px-6 py-5 text-sm text-stone-800 dark:text-stone-200">
+                <MessageResponse isAnimating={generating}>{code}</MessageResponse>
+              </div>
+            ) : (
+              <CodeLines code={code} />
+            )}
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (mode: ViewMode) => void }) {
+  return (
+    <div role="group" aria-label="View" className="mr-1 flex items-center rounded-md bg-stone-200/70 p-0.5 dark:bg-white/6">
+      {(["preview", "raw"] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          onClick={() => onChange(m)}
+          aria-pressed={mode === m}
+          className={`h-6 rounded px-2 text-[11px] font-medium capitalize transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand ${
+            mode === m
+              ? "bg-white text-stone-900 shadow-sm dark:bg-white/15 dark:text-stone-100"
+              : "text-stone-500 hover:text-stone-700 dark:hover:text-stone-200"
+          }`}
+        >
+          {m}
+        </button>
+      ))}
     </div>
   );
 }
@@ -106,6 +149,8 @@ function ArtifactHeader({
   title,
   titleId,
   version,
+  mode,
+  onModeChange,
   copied,
   onCopy,
   onDownload,
@@ -118,6 +163,9 @@ function ArtifactHeader({
   title: string;
   titleId: string;
   version: Version;
+  /** Only for previewable files; omitted, no toggle is shown. */
+  mode?: ViewMode;
+  onModeChange: (mode: ViewMode) => void;
   copied: boolean;
   onCopy: () => void;
   onDownload: () => void;
@@ -128,7 +176,7 @@ function ArtifactHeader({
   closeRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   return (
-    <div className="flex items-center gap-2.5 border-b border-stone-200 bg-stone-50 px-4 py-3 dark:border-white/10 dark:bg-white/[0.02]">
+    <div className="flex items-center gap-2.5 border-b border-stone-200 bg-stone-50 px-4 py-3 dark:border-white/10 dark:bg-white/2">
       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-brand dark:bg-brand/15 dark:text-brand">
         <FileIcon />
       </span>
@@ -141,12 +189,13 @@ function ArtifactHeader({
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {mode && <ViewToggle mode={mode} onChange={onModeChange} />}
         <button
           type="button"
           onClick={onCopy}
           aria-label={copied ? "Code copied" : "Copy code"}
           title={copied ? "Code copied" : "Copy code"}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
         >
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
@@ -155,7 +204,7 @@ function ArtifactHeader({
           onClick={onDownload}
           aria-label="Download file"
           title="Download file"
-          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
         >
           <DownloadIcon />
         </button>
@@ -166,7 +215,7 @@ function ArtifactHeader({
             onClick={onExpand}
             aria-label="Expand artifact"
             title="Expand"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
           >
             <ExpandIcon />
           </button>
@@ -177,7 +226,7 @@ function ArtifactHeader({
             onClick={onClose}
             aria-label="Close artifact"
             title="Close"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200 dark:focus-visible:outline-brand"
           >
             <CloseIcon />
           </button>
@@ -197,7 +246,7 @@ function ArtifactVersionRow({
   onSelect: (i: number) => void;
 }) {
   return (
-    <div className="flex items-center gap-1.5 border-t border-stone-200 bg-stone-50 px-4 py-2.5 dark:border-white/10 dark:bg-white/[0.02]">
+    <div className="flex items-center gap-1.5 border-t border-stone-200 bg-stone-50 px-4 py-2.5 dark:border-white/10 dark:bg-white/2">
       <span className="mr-1 text-[11px] font-medium text-stone-500">Versions</span>
       {versions.map((v, i) => (
         <button
@@ -206,7 +255,7 @@ function ArtifactVersionRow({
           onClick={() => onSelect(i)}
           aria-current={i === versionIndex}
           aria-label={`View ${v.label}, ${v.note}`}
-          className={`h-2.5 w-2.5 rounded-full transition-[color,background-color,border-color,transform,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand ${
+          className={`h-2.5 w-2.5 rounded-full transition-[color,background-color,border-color,transform,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand ${
             i === versionIndex ? "scale-125 bg-brand" : "bg-stone-300 hover:bg-stone-400 dark:bg-white/15 dark:hover:bg-white/30"
           }`}
         />
@@ -236,6 +285,8 @@ export function Artifact({
   const [versionIndex, setVersionIndex] = useState(initialVersionIndex ?? versions.length - 1);
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const previewable = isMarkdown(title);
+  const [mode, setMode] = useState<ViewMode>(previewable ? "preview" : "raw");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
@@ -295,6 +346,8 @@ export function Artifact({
               title={title}
               titleId={titleId}
               version={version}
+              mode={previewable ? mode : undefined}
+              onModeChange={setMode}
               copied={copied}
               onCopy={handleCopy}
               onDownload={handleDownload}
@@ -305,7 +358,7 @@ export function Artifact({
               closeRef={closeRef}
             />
             <div className="max-h-96 overflow-y-auto">
-              <ArtifactBody generating={showGenerating} code={version.code} versionKey={version.label} />
+              <ArtifactBody generating={showGenerating} code={version.code} versionKey={version.label} mode={previewable ? mode : "raw"} />
             </div>
             <ArtifactVersionRow versions={versions} versionIndex={versionIndex} onSelect={setVersionIndex} />
           </motion.div>
@@ -333,6 +386,8 @@ export function Artifact({
                 title={title}
                 titleId={titleId}
                 version={version}
+                mode={previewable ? mode : undefined}
+                onModeChange={setMode}
                 copied={copied}
                 onCopy={handleCopy}
                 onDownload={handleDownload}
@@ -343,7 +398,7 @@ export function Artifact({
                 closeRef={closeRef}
               />
               <div data-lenis-prevent className="h-[calc(100%-6.5rem)] overflow-y-auto overscroll-contain">
-                <ArtifactBody generating={showGenerating} code={version.code} versionKey={version.label} />
+                <ArtifactBody generating={showGenerating} code={version.code} versionKey={version.label} mode={previewable ? mode : "raw"} />
               </div>
               <ArtifactVersionRow versions={versions} versionIndex={versionIndex} onSelect={setVersionIndex} />
             </motion.div>

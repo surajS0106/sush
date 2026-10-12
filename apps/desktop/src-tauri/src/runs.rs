@@ -3,7 +3,9 @@
 //! Each run is a task executing `sush_core::agent::run`. Everything it does is
 //! sent to the UI as `RunFrame`s on one channel for all threads, so chats keep
 //! streaming whatever the UI shows. A copy of each live thread is kept here so
-//! a reloaded page can pick up where it left off (`runs_subscribe`).
+//! a reloaded page can pick up where it left off (`runs_subscribe`). Each
+//! window subscribes and gets every frame, since each keeps its own copy of
+//! every thread; tool requests go to one window only (`Runs::leader`).
 //!
 //! Connector tools run here. Tools the UI owns (memory, skills, artifacts) are
 //! requested with a `client-tool` frame and answered with `tool_result`.
@@ -14,7 +16,7 @@
 //! is checkpointed first so a turn can be undone (`workspaces.rs`).
 //! It gets the built-in browser's tools as well (`browser.rs`).
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -30,7 +32,7 @@ use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{tools as ws_tools, Workspace, WorkspaceFs};
 use sush_core::ChatRequest;
 use tauri::ipc::Channel;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, Window};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
@@ -66,13 +68,15 @@ pub struct LiveRun {
 
 #[derive(Default)]
 pub struct Runs {
-    /// Lock order: `channel`, then a run's `state`.
-    channel: Mutex<Option<Channel<RunFrame>>>,
+    /// Each window's channel, by label. Lock order: `channels`, then a run's `state`.
+    channels: Mutex<BTreeMap<String, Channel<RunFrame>>>,
     live: Mutex<HashMap<String, Arc<Live>>>,
     /// UI-owned tool calls waiting for `tool_result`, with the frame that asked for them.
     client_calls: Mutex<HashMap<String, (RunFrame, oneshot::Sender<Result<Value, String>>)>>,
     /// Starts run one at a time, so two can't race on the same thread.
     starting: tokio::sync::Mutex<()>,
+    /// Incognito threads' messages: kept here instead of on disk, until the chat is closed.
+    incognito: Mutex<HashMap<String, Vec<Value>>>,
 }
 
 struct Live {
@@ -101,10 +105,49 @@ struct LiveState {
 }
 
 impl Runs {
+    /// Send a frame to every window (a page may be reloading; it resubscribes),
+    /// except a tool request, which only the leader runs, so it runs once.
     fn send(&self, frame: RunFrame) {
-        if let Some(channel) = self.channel.lock().unwrap().as_ref() {
-            let _ = channel.send(frame); // the page may be reloading; it resubscribes
+        let channels = self.channels.lock().unwrap();
+        if matches!(frame, RunFrame::ClientTool { .. }) {
+            if let Some(channel) = Self::leader(&channels) {
+                let _ = channel.send(frame);
+            }
+            return;
         }
+        for channel in channels.values() {
+            let _ = channel.send(frame.clone());
+        }
+    }
+
+    /// The window that runs UI-owned tools (and automations, see `lib/windows.ts`):
+    /// "main" while it's open, as labels sort.
+    fn leader(channels: &BTreeMap<String, Channel<RunFrame>>) -> Option<&Channel<RunFrame>> {
+        channels.values().next()
+    }
+
+    /// Tell the windows which one leads, after one subscribes or goes away.
+    fn announce_leader(app: &AppHandle, channels: &BTreeMap<String, Channel<RunFrame>>) {
+        if let Some(label) = channels.keys().next() {
+            let _ = app.emit("sush://leader", label);
+        }
+    }
+
+    /// A window is gone. If it led, the next one takes over the tool requests it never answered.
+    pub fn unsubscribe(&self, app: &AppHandle, label: &str) {
+        let mut channels = self.channels.lock().unwrap();
+        let led = channels.keys().next().is_some_and(|l| l == label);
+        if channels.remove(label).is_none() {
+            return;
+        }
+        if led {
+            if let Some(channel) = Self::leader(&channels) {
+                for (frame, _) in self.client_calls.lock().unwrap().values() {
+                    let _ = channel.send(frame.clone());
+                }
+            }
+        }
+        Self::announce_leader(app, &channels);
     }
 
     /// Stop a thread's run and wait until it has saved.
@@ -115,6 +158,23 @@ impl Runs {
             let mut done = live.done.clone();
             let _ = done.wait_for(|d| *d).await;
         }
+    }
+
+    /// Bring a live run's copy of the metadata the user can change (title, pin, project)
+    /// up to date, so the run's next save doesn't put the old values back.
+    pub fn update_meta(&self, meta: &ThreadMeta) {
+        let live = self.live.lock().unwrap().get(&meta.id).cloned();
+        if let Some(live) = live {
+            let thread = &mut live.state.lock().unwrap().thread;
+            thread.title = meta.title.clone();
+            thread.pinned = meta.pinned;
+            thread.project_id = meta.project_id.clone();
+        }
+    }
+
+    /// Drop an incognito thread's messages.
+    pub fn forget(&self, thread_id: &str) {
+        self.incognito.lock().unwrap().remove(thread_id);
     }
 }
 
@@ -223,7 +283,7 @@ impl RunHost for Host {
 
     fn emit(&self, event: RunEvent) {
         let state = self.app.state::<AppState>();
-        let channel = state.runs.channel.lock().unwrap();
+        let channels = state.runs.channels.lock().unwrap();
         let frame = {
             let mut live = self.live.state.lock().unwrap();
             let thread_id = self.thread_id.clone();
@@ -240,8 +300,8 @@ impl RunHost for Host {
                 RunEvent::ToolRunning { call_id, running } => RunFrame::ToolRunning { thread_id, call_id, running },
             }
         };
-        if let Some(channel) = channel.as_ref() {
-            let _ = channel.send(frame);
+        for channel in channels.values() {
+            let _ = channel.send(frame.clone());
         }
     }
 
@@ -256,10 +316,16 @@ impl RunHost for Host {
             live.thread.updated_at = now_ms();
             live.thread.clone()
         };
+        let runs = &self.app.state::<AppState>().runs;
+        if thread.incognito {
+            runs.incognito.lock().unwrap().insert(thread.id.clone(), messages.to_vec());
+            runs.send(RunFrame::Saved { thread });
+            return;
+        }
         let store = self.app.state::<AppState>().store.clone();
         let (meta, messages) = (thread.clone(), messages.to_vec());
         match blocking(move || Ok(store.save_thread(&meta, Some(messages))?)).await {
-            Ok(()) => self.app.state::<AppState>().runs.send(RunFrame::Saved { thread }),
+            Ok(()) => runs.send(RunFrame::Saved { thread }),
             Err(e) => eprintln!("sush: could not save thread {}: {e}", self.thread_id),
         }
     }
@@ -269,12 +335,12 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
-/// Receive every run's frames on `on_frame` (replacing any earlier
-/// subscriber) and return the runs in flight, so a reloaded page catches up.
+/// Receive every run's frames on `on_frame` (replacing the window's earlier
+/// subscription) and return the runs in flight, so a reloaded page catches up.
 #[tauri::command]
-pub fn runs_subscribe(state: State<'_, AppState>, on_frame: Channel<RunFrame>) -> Vec<LiveRun> {
+pub fn runs_subscribe(app: AppHandle, window: Window, state: State<'_, AppState>, on_frame: Channel<RunFrame>) -> Vec<LiveRun> {
     let runs = &state.runs;
-    let mut channel = runs.channel.lock().unwrap();
+    let mut channels = runs.channels.lock().unwrap();
     let live: Vec<_> = runs.live.lock().unwrap().iter().map(|(id, l)| (id.clone(), l.clone())).collect();
     let snapshot = live
         .into_iter()
@@ -283,11 +349,16 @@ pub fn runs_subscribe(state: State<'_, AppState>, on_frame: Channel<RunFrame>) -
             LiveRun { thread_id, thread: s.thread.clone(), messages: s.messages.clone(), status: s.status, error: s.error.clone() }
         })
         .collect();
-    // Tool requests the previous page never answered.
-    for (frame, _) in runs.client_calls.lock().unwrap().values() {
-        let _ = on_frame.send(frame.clone());
+    channels.insert(window.label().to_string(), on_frame);
+    // Tool requests the previous page never answered, if this window is the one to answer them.
+    if channels.keys().next().is_some_and(|l| l == window.label()) {
+        if let Some(channel) = Runs::leader(&channels) {
+            for (frame, _) in runs.client_calls.lock().unwrap().values() {
+                let _ = channel.send(frame.clone());
+            }
+        }
     }
-    *channel = Some(on_frame);
+    Runs::announce_leader(&app, &channels);
     snapshot
 }
 
@@ -319,9 +390,13 @@ pub async fn run_start(
         runs.stop(&thread.id).await;
     }
 
-    let store = state.store.clone();
-    let id = thread.id.clone();
-    let messages = blocking(move || Ok(store.messages(&id)?)).await?;
+    let messages = if thread.incognito {
+        runs.incognito.lock().unwrap().get(&thread.id).cloned().unwrap_or_default()
+    } else {
+        let store = state.store.clone();
+        let id = thread.id.clone();
+        blocking(move || Ok(store.messages(&id)?)).await?
+    };
 
     let mut thread = thread;
     thread.target = Some(json!({ "providerId": config.provider_id, "model": config.model }));
@@ -360,6 +435,10 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
             && !ws_tools::is_workspace_tool(&t.spec.name)
             && !browser_tools::is_browser_tool(&t.spec.name)
     });
+    // Incognito is chat only: Cowork would leave checkpoints of its edits on disk.
+    if thread.incognito {
+        return Ok((config, None));
+    }
     let store = state.store.clone();
     let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
     let workspace = blocking(move || {

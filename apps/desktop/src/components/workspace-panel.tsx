@@ -69,6 +69,7 @@ import { api, errorMessage, type Workspace, type WorkspaceEntry } from "@/lib/ta
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { createStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { getZoom } from "@/lib/zoom";
 import {
   closeFile,
   notifyWorkspaceChanged,
@@ -736,8 +737,12 @@ function BrowserPane() {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const r = el.getBoundingClientRect();
+        // Rust places it in window px; the app's zoom scales CSS px.
+        const z = getZoom();
         const bounds =
-          r.width < 1 || r.height < 1 || overlayCovers(r) ? null : { x: r.left, y: r.top, width: r.width, height: r.height };
+          r.width < 1 || r.height < 1 || overlayCovers(r)
+            ? null
+            : { x: r.left * z, y: r.top * z, width: r.width * z, height: r.height * z };
         const key = JSON.stringify(bounds);
         if (key === last) return;
         last = key;
@@ -751,11 +756,18 @@ function BrowserPane() {
     const overlays = new MutationObserver(place);
     overlays.observe(document.body, { childList: true });
     window.addEventListener("resize", place);
+    // With the pane open in several windows, the browser moves to the one focused.
+    const reclaim = () => {
+      last = "";
+      place();
+    };
+    window.addEventListener("focus", reclaim);
     return () => {
       cancelAnimationFrame(frame);
       resize.disconnect();
       overlays.disconnect();
       window.removeEventListener("resize", place);
+      window.removeEventListener("focus", reclaim);
       void api.browserSetView(null).catch(() => {});
     };
   }, [hasPage]);

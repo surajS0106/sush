@@ -2,8 +2,12 @@
 // who stands on the composer, or any built-in avatar picked in Settings →
 // Sushi. Its eyes follow the pointer (and drop to the input while you type),
 // it breathes, blinks, wanders along the composer's edge now and then, and
-// falls asleep when the app is left alone. While a run is working it pulls up
-// a laptop and types away, the screen lighting Sushi's face. Clicking it hops
+// falls asleep when the app is left alone. While a run is going it slides on a
+// pair of glasses, and acts out the stage the reply is at: thinking (eyes up,
+// head rocking, a thought bubble), using tools (a laptop, typing away, the
+// screen lighting its face) and writing the answer (typing faster, a glint
+// sweeping the lenses). When the reply is done the glasses lift off with a
+// little hop. Clicking it hops
 // and pops a heart; three quick clicks do a backflip. Switching characters
 // pops the new one in with a puff of sparkles. Purely decorative.
 
@@ -51,6 +55,17 @@ const HAND_FRAMES = [
 ];
 
 const HEART = ["HH.HH", "HHHHH", ".HHH.", "..H.."];
+// A thought bubble trailing down-left towards the head; its three dots are drawn on top.
+const BUBBLE = [
+  "..bbbbbbbbb.",
+  ".bWWWWWWWWWb",
+  ".bWWWWWWWWWb",
+  ".bWWWWWWWWWb",
+  "..bbbbbbbbb.",
+  "..bb........",
+  "b...........",
+];
+const BUBBLE_DOTS = [4, 6, 8];
 const ZED = ["ZZZ", ".Z.", "ZZZ"];
 const STAR = [".Y.", "YYY", ".Y."];
 
@@ -70,6 +85,9 @@ const COLORS: Record<string, string> = {
   H: "#f0533f", // heart
   Y: "#f6c945", // sparkle
   Z: "currentColor", // sleep z
+  G: "#2b2b2b", // glasses frame
+  W: "#ffffff", // thought bubble
+  b: "#c9ced6", // thought bubble edge
 };
 
 /** How far left of its spot it may wander, in CSS px, and how fast it walks. */
@@ -200,6 +218,43 @@ function characterFor(key: string): Character {
   return c;
 }
 
+type Rect = { x: number; y: number; w: number; h: number };
+
+/**
+ * Glasses fitted to a character's eyes: a square lens around each eye, big
+ * enough for the eye to glance a pixel any way inside it (smaller when the eyes
+ * sit close), a bridge between neighbouring lenses and a stub of each arm.
+ * One eye gets a monocle.
+ */
+function glassesFor(c: Character): { frame: Run[]; lenses: Rect[] } {
+  const eyes = [...c.eyes].sort((a, b) => a.x - b.x);
+  const closest = Math.min(7, ...eyes.slice(1).map((e, i) => e.x - eyes[i].x));
+  const r = Math.max(2, Math.min(3, Math.floor((closest - 1) / 2)));
+  const lenses = eyes.map((e) => ({ x: e.x + 1 - r, y: e.y + 1 - r, w: 2 * r, h: 2 * r }));
+  const frame: Run[] = [];
+  const fill = COLORS.G;
+  for (const l of lenses) {
+    frame.push({ x: l.x, y: l.y, w: l.w, fill }, { x: l.x, y: l.y + l.h - 1, w: l.w, fill });
+    for (let y = l.y + 1; y < l.y + l.h - 1; y++) frame.push({ x: l.x, y, w: 1, fill }, { x: l.x + l.w - 1, y, w: 1, fill });
+  }
+  lenses.slice(1).forEach((l, i) => {
+    const gap = l.x - (lenses[i].x + lenses[i].w);
+    if (gap > 0) frame.push({ x: lenses[i].x + lenses[i].w, y: l.y + 1, w: gap, fill });
+  });
+  const first = lenses[0];
+  const last = lenses[lenses.length - 1];
+  if (first && first.x > 0) frame.push({ x: first.x - 1, y: first.y + 1, w: 1, fill });
+  if (last && last.x + last.w < c.width) frame.push({ x: last.x + last.w, y: last.y + 1, w: 1, fill });
+  return { frame, lenses };
+}
+
+const glassesCache = new WeakMap<Character, ReturnType<typeof glassesFor>>();
+function glassesOf(c: Character) {
+  let g = glassesCache.get(c);
+  if (!g) glassesCache.set(c, (g = glassesFor(c)));
+  return g;
+}
+
 function Pixels({ runs }: { runs: Run[] }) {
   return runs.map((r, i) => <rect key={i} x={r.x} y={r.y} width={r.w} height={1} fill={r.fill} />);
 }
@@ -244,8 +299,15 @@ export function MascotSprite({ kind, scale = 1, closed, className }: { kind: str
   );
 }
 
+/** What a running reply is doing right now; each one has its own act. */
+export type MascotStage = "thinking" | "tools" | "writing";
+
+type Mood = "idle" | MascotStage;
+
 interface MascotProps {
   busy: boolean;
+  /** The stage of the running reply; just "tools" (the laptop) when left out. */
+  stage?: MascotStage;
   draft: string;
   /** Which character; the one picked in Settings when left out. */
   kind?: string;
@@ -275,12 +337,16 @@ const SPARKS = [
 
 function MascotBody({
   busy,
+  stage,
   draft,
   className,
   character,
   entrance,
 }: Omit<MascotProps, "kind"> & { character: Character; entrance: boolean }) {
   const { width, height, px, body, eyes, eyeColor, legs, laptop } = character;
+  const glasses = glassesOf(character);
+  const mood: Mood = busy ? (stage ?? "tools") : "idle";
+  const laptopOut = mood === "tools" || mood === "writing";
   const reduceMotion = useReducedMotion();
   const hopControls = useAnimationControls();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -295,9 +361,13 @@ function MascotBody({
   const [walking, setWalking] = useState(false);
   const [hearts, setHearts] = useState<number[]>([]);
   const [sparks, setSparks] = useState(entrance && !reduceMotion);
+  const [ponder, setPonder] = useState(false);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const moodRef = useRef(mood);
+  moodRef.current = mood;
+  const prevMood = useRef<Mood>(mood);
   const sleepingRef = useRef(sleeping);
   sleepingRef.current = sleeping;
   const lastActivity = useRef(Date.now());
@@ -372,39 +442,83 @@ function MascotBody({
     return () => clearTimeout(t);
   }, [draft]);
 
-  // While a run is working: a little hop as it pulls the laptop up, then a
-  // gentle bob in time with its typing.
+  // Each stage gets its own motion. Thinking: a little hop as the glasses go
+  // on, then the head rocks side to side. Tools and writing: a hop as the
+  // laptop comes up, then a gentle bob in time with the typing (quicker while
+  // writing). Done: a small satisfied hop as the glasses come off.
   useEffect(() => {
+    const from = prevMood.current;
+    prevMood.current = mood;
     if (busy) setSleeping(false);
     if (reduceMotion) return;
-    if (busy) {
-      void hopControls
-        .start({ y: [0, -5, 0], transition: { duration: 0.3, ease: "easeOut" } })
-        .then(() => {
-          if (!busyRef.current) return;
-          void hopControls.start({
-            y: [0, 0.5, 0],
-            scaleY: [1, 0.97, 1],
-            scaleX: [1, 1.015, 1],
-            transition: { duration: 0.5, repeat: Infinity, ease: "easeInOut" },
-          });
+    const settle = { y: 0, scaleX: 1, scaleY: 1, rotate: 0 };
+    if (mood === "idle") {
+      if (entrance && from === "idle") {
+        // Pop in: drop from a little above, squash on landing, wobble upright.
+        void hopControls.start({
+          y: [-18, 0, -4, 0],
+          scaleX: [0.6, 1.2, 0.95, 1],
+          scaleY: [1.3, 0.8, 1.05, 1],
+          rotate: [0, -8, 4, 0],
+          opacity: [0, 1, 1, 1],
+          transition: { duration: 0.55, times: [0, 0.45, 0.75, 1], ease: "easeOut" },
         });
-    } else if (entrance) {
-      // Pop in: drop from a little above, squash on landing, wobble upright.
-      void hopControls.start({
-        y: [-18, 0, -4, 0],
-        scaleX: [0.6, 1.2, 0.95, 1],
-        scaleY: [1.3, 0.8, 1.05, 1],
-        rotate: [0, -8, 4, 0],
-        opacity: [0, 1, 1, 1],
-        transition: { duration: 0.55, times: [0, 0.45, 0.75, 1], ease: "easeOut" },
-      });
-    } else void hopControls.start({ y: 0, scaleX: 1, scaleY: 1, transition: { duration: 0.2 } });
-  }, [busy, reduceMotion, hopControls, entrance]);
+      } else if (from !== "idle") {
+        void hopControls.start({
+          ...settle,
+          y: [0, -6, 0, -2, 0],
+          transition: { duration: 0.5, times: [0, 0.3, 0.6, 0.8, 1], ease: "easeOut" },
+        });
+      } else void hopControls.start({ ...settle, transition: { duration: 0.2 } });
+      return;
+    }
+    // Pull up the laptop (or put on the glasses) with a hop, unless already at it.
+    const hop = from === "idle" || laptopOut !== (from === "tools" || from === "writing");
+    const intro = hop
+      ? hopControls.start({ ...settle, y: [0, -5, 0], transition: { duration: 0.3, ease: "easeOut" } })
+      : Promise.resolve();
+    void intro.then(() => {
+      if (moodRef.current !== mood) return;
+      void hopControls.start(
+        mood === "thinking"
+          ? {
+              y: 0,
+              scaleX: 1,
+              scaleY: 1,
+              rotate: [0, -4, 0, 4, 0],
+              transition: { duration: 3.2, repeat: Infinity, ease: "easeInOut" },
+            }
+          : {
+              rotate: 0,
+              y: [0, 0.5, 0],
+              scaleY: [1, 0.97, 1],
+              scaleX: [1, 1.015, 1],
+              transition: { duration: mood === "writing" ? 0.36 : 0.5, repeat: Infinity, ease: "easeInOut" },
+            },
+      );
+    });
+  }, [mood, busy, laptopOut, reduceMotion, hopControls, entrance]);
 
-  // Every few seconds of work, glance up from the screen for a moment.
+  // While thinking, the eyes drift up to one side, then the other.
   useEffect(() => {
-    if (reduceMotion || !busy) return setGlance(false);
+    if (reduceMotion || mood !== "thinking") return;
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      timer = setTimeout(
+        () => {
+          setPonder((p) => !p);
+          next();
+        },
+        1200 + Math.random() * 1400,
+      );
+    };
+    next();
+    return () => clearTimeout(timer);
+  }, [mood, reduceMotion]);
+
+  // Every few seconds at the laptop, glance up from the screen for a moment.
+  useEffect(() => {
+    if (reduceMotion || !laptopOut) return setGlance(false);
     let timer: ReturnType<typeof setTimeout>;
     const next = () => {
       timer = setTimeout(
@@ -420,15 +534,16 @@ function MascotBody({
     };
     next();
     return () => clearTimeout(timer);
-  }, [busy, reduceMotion]);
+  }, [laptopOut, reduceMotion]);
 
   // One frame counter drives both the walking legs and the typing hands.
-  const moving = walking || busy;
+  const moving = walking || laptopOut;
+  const frameMs = walking ? 150 : mood === "writing" ? 90 : 120;
   useEffect(() => {
     if (reduceMotion || !moving) return setFrame(0);
-    const id = setInterval(() => setFrame((f) => f + 1), busy && !walking ? 120 : 150);
+    const id = setInterval(() => setFrame((f) => f + 1), frameMs);
     return () => clearInterval(id);
-  }, [moving, busy, walking, reduceMotion]);
+  }, [moving, frameMs, reduceMotion]);
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
@@ -480,11 +595,13 @@ function MascotBody({
     ? { x: 0, y: 1 }
     : walking
       ? { x: walkDir, y: 0 }
-      : busy
-        ? glance
-          ? { x: 1, y: -1 }
-          : { x: 0, y: 0 }
-        : typing
+      : mood === "thinking"
+        ? { x: ponder ? 1 : -1, y: -1 }
+        : laptopOut
+          ? glance
+            ? { x: 1, y: -1 }
+            : { x: 0, y: 0 }
+          : typing
           ? { x: -1, y: 1 }
           : pointerLook;
   const hands = HAND_FRAMES[frame % HAND_FRAMES.length];
@@ -503,7 +620,7 @@ function MascotBody({
       {hearts.map((id) => (
         <motion.div
           key={id}
-          className="pointer-events-none absolute left-1/2 -top-2 -ml-[5px]"
+          className="pointer-events-none absolute left-1/2 -top-2 -ml-1.25"
           initial={{ y: 0, opacity: 1, scale: 0.6 }}
           animate={{ y: -22, x: (id % 3) * 4 - 4, opacity: 0, scale: 1 }}
           transition={{ duration: 0.9, ease: "easeOut" }}
@@ -516,7 +633,7 @@ function MascotBody({
         SPARKS.map((s, i) => (
           <motion.div
             key={i}
-            className="pointer-events-none absolute top-1/2 left-1/2 -mt-[3px] -ml-[3px]"
+            className="pointer-events-none absolute top-1/2 left-1/2 -mt-0.75 -ml-0.75"
             initial={{ x: 0, y: 0, opacity: 0, scale: 0.4, rotate: 0 }}
             animate={{ x: s.x, y: s.y, opacity: [0, 1, 0], scale: [0.4, 1.2, 0.6], rotate: 90 }}
             transition={{ duration: 0.7, delay: 0.15 + i * 0.03, ease: "easeOut" }}
@@ -538,6 +655,39 @@ function MascotBody({
             <Glyph rows={ZED} px={1.5} />
           </motion.div>
         ))}
+      <AnimatePresence>
+        {mood === "thinking" && (
+          <motion.div
+            key="thought"
+            className="pointer-events-none absolute -top-4 -right-5"
+            style={{ transformOrigin: "0% 100%" }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.4, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0, transition: { delay: 0.2, duration: 0.25, ease: "easeOut" } }}
+            exit={{ opacity: 0, scale: 0.6, transition: { duration: 0.15 } }}
+          >
+            <svg
+              viewBox={`0 0 ${BUBBLE[0].length} ${BUBBLE.length}`}
+              width={BUBBLE[0].length * 2}
+              height={BUBBLE.length * 2}
+              shapeRendering="crispEdges"
+            >
+              <Pixels runs={runs(BUBBLE)} />
+              {BUBBLE_DOTS.map((dx, i) => (
+                <motion.rect
+                  key={dx}
+                  x={dx}
+                  y={2}
+                  width={1}
+                  height={1}
+                  fill={COLORS.G}
+                  animate={reduceMotion ? { opacity: 1 } : { opacity: [0.25, 1, 0.25] }}
+                  transition={{ duration: 1.2, delay: i * 0.2, repeat: Infinity, ease: "easeInOut" }}
+                />
+              ))}
+            </svg>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <motion.div animate={hopControls} style={{ transformOrigin: "50% 100%" }}>
         <motion.svg
           viewBox={`0 0 ${width} ${height}`}
@@ -564,9 +714,41 @@ function MascotBody({
               fill={eyeColor}
             />
           ))}
+          <AnimatePresence>
+            {mood !== "idle" && glasses.lenses.length > 0 && (
+              // Slid down from the forehead onto the eyes; lifted back up when done.
+              <motion.g
+                key="glasses"
+                initial={reduceMotion ? { opacity: 0 } : { y: -4, opacity: 0 }}
+                animate={{ y: 0, opacity: 1, transition: { duration: 0.25, ease: "easeOut" } }}
+                exit={reduceMotion ? { opacity: 0 } : { y: -5, opacity: 0, transition: { duration: 0.35, ease: "easeIn" } }}
+              >
+                {glasses.lenses.map((l) => (
+                  <g key={`${l.x},${l.y}`}>
+                    <rect x={l.x + 1} y={l.y + 1} width={l.w - 2} height={l.h - 2} fill="#9fdcff" opacity={0.28} />
+                    {/* A glint sweeping across the lens while writing; a still highlight otherwise. */}
+                    {mood === "writing" && !reduceMotion ? (
+                      <motion.rect
+                        y={l.y + 1}
+                        width={1}
+                        height={l.h - 2}
+                        fill="#ffffff"
+                        initial={{ x: l.x + 1, opacity: 0 }}
+                        animate={{ x: [l.x + 1, l.x + l.w - 2], opacity: [0, 0.85, 0] }}
+                        transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 1.6, ease: "easeInOut" }}
+                      />
+                    ) : (
+                      <rect x={l.x + 1} y={l.y + 1} width={1} height={1} fill="#ffffff" opacity={0.7} />
+                    )}
+                  </g>
+                ))}
+                <Pixels runs={glasses.frame} />
+              </motion.g>
+            )}
+          </AnimatePresence>
           <Pixels runs={legs[walking ? frame % legs.length : 0]} />
           <AnimatePresence>
-            {busy && (
+            {laptopOut && (
               <motion.g key="laptop">
                 {/* Screen light flickering on the face. */}
                 {laptop.glow && (

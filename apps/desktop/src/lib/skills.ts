@@ -6,6 +6,7 @@
 //   - Skills are created in chat: the built-in `/create-skill` command has Sush interview
 //     the user and save the result with `skill_save`, which the user approves.
 
+import { CREATE_AUTOMATION_INSTRUCTIONS } from "@/lib/automation-save";
 import { activeSkills, availableSkills, saveSkill, type Skill } from "@/lib/library";
 import type { ToolSpec } from "@/lib/tauri";
 
@@ -39,6 +40,11 @@ const BUILT_INS: SlashCommand[] = [
     name: "create-skill",
     description: "Create a new skill with Sush, from a description or from this chat",
     instructions: CREATE_SKILL_INSTRUCTIONS,
+  },
+  {
+    name: "create-automation",
+    description: "Set up an automation: a prompt Sush runs on a schedule",
+    instructions: CREATE_AUTOMATION_INSTRUCTIONS,
   },
 ];
 

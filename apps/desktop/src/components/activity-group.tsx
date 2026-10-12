@@ -8,6 +8,7 @@ import { useState } from "react";
 
 import { toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
+import { SLIDES_WRITE } from "@/lib/slides";
 import type { SushUIMessage } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
@@ -15,9 +16,9 @@ type Part = SushUIMessage["parts"][number];
 
 /** Settled calls whose results are a line, not a card the user acts on. */
 function groupableTool(p: Part): p is DynamicToolUIPart {
-  if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE) return false;
+  if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE) return false;
   const kind = toolKind(p.toolName);
-  return kind !== "ask-user" && kind !== "skill-save" && (p.state === "output-available" || p.state === "output-error");
+  return kind !== "ask-user" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
 }
 
 function groupable(p: Part) {

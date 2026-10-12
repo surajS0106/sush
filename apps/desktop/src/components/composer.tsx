@@ -13,7 +13,7 @@ import {
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input";
 import { ComposerMenu } from "@/components/composer-menu";
-import { Mascot } from "@/components/mascot";
+import { Mascot, type MascotStage } from "@/components/mascot";
 import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { MENTION_MENU_ID, MentionMenu, useMentionMenu } from "@/components/mention-menu";
@@ -44,6 +44,20 @@ const EASE_OUT = [0.16, 1, 0.3, 1] as const;
 // Shared by the textarea and its slash-command highlight layer, which must lay out text identically.
 // `text-base md:text-sm` and `pb-2` repeat what the textarea inherits from Textarea / InputGroupTextarea.
 const TEXT_BOX = cn("px-4 pt-3.5 pb-2 text-base md:text-sm", "text-[15px]");
+
+/**
+ * What the running reply is doing, from its latest part: reasoning (or
+ * nothing yet, or between steps) is thinking, an unfinished tool call is
+ * tools, and text is writing.
+ */
+function replyStage(status: ChatStatus, messages: SushUIMessage[]): MascotStage {
+  const last = messages[messages.length - 1];
+  if (status === "submitted" || last?.role !== "assistant") return "thinking";
+  const part = last.parts.findLast((p) => p.type !== "step-start" && !(p.type === "text" && !p.text));
+  if (part?.type === "text") return "writing";
+  if (part?.type === "dynamic-tool") return part.state === "output-available" || part.state === "output-error" ? "thinking" : "tools";
+  return "thinking";
+}
 
 interface ComposerProps {
   catalog: ProviderModels[];
@@ -136,7 +150,7 @@ export function Composer({
         transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
       />
       <div className="relative">
-        {!slash.open && !mention.open && <Mascot busy={busy} draft={textInput.value} className="absolute right-10 bottom-full z-10 -mb-px" />}
+        {!slash.open && !mention.open && <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft={textInput.value} className="absolute right-10 bottom-full z-10 -mb-px" />}
         <PromptInput
           onSubmit={submit}
           multiple

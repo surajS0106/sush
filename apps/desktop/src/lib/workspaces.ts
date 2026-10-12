@@ -15,8 +15,19 @@ import {
   type Workspace,
   type WorkspaceAccess,
 } from "@/lib/tauri";
+import { broadcast, onBroadcast } from "@/lib/windows";
 
 const workspaces = createStore<Workspace[]>("sush.workspaces-cache", [], false);
+
+/** The list changed in this window: the other windows reload it. */
+const WORKSPACES_EVENT = "sush://workspaces";
+const changed = (all: Workspace[]) => {
+  workspaces.set(all);
+  void broadcast(WORKSPACES_EVENT, null);
+};
+onBroadcast(WORKSPACES_EVENT, () => {
+  void api.workspacesList().then((all) => workspaces.set(all), (e) => console.error("Could not reload workspaces", e));
+});
 
 /** The workspace of the Cowork session on screen, for tool cards. */
 export const CurrentWorkspace = createContext<Workspace | null>(null);
@@ -48,20 +59,20 @@ export function useWorkspace(id: string | undefined): Workspace | null {
 /** Ask the user for a folder (the picker opens in Rust); null if they cancelled. */
 export async function addWorkspace(): Promise<Workspace | null> {
   const added = await api.workspaceAdd();
-  if (added) workspaces.set((all) => (all.some((w) => w.id === added.id) ? all : [...all, added]));
+  if (added) changed(workspaces.get().some((w) => w.id === added.id) ? workspaces.get() : [...workspaces.get(), added]);
   return added;
 }
 
 export async function updateWorkspace(id: string, access: WorkspaceAccess, approval: EditApproval) {
   const updated = await api.workspaceUpdate(id, access, approval);
-  workspaces.set((all) => all.map((w) => (w.id === id ? updated : w)));
+  changed(workspaces.get().map((w) => (w.id === id ? updated : w)));
   return updated;
 }
 
 /** Forget a workspace; its sessions stay but lose file access. */
 export async function removeWorkspace(id: string) {
   await api.workspaceRemove(id);
-  workspaces.set((all) => all.filter((w) => w.id !== id));
+  changed(workspaces.get().filter((w) => w.id !== id));
 }
 
 // --- file changes -------------------------------------------------------------------
@@ -167,7 +178,7 @@ export async function takePendingWorktree(threadId: string, workspaceId: string)
   if (!base) return null;
   const created = await api.worktreeCreate(workspaceId, base);
   setPendingWorktree(threadId, undefined);
-  workspaces.set((all) => [...all, created]);
+  changed([...workspaces.get(), created]);
   return created;
 }
 
@@ -179,8 +190,11 @@ export interface PanelState {
   browser: boolean;
 }
 
-/** Which parts of the Cowork side panel are open; remembered across sessions. */
-const panels = createStore<PanelState>("sush.cowork-panels", { files: true, terminal: false, browser: false });
+/**
+ * Which parts of the Cowork side panel are open; remembered across sessions.
+ * Per window: a browser pane showing in two would pull the one browser back and forth.
+ */
+const panels = createStore<PanelState>("sush.cowork-panels", { files: true, terminal: false, browser: false }, true, false);
 
 export const usePanels = () => useSyncExternalStore(panels.subscribe, panels.get);
 

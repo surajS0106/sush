@@ -9,7 +9,9 @@ import type { FileUIPart } from "ai";
 import { useSyncExternalStore } from "react";
 
 import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
+import { budgetBlock } from "@/lib/budget";
 import { expandMentions } from "@/lib/mentions";
+import { getProject } from "@/lib/projects";
 import { expandSlash } from "@/lib/skills";
 import {
   applySaved,
@@ -147,7 +149,13 @@ export function setSessionResearch(id: string, on: boolean) {
 function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   const target = sessionTarget(id);
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
-  const ctx = buildContext({ askUser: getAskUser(), research: research.get(id) ?? false });
+  const convo = getConversations().find((c) => c.id === id);
+  const ctx = buildContext({
+    askUser: getAskUser(),
+    research: research.get(id) ?? false,
+    incognito: !!convo?.incognito,
+    project: getProject(convo?.projectId),
+  });
   // `/skill args` reaches the model as the skill's instructions plus the arguments,
   // and `@connector` with a note to use that connector.
   const expansions: Record<string, string> = {};
@@ -170,7 +178,11 @@ async function start(id: string, action: RunAction, messages: SushUIMessage[]) {
   const thread = threadMeta(id);
   if (!thread) return;
   try {
-    await api.runStart(thread, action, runConfig(id, messages));
+    const config = runConfig(id, messages);
+    // Past the budget's limit, new requests wait; finishing a turn that's waiting on a tool call doesn't.
+    const blocked = action.type === "respond" ? null : budgetBlock(config.providerId);
+    if (blocked) throw new Error(blocked);
+    await api.runStart(thread, action, config);
   } catch (e) {
     setView(id, (v) => ({ ...v, status: "error", error: errorMessage(e) }));
   }

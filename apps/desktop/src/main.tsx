@@ -13,6 +13,7 @@ import { initBrowser } from "./lib/browser";
 import { initMemory } from "./lib/memory";
 import { initSessions } from "./lib/sessions";
 import { initWorkspaces } from "./lib/workspaces";
+import { initZoom } from "./lib/zoom";
 import { initStore } from "./lib/store";
 import { errorMessage } from "./lib/tauri";
 
@@ -35,6 +36,8 @@ document.addEventListener("click", (e) => {
     void openUrl(a.href);
   }
 });
+
+initZoom();
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 

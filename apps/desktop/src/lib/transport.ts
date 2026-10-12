@@ -16,6 +16,8 @@ export interface SushMetadata {
   model?: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** When the reply started (ms); missing on replies saved before it was recorded. */
+  createdAt?: number;
 }
 
 /** A provider-run tool (web search/fetch) and the pages it returned. */

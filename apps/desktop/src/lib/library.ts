@@ -330,6 +330,7 @@ export type SettingsSection =
   | "account"
   | "sushi"
   | "providers"
+  | "usage"
   | "speech"
   | "memory"
   | "design"

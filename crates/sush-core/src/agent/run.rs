@@ -266,6 +266,12 @@ impl Runner<'_> {
         if self.messages.last().and_then(ui::role) == Some("assistant") {
             self.op(Op::SetMetadata { metadata });
         } else {
+            // When the reply started, for usage over a period (Settings → Usage).
+            let created_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as u64);
+            let mut metadata = metadata;
+            metadata["createdAt"] = json!(created_at);
             self.op(Op::Push { message: json!({ "id": ui::new_id(), "role": "assistant", "parts": [], "metadata": metadata }) });
         }
         self.op(Op::PushPart { part: json!({ "type": "step-start" }) });
@@ -277,7 +283,8 @@ impl Runner<'_> {
             _ = self.cancel.cancelled() => return Ok(None),
             s = host.stream(&provider_id, request) => s?,
         };
-        let mut builder = StepBuilder::new(self.messages.last().map_or(0, |m| ui::parts(m).len()));
+        let last = self.messages.last();
+        let mut builder = StepBuilder::new(last.map_or(0, |m| ui::parts(m).len())).after(last.and_then(|m| m.get("metadata")));
         loop {
             let next = tokio::select! {
                 biased;

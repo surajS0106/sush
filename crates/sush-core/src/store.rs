@@ -47,6 +47,12 @@ pub struct ThreadMeta {
     /// Set for Cowork sessions: the workspace they work in. Fixed once created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
+    /// The project it's filed under, if any. Projects themselves are the UI's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    /// Never stored: an incognito chat lives only in memory until it's closed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incognito: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +116,8 @@ const MIGRATIONS: &[&str] = &[r#"
         sha TEXT,
         UNIQUE (thread_id, turn_id, path)
     );
+"#, r#"
+    ALTER TABLE threads ADD COLUMN project_id TEXT;
 "#];
 
 pub struct Store {
@@ -132,7 +140,7 @@ impl Store {
     pub fn threads(&self) -> StoreResult<Vec<Thread>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id FROM threads ORDER BY created_at DESC",
+            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id FROM threads ORDER BY created_at DESC",
         )?;
         let metas = stmt
             .query_map([], |r| {
@@ -145,6 +153,8 @@ impl Store {
                     target: target.and_then(|t| serde_json::from_str(&t).ok()),
                     pinned: r.get(5)?,
                     workspace_id: r.get(6)?,
+                    project_id: r.get(7)?,
+                    incognito: false,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -164,7 +174,11 @@ impl Store {
 
     /// Create or update a conversation. `messages: None` updates only its metadata.
     /// Inline images and PDFs in the messages are moved to blob files first.
+    /// Incognito threads are never written.
     pub fn save_thread(&self, meta: &ThreadMeta, messages: Option<Vec<Value>>) -> StoreResult<()> {
+        if meta.incognito {
+            return Ok(());
+        }
         let messages = messages.map(|ms| self.extract_files(ms)).transpose()?;
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -550,10 +564,11 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
 fn upsert_meta(conn: &Connection, m: &ThreadMeta) -> StoreResult<()> {
     let target = m.target.as_ref().map(serde_json::to_string).transpose()?;
     conn.execute(
-        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned, workspace_id, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT (id) DO UPDATE SET title = ?2, updated_at = ?4, target = ?5, pinned = ?6,
-             workspace_id = COALESCE(threads.workspace_id, ?7)",
-        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned, m.workspace_id],
+             workspace_id = COALESCE(threads.workspace_id, ?7), project_id = ?8",
+        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned, m.workspace_id, m.project_id],
     )?;
     Ok(())
 }
@@ -658,6 +673,8 @@ mod tests {
             target: None,
             pinned: false,
             workspace_id: None,
+            project_id: None,
+            incognito: false,
         }
     }
 
@@ -695,6 +712,24 @@ mod tests {
         assert!(t.meta.pinned);
         assert_eq!(t.messages.len(), 1);
         assert_eq!(store.search("renamed", 8).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn project_can_change_and_incognito_threads_are_never_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let mut a = meta("a", "Chat", 1);
+        a.project_id = Some("p1".into());
+        store.save_thread(&a, Some(vec![text("user", "hi")])).unwrap();
+        a.project_id = None;
+        store.save_thread(&a, None).unwrap();
+        assert_eq!(store.threads().unwrap()[0].meta.project_id, None);
+
+        let mut secret = meta("s", "Secret", 2);
+        secret.incognito = true;
+        store.save_thread(&secret, Some(vec![text("user", "whisper")])).unwrap();
+        assert_eq!(store.threads().unwrap().len(), 1);
+        assert!(store.search("whisper", 8).unwrap().is_empty());
     }
 
     #[test]

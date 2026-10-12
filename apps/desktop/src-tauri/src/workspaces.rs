@@ -170,6 +170,20 @@ pub async fn workspace_reveal(app: AppHandle, state: State<'_, AppState>, id: St
     app.opener().reveal_item_in_dir(target).map_err(|e| AppError::Invalid(format!("Couldn't show it in the file manager: {e}")))
 }
 
+/// Open a workspace's folder in another app: `vscode`, or `files` (the system file manager).
+#[tauri::command]
+pub async fn workspace_open_in(app: AppHandle, state: State<'_, AppState>, id: String, target: String) -> AppResult<()> {
+    let store = state.store.clone();
+    let root = blocking(move || Ok(find(&store, &id)?.root)).await?;
+    let with = match target.as_str() {
+        "files" => None,
+        "vscode" if cfg!(target_os = "macos") => Some("Visual Studio Code"),
+        "vscode" => Some("code"),
+        other => return Err(AppError::Invalid(format!("Unknown app: {other}"))),
+    };
+    app.opener().open_path(root, with).map_err(|e| AppError::Invalid(format!("Couldn't open the folder: {e}")))
+}
+
 /// Files whose path contains `query`, for the file filter.
 #[tauri::command]
 pub async fn workspace_find(state: State<'_, AppState>, id: String, query: String) -> AppResult<Vec<String>> {

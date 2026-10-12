@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import type { ComponentProps } from "react";
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
@@ -27,12 +27,44 @@ export type ConversationContentProps = ComponentProps<
 export const ConversationContent = ({
   className,
   ...props
-}: ConversationContentProps) => (
-  <StickToBottom.Content
-    className={cn("flex flex-col gap-8 p-4", className)}
-    {...props}
-  />
-);
+}: ConversationContentProps) => {
+  useScrollTopRoundsUp();
+  return (
+    <StickToBottom.Content
+      className={cn("flex flex-col gap-8 p-4", className)}
+      {...props}
+    />
+  );
+};
+
+/**
+ * With the app zoomed (Cmd/Ctrl + -/=), WebKit keeps scroll offsets in zoomed
+ * pixels, so `scrollTop = v` can read back a pixel short of v. use-stick-to-bottom
+ * keeps stepping toward the bottom until scrollTop reaches its target; when every
+ * step lands short it never gets there and rewrites scrollTop each frame, which
+ * shows as the transcript jittering. Round each write up to an offset at or past v.
+ */
+function useScrollTopRoundsUp() {
+  const { scrollRef } = useStickToBottomContext();
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const native = Object.getOwnPropertyDescriptor(Element.prototype, "scrollTop");
+    if (!el || !native?.get || !native.set) return;
+    const get = native.get, set = native.set;
+    Object.defineProperty(el, "scrollTop", {
+      configurable: true,
+      get: () => get.call(el),
+      set: (v: number) => {
+        set.call(el, v);
+        // At most two steps: past the end, the browser clamps and the bottom counts as reached.
+        for (let step = 1; step <= 2 && get.call(el) < Math.floor(v); step++) set.call(el, v + step);
+      },
+    });
+    return () => {
+      delete (el as { scrollTop?: number }).scrollTop;
+    };
+  }, [scrollRef]);
+}
 
 export type ConversationEmptyStateProps = ComponentProps<"div"> & {
   title?: string;

@@ -17,6 +17,7 @@ import { toast } from "sonner";
 import { complete, extractJson } from "@/lib/complete";
 import { createStore, getConversations } from "@/lib/store";
 import { api, errorMessage } from "@/lib/tauri";
+import { broadcast, onBroadcast } from "@/lib/windows";
 import type { ModelTarget } from "@/lib/transport";
 
 export type MemoryKind = "profile" | "topic" | "area";
@@ -42,13 +43,19 @@ let writes = Promise.resolve();
 
 function persist(write: () => Promise<unknown>) {
   writes = writes.then(write).then(
-    () => undefined,
+    () => void broadcast(MEMORY_EVENT, null),
     (e) => {
       console.error("Could not save memory", e);
       toast.error("Couldn’t save memory", { description: errorMessage(e) });
     },
   );
 }
+
+/** Another window changed memory: reload it from disk. */
+const MEMORY_EVENT = "sush://memory";
+onBroadcast(MEMORY_EVENT, () => {
+  void api.memoryList().then((list) => files.set(list), (e) => console.error("Could not reload memory", e));
+});
 
 /** Load memory files from disk, moving any left in localStorage by earlier versions. Call before rendering. */
 export async function initMemory() {
@@ -280,7 +287,8 @@ const MAX_CHAT_CHARS = 30_000;
 
 /** A chat's transcript, trimmed from the start if it's long. */
 export function readChat(id: string): { title: string; transcript: string } | null {
-  const c = getConversations().find((c) => c.id === id);
+  // Incognito chats stay out of reach of other chats.
+  const c = getConversations().find((c) => c.id === id && !c.incognito);
   if (!c) return null;
   const text = chatText(c);
   return {

@@ -16,12 +16,14 @@ import {
   ScrollTextIcon,
   SearchIcon,
   TerminalIcon,
+  TimerIcon,
   Trash2Icon,
 } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
 
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
 import {
+  AutomationSaveCard,
   CodeBlock,
   EditDiff,
   SkillSaveCard,
@@ -42,6 +44,8 @@ import {
   type ToolResult,
 } from "@/lib/agent";
 import { parseAskUserInput, type AskUserOutput } from "@/lib/ask-user";
+import { parseAutomationSave } from "@/lib/automation-save";
+import { createAutomation, describeSchedule, formatWhen, nextRunOf } from "@/lib/automations";
 import { connectorIcon } from "@/lib/connector-catalog";
 import { parseCommits, parsePullRequest } from "@/lib/github";
 import { allowTool } from "@/lib/library";
@@ -73,6 +77,8 @@ export function ToolPart(props: ToolPartProps) {
       return <SkillPart part={props.part} />;
     case "skill-save":
       return <SkillSavePart {...props} />;
+    case "automation-save":
+      return <AutomationSavePart {...props} />;
     case "workspace":
       return <WorkspacePart {...props} />;
     case "browser":
@@ -233,6 +239,62 @@ function SkillSavePart({ part, canAnswer, onResult }: ToolPartProps) {
             const saved = applySkillSave(input);
             const command = slugify(saved.name);
             onResult({ output: `Saved the skill "${saved.name}". The user can run it with /${command}.` });
+          }}
+        />
+      );
+  }
+}
+
+const DISCARDED_AUTOMATION = "The user discarded this automation. Ask what they'd like changed.";
+
+function AutomationSavePart({ part, canAnswer, onResult }: ToolPartProps) {
+  const input = part.state === "input-streaming" ? null : parseAutomationSave(part.input);
+  // Made in a Cowork session, its runs work in the same folder.
+  const workspace = useContext(CurrentWorkspace);
+
+  const reported = useRef(false);
+  useEffect(() => {
+    if (part.state === "input-available" && !input && canAnswer && !reported.current) {
+      reported.current = true;
+      onResult({ errorText: "Invalid automation_save input: name, prompt and a valid frequency are required." });
+    }
+  }, [part.state, input, canAnswer, onResult]);
+
+  const name = (part.input as { name?: string } | undefined)?.name ?? "automation";
+  const label = (
+    <>
+      <TimerIcon className="size-4 shrink-0" />
+      <span className="line-clamp-1 text-left">
+        {part.state === "output-available" ? `Saved automation “${name}”` : `Automation “${name}” not saved`}
+      </span>
+    </>
+  );
+
+  switch (part.state) {
+    case "input-streaming":
+      return <LoadingState label="Drafting automation" />;
+    case "output-available":
+      return <ToolResultRow label={label} />;
+    case "output-error":
+      return <ToolResultRow label={label} error={part.errorText !== DISCARDED_AUTOMATION} />;
+    default:
+      if (!input) return null;
+      if (!canAnswer) return <p className="text-sm text-muted-foreground italic">Automation wasn't saved</p>;
+      return (
+        <AutomationSaveCard
+          name={input.name}
+          schedule={describeSchedule(input.schedule)}
+          prompt={input.prompt}
+          folder={workspace?.name}
+          onDiscard={() => onResult({ errorText: DISCARDED_AUTOMATION })}
+          onSave={() => {
+            const saved = createAutomation({ ...input, workspaceId: workspace?.id, enabled: true });
+            const next = nextRunOf(saved);
+            onResult({
+              output:
+                `Saved the automation "${saved.name}" (${describeSchedule(saved.schedule)}). ` +
+                (next ? `It runs next ${formatWhen(next)}, while Sush is open.` : "The user runs it from Automations."),
+            });
           }}
         />
       );

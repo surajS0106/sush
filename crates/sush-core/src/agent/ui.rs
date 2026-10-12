@@ -145,6 +145,8 @@ pub struct StepBuilder {
     tools: BTreeMap<u32, (usize, String, String, String)>,
     web: HashMap<String, (usize, Value)>,
     usage: Map<String, Value>,
+    /// Input and output tokens earlier steps already reported on this message.
+    prior: (u64, u64),
     seq: usize,
     /// Set once the provider reports an error.
     pub error: Option<String>,
@@ -159,9 +161,18 @@ impl StepBuilder {
             tools: BTreeMap::new(),
             web: HashMap::new(),
             usage: Map::new(),
+            prior: (0, 0),
             seq: 0,
             error: None,
         }
+    }
+
+    /// Continue a message whose earlier steps already reported usage, so its
+    /// token counts cover every step the provider billed, not just the last.
+    pub fn after(mut self, metadata: Option<&Value>) -> Self {
+        let tokens = |key: &str| metadata.and_then(|m| m[key].as_u64()).unwrap_or(0);
+        self.prior = (tokens("inputTokens"), tokens("outputTokens"));
+        self
     }
 
     fn push(&mut self, ops: &mut Vec<Op>, part: Value) -> usize {
@@ -257,7 +268,15 @@ impl StepBuilder {
             calls.push(ToolCall { id, name, input });
         }
         if self.usage.values().any(|v| !v.is_null()) {
-            let usage: Map<String, Value> = self.usage.into_iter().filter(|(_, v)| !v.is_null()).collect();
+            let (input, output) = self.prior;
+            let usage: Map<String, Value> = self
+                .usage
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let prior = if k == "inputTokens" { input } else { output };
+                    Some((k, json!(v.as_u64()? + prior)))
+                })
+                .collect();
             ops.push(Op::SetMetadata { metadata: Value::Object(usage) });
         }
         (ops, calls)
@@ -630,6 +649,19 @@ mod tests {
         assert_eq!(title_from(&messages).unwrap().chars().count(), 58);
         assert_eq!(title_from(&[json!({ "role": "user", "parts": [{ "type": "text", "text": "Hi there" }] })]).as_deref(), Some("Hi there"));
         assert_eq!(title_from(&[]), None);
+    }
+
+    #[test]
+    fn usage_adds_up_across_steps() {
+        let mut messages = assistant();
+        for (input, output) in [(10, 5), (20, 7)] {
+            let mut b = StepBuilder::new(0).after(messages[0].get("metadata"));
+            b.handle(ChatEvent::Usage { input_tokens: Some(input), output_tokens: Some(output) });
+            for op in b.finish().0 {
+                apply(&mut messages, &op);
+            }
+        }
+        assert_eq!(messages[0]["metadata"], json!({ "inputTokens": 30, "outputTokens": 12 }));
     }
 
     #[test]

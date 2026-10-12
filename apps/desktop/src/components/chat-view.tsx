@@ -2,12 +2,14 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CopyIcon,
+  FolderKanbanIcon,
+  GhostIcon,
   PencilIcon,
   RefreshCcwIcon,
   SettingsIcon,
   WrenchIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -26,6 +28,8 @@ import { ModelPicker } from "@/components/model-picker";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
 import { FileChanges } from "@/components/file-changes";
 import { SessionOptions } from "@/components/session-options";
+import { DeckCard, SlidesPanel } from "@/components/slides-panel";
+import { UsageHeatmap } from "@/components/usage-heatmap";
 import { CoworkPanel } from "@/components/workspace-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -46,7 +50,9 @@ import { usePrefs } from "@/lib/library";
 import { modelLogo, providerLogo } from "@/lib/logos";
 import { mentionSegments } from "@/lib/mentions";
 import { parseSlash } from "@/lib/skills";
+import { autoOpenDeck, deckViews, SLIDES_WRITE, useDeckPanel, type Decks } from "@/lib/slides";
 import { formatCost, isLocalUrl } from "@/lib/pricing";
+import { useProjects } from "@/lib/projects";
 import {
   clearError,
   editMessage,
@@ -86,6 +92,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     setTarget(t);
   };
   const prefs = usePrefs();
+  const incognito = !!conversation.incognito;
+  const project = useProjects().find((p) => p.id === conversation.projectId);
   const { data: session } = useSession();
   const firstName = session?.user.name?.trim().split(/\s+/)[0];
   // Research uses Anthropic's server-side web tools, so only Claude providers get it.
@@ -115,7 +123,19 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     }
     return ends;
   }, [messages]);
-  const panel = workspace ? <CoworkPanel workspace={workspace} changed={changedPaths} /> : null;
+  // Slides: the deck open beside the chat takes the side panel's place.
+  const decks = useMemo(() => deckViews(messages), [messages]);
+  useEffect(() => {
+    for (const deck of decks.byId.values()) autoOpenDeck(id, deck);
+  }, [id, decks]);
+  const deckPanel = useDeckPanel(id);
+  const openDeck = deckPanel ? decks.byId.get(deckPanel.deckId) : undefined;
+  const panel = openDeck ? (
+    <SlidesPanel threadId={id} deck={openDeck} busy={busy} />
+  ) : workspace ? (
+    <CoworkPanel workspace={workspace} changed={changedPaths} />
+  ) : null;
+  const hideChat = !!openDeck && !!deckPanel?.expanded;
 
   const submit = (msg: PromptInputMessage) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
@@ -164,18 +184,21 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   const last = messages.at(-1);
   const waiting = busy && (last?.role !== "assistant" || !hasVisibleContent(last) || endsWithToolResult(last));
 
+  // An incognito chat's composer has a dashed outline, as in a private window.
   const composer = (
-    <Composer
-      catalog={catalog}
-      target={target}
-      onPickModel={pickModel}
-      status={status}
-      onSubmit={submit}
-      onStop={() => stop(id)}
-      onOpenSettings={onOpenSettings}
-      researchAvailable={researchAvailable}
-      messages={messages}
-    />
+    <div className={cn(incognito && "[&_[data-slot=input-group]]:border-dashed [&_[data-slot=input-group]]:border-foreground/30")}>
+      <Composer
+        catalog={catalog}
+        target={target}
+        onPickModel={pickModel}
+        status={status}
+        onSubmit={submit}
+        onStop={() => stop(id)}
+        onOpenSettings={onOpenSettings}
+        researchAvailable={researchAvailable}
+        messages={messages}
+      />
+    </div>
   );
 
   if (messages.length === 0) {
@@ -205,12 +228,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
                   <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
                   <span>{`What should we work on${workspace ? ` in ${workspace.name}` : ""}?`}</span>
                 </h1>
-                <Suggestion
-                  label="Try asking"
-                  className="mt-8 w-full"
-                  suggestionSets={COWORK_SUGGESTIONS}
-                  onSelect={(text) => submit({ text, files: [] })}
-                />
+                <UsageHeatmap className="mt-8 w-full" />
               </>
             ) : (
               connect
@@ -227,15 +245,26 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-[10vh]">
         <div className="w-full max-w-2xl">
           {hasProviders === null ? null : hasProviders ? (
-            <h1 className="mb-7 flex items-center justify-center gap-3 text-[28px] font-medium tracking-tight">
-              <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
-              <span>{greeting(firstName)}</span>
-            </h1>
+            <>
+              {project && (
+                <p className="mb-3 flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
+                  <FolderKanbanIcon className="size-4" /> {project.name}
+                </p>
+              )}
+              <h1 className="mb-7 flex items-center justify-center gap-3 text-[28px] font-medium tracking-tight">
+                {incognito ? <GhostIcon className="size-8 shrink-0" /> : <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />}
+                <span>{incognito ? "You’re incognito" : greeting(firstName)}</span>
+              </h1>
+            </>
           ) : (
             connect
           )}
           {composer}
-          {hasProviders && (
+          {incognito ? (
+            <p className="mx-auto mt-6 max-w-sm text-center text-sm text-balance text-muted-foreground">
+              Incognito chats stay out of your history, memory and search, and are deleted when you leave them.
+            </p>
+          ) : hasProviders && (
             <Suggestion
               label="Try asking"
               className="mt-5 w-full px-2"
@@ -247,7 +276,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       </div>
     );
     return (
-      <WorkspaceFrame workspace={workspace} panel={panel}>
+      <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
         {start}
       </WorkspaceFrame>
     );
@@ -258,6 +287,11 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       <TranscriptResizer />
       <Conversation className="min-h-0 flex-1">
         <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 py-8">
+          {incognito && (
+            <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+              <GhostIcon className="size-3.5" /> Incognito: this chat isn’t saved and is deleted when you leave it
+            </p>
+          )}
           {messages.map((message) => (
             <ChatMessage
               key={message.id}
@@ -274,6 +308,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
               onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
+              threadId={id}
+              decks={decks}
               fileChanges={(() => {
                 const turnId = turnEnds.get(message.id);
                 if (busy || !workspaceId || !turnId || !turnChanges.has(turnId)) return null;
@@ -330,7 +366,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     </div>
   );
   return (
-    <WorkspaceFrame workspace={workspace} panel={panel}>
+    <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
       {chat}
     </WorkspaceFrame>
   );
@@ -338,8 +374,10 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
 
 interface WorkspaceFrameProps {
   workspace: Workspace | null;
-  /** The Cowork side panel (files, terminal), or nothing for a plain chat. */
+  /** The slides panel or the Cowork side panel (files, terminal), or nothing for a plain chat. */
   panel: React.ReactNode;
+  /** An expanded panel covers the chat. */
+  hideChat?: boolean;
   children: React.ReactNode;
 }
 
@@ -373,11 +411,11 @@ function TranscriptResizer() {
 }
 
 /** Puts a Cowork session's side panel beside the chat; tool cards read the workspace from here. */
-function WorkspaceFrame({ workspace, panel, children }: WorkspaceFrameProps) {
+function WorkspaceFrame({ workspace, panel, hideChat, children }: WorkspaceFrameProps) {
   return (
     <CurrentWorkspace.Provider value={workspace}>
       <div className="flex min-h-0 min-w-0 flex-1">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", hideChat && "hidden")}>{children}</div>
         {panel}
       </div>
     </CurrentWorkspace.Provider>
@@ -402,22 +440,6 @@ function greeting(name?: string, hour = new Date().getHours()) {
 
 // Starter prompts under the empty-state composer. Each is complete, so picking
 // one sends it; the shuffle button cycles between sets.
-/** Starters for a Cowork session, about the folder it works in. */
-const COWORK_SUGGESTIONS = [
-  [
-    "Explain how this folder is organised",
-    "Find the TODOs and summarise them",
-    "Write a README for this project",
-    "Run the tests and fix what fails",
-  ],
-  [
-    "What does this project do?",
-    "Look for bugs in the most recently changed files",
-    "Tidy up the formatting of the docs",
-    "List the dependencies and what each is for",
-  ],
-];
-
 const SUGGESTIONS = [
   [
     "Plan a relaxed 3-day trip to Kyoto",
@@ -428,7 +450,7 @@ const SUGGESTIONS = [
   [
     "Draft a README for a small command-line tool",
     "Teach me SQL joins with a simple example",
-    "Help me name a cozy coffee shop",
+    "Make a 4-slide deck on how sleep shapes memory",
     "Summarise the trade-offs of remote work",
   ],
   [
@@ -477,6 +499,8 @@ interface ChatMessageProps {
   /** A waiting connector call the user allowed; Rust runs it. */
   onApprove: (toolCallId: string) => void;
   artifacts: Map<string, ArtifactView>;
+  threadId: string;
+  decks: Decks;
   /** Cowork: the files this turn changed, under its last reply. */
   fileChanges?: React.ReactNode;
 }
@@ -545,6 +569,8 @@ function ChatMessage({
   onToolResult,
   onApprove,
   artifacts,
+  threadId,
+  decks,
   fileChanges,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
@@ -602,6 +628,10 @@ function ChatMessage({
       case "dynamic-tool":
         if (part.toolName === ARTIFACT_WRITE) {
           return <ArtifactPart key={key} part={part} view={artifacts.get(part.toolCallId)} />;
+        }
+        if (part.toolName === SLIDES_WRITE) {
+          const view = decks.byCall.get(part.toolCallId);
+          return <DeckCard key={key} threadId={threadId} part={part} view={view} latest={view && decks.byId.get(view.id)} />;
         }
         return (
           <ToolPart

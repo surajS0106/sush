@@ -5,6 +5,7 @@ import {
   CircleHelpIcon,
   CodeXmlIcon,
   FolderIcon,
+  FolderKanbanIcon,
   FolderOpenIcon,
   FolderPlusIcon,
   LogOutIcon,
@@ -15,8 +16,8 @@ import {
   MonitorIcon,
   MoonIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   PinIcon,
-  PinOffIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
@@ -28,10 +29,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
+import { confirmDeleteProject, openProjectEditor, SessionMenuItems } from "@/components/session-actions";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -67,12 +69,14 @@ import { UserAvatar } from "@/components/user-avatar";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
 import { signOut, useSession } from "@/lib/auth";
+import { automationForThread, useAutomations } from "@/lib/automations";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
+import { useProjects, type Project } from "@/lib/projects";
 import { errorMessage } from "@/lib/tauri";
 import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
-import { togglePinned, type Conversation } from "@/lib/store";
+import type { Conversation } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 /** Sessions listed before the "More" toggle. */
@@ -80,7 +84,6 @@ const RECENT_LIMIT = 8;
 
 /** Destinations that don't exist yet; they're in the nav so the layout is final. */
 const PLANNED = [
-  { label: "Automations", icon: TimerIcon },
   { label: "Security", icon: ShieldIcon },
   { label: "Review", icon: GitPullRequestIcon },
   { label: "Wiki", icon: BookOpenIcon },
@@ -94,6 +97,9 @@ export const NEW_SHORTCUT_LABEL = IS_MAC ? "⌘N" : "Ctrl+N";
 /** A plain chat, or a Cowork session working in a folder. */
 export type SessionMode = "chat" | "cowork";
 
+/** What the main area shows: the open session, or a page the sidebar opens in its place. */
+export type Page = "session" | "automations";
+
 interface AppSidebarProps {
   conversations: Conversation[];
   activeId: string | null;
@@ -101,12 +107,17 @@ interface AppSidebarProps {
   onNew: () => void;
   /** Start a Cowork session in a workspace. */
   onNewCowork: (workspaceId: string) => void;
+  /** Start a chat in a project. */
+  onNewInProject: (projectId: string) => void;
   onDelete: (id: string) => void;
   onOpenSettings: () => void;
   nav: Nav;
   /** Whether the open session is a chat or Cowork; the toggle switches. */
   mode: SessionMode;
   onSwitchMode: (mode: SessionMode) => void;
+  /** What the main area shows: the open session, or a page like Automations. */
+  page: Page;
+  onOpenPage: (page: Page) => void;
 }
 
 /** The sidebar's right edge: drag it to set the width, or on past the minimum to close; double-click puts the default back. */
@@ -136,11 +147,14 @@ export function AppSidebar({
   onSelect,
   onNew,
   onNewCowork,
+  onNewInProject,
   onDelete,
   onOpenSettings,
   nav,
   mode,
   onSwitchMode,
+  page,
+  onOpenPage,
 }: AppSidebarProps) {
   const { data: session } = useSession();
   const trafficLights = useTrafficLights();
@@ -148,16 +162,29 @@ export function AppSidebar({
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
   const [showAll, setShowAll] = useState(false);
-  // The blank chat behind "New session" isn't listed until something is sent.
-  const started = conversations.filter((c) => c.messages.length > 0);
+  // The blank chat behind "New session" isn't listed until something is sent; incognito chats never are.
+  const started = conversations.filter((c) => c.messages.length > 0 && !c.incognito);
   const matches = searching ? started.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase())) : started;
+  const projects = useProjects();
+  const projectIds = new Set(projects.map((p) => p.id));
+  // A project's chats are listed under it, unless pinned.
+  const inProject = (c: Conversation) => !!c.projectId && projectIds.has(c.projectId);
   const pinned = matches.filter((c) => c.pinned);
-  const rest = matches.filter((c) => !c.pinned);
+  const rest = matches.filter((c) => !c.pinned && !inProject(c));
   const visible = showAll || searching ? rest : rest.slice(0, RECENT_LIMIT);
 
+  const automations = useAutomations();
   const row = (c: Conversation) => (
-    <SessionRow key={c.id} conversation={c} active={c.id === activeId} onSelect={onSelect} onDelete={onDelete} />
+    <SessionRow
+      key={c.id}
+      conversation={c}
+      active={page === "session" && c.id === activeId}
+      automated={!!automationForThread(automations, c.id)}
+      onSelect={onSelect}
+      onDelete={onDelete}
+    />
   );
+  const projectChats = (p: Project) => matches.filter((c) => c.projectId === p.id && !c.pinned);
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -205,6 +232,14 @@ export function AppSidebar({
           <SidebarGroup>
             <SidebarMenu>
               <CoworkMenu onNewCowork={onNewCowork} />
+              <SidebarMenuItem>
+                <SidebarMenuButton tooltip="Automations" isActive={page === "automations"} onClick={() => onOpenPage("automations")}>
+                  <TimerIcon /> <span>Automations</span>
+                  {automations.some((a) => a.unseen) && (
+                    <span className="ml-auto size-2 shrink-0 rounded-full bg-brand" aria-label="New runs" title="New runs" />
+                  )}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               {PLANNED.map(({ label, icon: Icon }) => (
                 <SidebarMenuItem key={label}>
                   <SidebarMenuButton tooltip={label} onClick={() => comingSoon(label)}>
@@ -212,6 +247,35 @@ export function AppSidebar({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
+            </SidebarMenu>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <div className="flex items-center pr-1">
+              <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Projects</SidebarGroupLabel>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" aria-label="New project" className={toolbarButtonClass} onClick={() => openProjectEditor()}>
+                    <PlusIcon />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">New project</TooltipContent>
+              </Tooltip>
+            </div>
+            <SidebarMenu>
+              {projects.map((p) => {
+                const chats = projectChats(p);
+                // While searching, only projects with a matching chat are shown.
+                if (searching && chats.length === 0) return null;
+                return <ProjectRow key={p.id} project={p} chats={chats} searching={searching} row={row} onNewChat={onNewInProject} />;
+              })}
+              {projects.length === 0 && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton className="text-muted-foreground" onClick={() => openProjectEditor()}>
+                    <FolderKanbanIcon /> <span>New project</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
             </SidebarMenu>
           </SidebarGroup>
 
@@ -358,11 +422,14 @@ function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => voi
 function SessionRow({
   conversation: c,
   active,
+  automated,
   onSelect,
   onDelete,
 }: {
   conversation: Conversation;
   active: boolean;
+  /** Started by an automation. */
+  automated: boolean;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
@@ -373,6 +440,8 @@ function SessionRow({
       <SidebarMenuButton isActive={active} onClick={() => onSelect(c.id)}>
         {status === "working" ? (
           <LoaderCircleIcon className="animate-spin text-muted-foreground" />
+        ) : automated ? (
+          <TimerIcon className="text-muted-foreground" aria-label="Automation run" />
         ) : (
           c.workspaceId && <FolderIcon className="text-muted-foreground" aria-label="Cowork session" />
         )}
@@ -388,16 +457,71 @@ function SessionRow({
             <span className="sr-only">More</span>
           </SidebarMenuAction>
         </DropdownMenuTrigger>
-        <DropdownMenuContent className="w-fit" side={isMobile ? "bottom" : "right"} align={isMobile ? "end" : "start"}>
-          <DropdownMenuItem onSelect={() => togglePinned(c.id)}>
-            {c.pinned ? <PinOffIcon /> : <PinIcon />} <span>{c.pinned ? "Unpin" : "Pin"}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onSelect={() => onDelete(c.id)}>
-            <Trash2Icon /> <span>Delete session</span>
-          </DropdownMenuItem>
+        <DropdownMenuContent className="w-52" side={isMobile ? "bottom" : "right"} align={isMobile ? "end" : "start"}>
+          <SessionMenuItems conversation={c} onOpen={onSelect} onDelete={onDelete} />
         </DropdownMenuContent>
       </DropdownMenu>
     </SidebarMenuItem>
+  );
+}
+
+/** A project: its chats fold away under it; hover for a new chat in it or to edit it. */
+function ProjectRow({
+  project: p,
+  chats,
+  searching,
+  row,
+  onNewChat,
+}: {
+  project: Project;
+  chats: Conversation[];
+  searching: boolean;
+  row: (c: Conversation) => ReactNode;
+  onNewChat: (projectId: string) => void;
+}) {
+  const { isMobile } = useSidebar();
+  const [open, setOpen] = useState(false);
+  return (
+    <Collapsible open={open || searching} onOpenChange={setOpen} className="group/project">
+      <SidebarMenuItem>
+        <CollapsibleTrigger asChild>
+          <SidebarMenuButton tooltip={p.name}>
+            <FolderKanbanIcon />
+            <span>{p.name}</span>
+            <ChevronRightIcon className="ml-auto size-3.5! text-muted-foreground transition-transform group-data-[state=open]/project:rotate-90 group-hover/menu-item:hidden" />
+          </SidebarMenuButton>
+        </CollapsibleTrigger>
+        <SidebarMenuAction showOnHover className="right-7" aria-label={`New chat in ${p.name}`} title="New chat in project" onClick={() => onNewChat(p.id)}>
+          <PlusIcon />
+        </SidebarMenuAction>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <SidebarMenuAction showOnHover className="aria-expanded:bg-muted">
+              <MoreHorizontalIcon />
+              <span className="sr-only">Project options</span>
+            </SidebarMenuAction>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent className="w-48" side={isMobile ? "bottom" : "right"} align={isMobile ? "end" : "start"}>
+            <DropdownMenuItem onSelect={() => onNewChat(p.id)}>
+              <PlusIcon /> <span>New chat</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openProjectEditor(p.id)}>
+              <PencilIcon /> <span>Edit project</span>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onSelect={() => confirmDeleteProject(p.id)}>
+              <Trash2Icon /> <span>Delete project</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </SidebarMenuItem>
+      <CollapsibleContent>
+        <SidebarMenu className="pl-4">
+          {chats.map(row)}
+          {chats.length === 0 && <p className="px-2 py-1.5 text-sm text-muted-foreground">No chats yet</p>}
+        </SidebarMenu>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 

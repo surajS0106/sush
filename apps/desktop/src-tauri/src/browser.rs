@@ -2,12 +2,13 @@
 //!
 //! There is one, created the first time a page is opened. The UI reports
 //! where its pane is (`browser_set_view`) and the webview is moved there, or
-//! hidden while the pane isn't showing. The agent drives it with the
+//! hidden while the pane isn't showing. With several windows it lives in the
+//! one whose pane showed last, and moves there. The agent drives it with the
 //! `sush_core::browser` tools, which run the page script through
 //! `eval_with_callback`, so pages never get IPC: no capability grants a remote
 //! origin anything, and navigation to the app's own origins is refused.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use sush_core::agent::ui::STOPPED;
 use sush_core::browser::{self as core, Action};
 use tauri::ipc::Channel;
 use tauri::webview::{NewWindowResponse, PageLoadEvent, Webview, WebviewBuilder};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Rect, State, WebviewUrl, Wry};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Rect, State, WebviewUrl, Window, Wry};
 use tokio::sync::{oneshot, watch};
 use tokio_util::sync::CancellationToken;
 use url::Url;
@@ -65,10 +66,13 @@ struct Load {
 pub struct Browser {
     webview: Mutex<Option<Webview<Wry>>>,
     creating: tokio::sync::Mutex<()>,
-    channel: Mutex<Option<Channel<BrowserEvent>>>,
+    /// Each window's channel, by label.
+    channels: Mutex<BTreeMap<String, Channel<BrowserEvent>>>,
     page: Mutex<Page>,
     load: watch::Sender<Load>,
-    /// None while the pane is hidden.
+    /// The window the webview is in, if one has shown the pane.
+    host: Mutex<Option<String>>,
+    /// None while the host's pane is hidden.
     view: Mutex<Option<Bounds>>,
     /// Sites the user let the agent open, by thread.
     allowed: Mutex<HashMap<String, HashSet<String>>>,
@@ -79,9 +83,10 @@ impl Default for Browser {
         Self {
             webview: Mutex::default(),
             creating: tokio::sync::Mutex::default(),
-            channel: Mutex::default(),
+            channels: Mutex::default(),
             page: Mutex::default(),
             load: watch::channel(Load::default()).0,
+            host: Mutex::default(),
             view: Mutex::default(),
             allowed: Mutex::default(),
         }
@@ -102,9 +107,51 @@ fn may_open(url: &Url) -> bool {
 }
 
 impl Browser {
+    /// Page changes go to every window; a reveal only to the window the browser is in
+    /// (else "main", as labels sort), so panes in several windows don't fight over it.
     fn emit(&self, event: BrowserEvent) {
-        if let Some(channel) = self.channel.lock().unwrap().as_ref() {
-            let _ = channel.send(event);
+        let channels = self.channels.lock().unwrap();
+        if matches!(event, BrowserEvent::Reveal) {
+            let host = self.host.lock().unwrap().clone();
+            let channel = host.and_then(|l| channels.get(&l)).or_else(|| channels.values().next());
+            if let Some(channel) = channel {
+                let _ = channel.send(event);
+            }
+            return;
+        }
+        for channel in channels.values() {
+            let _ = channel.send(event.clone());
+        }
+    }
+
+    /// A window is gone: stop sending it events.
+    pub fn unsubscribe(&self, label: &str) {
+        self.channels.lock().unwrap().remove(label);
+    }
+
+    /// The window the webview opens in: the last to show the pane, else "main", else any.
+    fn host_window(&self, app: &AppHandle) -> Option<Window> {
+        let host = self.host.lock().unwrap().clone();
+        host.and_then(|l| app.get_window(&l))
+            .or_else(|| app.get_window("main"))
+            .or_else(|| app.windows().into_values().find(|w| w.label() != LABEL))
+    }
+
+    /// `window` is closing. A child webview closes with its window, so move it
+    /// to another one, hidden until a pane there shows it.
+    pub fn evacuate(&self, window: &Window) {
+        let Some(webview) = self.current() else { return };
+        if webview.window().label() != window.label() {
+            return;
+        }
+        let app = window.app_handle();
+        let Some(other) = app.windows().into_values().find(|w| w.label() != window.label() && w.label() != LABEL) else {
+            return;
+        };
+        *self.host.lock().unwrap() = None;
+        *self.view.lock().unwrap() = None;
+        if let Err(e) = webview.reparent(&other).and_then(|()| webview.hide()) {
+            eprintln!("sush: could not move the browser: {e}");
         }
     }
 
@@ -150,7 +197,7 @@ impl Browser {
         if let Some(webview) = self.current() {
             return webview.navigate(url).map_err(|e| e.to_string());
         }
-        let window = app.get_window("main").ok_or("The app window is gone.")?;
+        let window = self.host_window(app).ok_or("The app window is gone.")?;
         let new_window_app = app.clone();
         let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url))
             .on_navigation(may_open)
@@ -303,10 +350,10 @@ impl Browser {
     }
 }
 
-/// Receive the browser's events (replacing any earlier subscriber); returns the page shown now.
+/// Receive the browser's events (replacing the window's earlier subscription); returns the page shown now.
 #[tauri::command]
-pub fn browser_subscribe(browser: State<'_, Browser>, on_event: Channel<BrowserEvent>) -> Option<Page> {
-    *browser.channel.lock().unwrap() = Some(on_event);
+pub fn browser_subscribe(window: Window, browser: State<'_, Browser>, on_event: Channel<BrowserEvent>) -> Option<Page> {
+    browser.channels.lock().unwrap().insert(window.label().to_string(), on_event);
     browser.current().map(|_| browser.page.lock().unwrap().clone())
 }
 
@@ -336,11 +383,27 @@ pub async fn browser_go(browser: State<'_, Browser>, to: Go) -> AppResult<()> {
     .map_err(|e| AppError::Invalid(e.to_string()))
 }
 
-/// Where the pane is now, or None to hide the browser.
+/// Where `window`'s pane is now, or None to hide the browser. A pane showing
+/// in another window than the browser's moves the browser there; one hiding
+/// in a window the browser isn't in changes nothing.
 #[tauri::command]
-pub async fn browser_set_view(browser: State<'_, Browser>, bounds: Option<Bounds>) -> AppResult<()> {
-    *browser.view.lock().unwrap() = bounds;
+pub async fn browser_set_view(window: Window, browser: State<'_, Browser>, bounds: Option<Bounds>) -> AppResult<()> {
+    {
+        let mut host = browser.host.lock().unwrap();
+        let here = host.as_deref() == Some(window.label());
+        if bounds.is_none() && !here && host.is_some() {
+            return Ok(());
+        }
+        *host = Some(window.label().to_string());
+        *browser.view.lock().unwrap() = bounds;
+    }
     if let Some(webview) = browser.current() {
+        if webview.window().label() != window.label() {
+            if bounds.is_none() {
+                return Ok(());
+            }
+            webview.reparent(&window).map_err(|e| AppError::Invalid(e.to_string()))?;
+        }
         browser.apply_view(&webview);
     }
     Ok(())

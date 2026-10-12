@@ -9,7 +9,7 @@
 //! any terminal they'd open themselves.
 
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -41,6 +41,17 @@ pub struct TerminalInfo {
     /// "powershell", "bash" or "sh", for the prompt's look.
     shell: &'static str,
 }
+
+/// A file or folder that completes the word being typed (Tab).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Completion {
+    name: String,
+    dir: bool,
+}
+
+/// More than this and the UI just says how many there are.
+const MAX_COMPLETIONS: usize = 500;
 
 pub struct Terminal {
     shared: Arc<Shared>,
@@ -269,6 +280,43 @@ fn kill_tree(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// The entries that complete `word` (already unquoted by the UI), taken
+/// relative to `cwd`: the part up to the last separator picks the folder
+/// (`~/` is the home folder), the rest is a case-insensitive prefix of the
+/// name. Hidden entries only show when the prefix starts with a dot.
+fn complete(cwd: &Path, word: &str) -> Vec<Completion> {
+    let is_sep = |c: char| c == '/' || (cfg!(windows) && c == '\\');
+    let split = word.rfind(is_sep).map_or(0, |i| i + 1);
+    let (folder, base) = word.split_at(split);
+    let dir = if folder.is_empty() {
+        cwd.to_path_buf()
+    } else if let (Some(rest), Some(home)) = (folder.strip_prefix("~").filter(|r| r.starts_with(is_sep)), home_dir()) {
+        home.join(&rest[1..])
+    } else {
+        cwd.join(folder)
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let prefix = base.to_lowercase();
+    let mut found: Vec<Completion> = entries
+        .filter_map(|e| {
+            let e = e.ok()?;
+            let name = e.file_name().into_string().ok()?;
+            if (name.starts_with('.') && !base.starts_with('.')) || !name.to_lowercase().starts_with(&prefix) {
+                return None;
+            }
+            // `Path::is_dir` follows symlinks, so a linked folder completes as one.
+            Some(Completion { dir: e.path().is_dir(), name })
+        })
+        .collect();
+    found.sort_by_cached_key(|c| c.name.to_lowercase());
+    found.truncate(MAX_COMPLETIONS);
+    found
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from)
+}
+
 fn not_found() -> AppError {
     AppError::NotFound("That terminal was closed.".into())
 }
@@ -327,6 +375,13 @@ pub async fn terminal_interrupt(state: State<'_, AppState>, id: String) -> AppRe
     Ok(())
 }
 
+/// Files and folders completing `word` in the shell's current folder (Tab).
+#[tauri::command]
+pub async fn terminal_complete(state: State<'_, AppState>, id: String, word: String) -> AppResult<Vec<Completion>> {
+    let cwd = state.terminals.lock().unwrap().get(&id).ok_or_else(not_found)?.shared.cwd.lock().unwrap().clone();
+    blocking(move || Ok(complete(&cwd, &word))).await
+}
+
 #[tauri::command]
 pub async fn terminal_close(state: State<'_, AppState>, id: String) -> AppResult<()> {
     let removed = state.terminals.lock().unwrap().remove(&id);
@@ -349,6 +404,24 @@ mod tests {
                 TerminalEvent::Exit => "exit".into(),
             })
             .collect()
+    }
+
+    #[test]
+    fn completes_names_in_the_folder_and_below_it() {
+        let root = std::env::temp_dir().join(format!("sush-complete-{}", new_id()));
+        std::fs::create_dir_all(root.join("Downloads/inner")).unwrap();
+        std::fs::create_dir_all(root.join("Documents")).unwrap();
+        std::fs::write(root.join("down.txt"), "").unwrap();
+        std::fs::write(root.join(".hidden"), "").unwrap();
+        let names = |word: &str| complete(&root, word).into_iter().map(|c| format!("{}{}", c.name, if c.dir { "/" } else { "" })).collect::<Vec<_>>();
+        assert_eq!(names("Dow"), ["down.txt", "Downloads/"]);
+        assert_eq!(names("do"), ["Documents/", "down.txt", "Downloads/"]);
+        assert_eq!(names("Downloads/i"), ["inner/"]);
+        assert_eq!(names("Downloads/inner/../../"), names(""));
+        assert!(!names("").contains(&".hidden".to_string()));
+        assert_eq!(names(".h"), [".hidden"]);
+        assert!(names("nope").is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

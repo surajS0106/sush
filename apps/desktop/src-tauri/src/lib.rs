@@ -15,6 +15,7 @@ mod state;
 mod store;
 mod terminal;
 mod whisper;
+mod windows;
 mod workspaces;
 
 use tauri::webview::{PermissionKind, PermissionResponse};
@@ -33,6 +34,7 @@ pub fn run() {
         })
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
+            secrets::init(&config_dir);
             app.manage(state::AppState::load(config_dir, app.path().app_data_dir()?)?);
             // Check the sandbox now, so the first Cowork command doesn't wait for it.
             let sandbox = app.state::<state::AppState>().sandbox.clone();
@@ -49,11 +51,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|_window, _event| {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { .. } => windows::closing(window),
+            tauri::WindowEvent::Destroyed => windows::destroyed(window),
             #[cfg(target_os = "macos")]
-            if let tauri::WindowEvent::ThemeChanged(theme) = _event {
-                dock_icon::apply(*theme);
-            }
+            tauri::WindowEvent::ThemeChanged(theme) => dock_icon::apply(*theme),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_presets,
@@ -82,6 +85,7 @@ pub fn run() {
             workspaces::workspace_find,
             workspaces::workspace_write_file,
             workspaces::workspace_reveal,
+            workspaces::workspace_open_in,
             workspaces::sandbox_status,
             browser::browser_subscribe,
             browser::browser_open,
@@ -91,12 +95,16 @@ pub fn run() {
             terminal::terminal_run,
             terminal::terminal_write,
             terminal::terminal_interrupt,
+            terminal::terminal_complete,
             terminal::terminal_close,
             store::threads_load,
             store::thread_save,
             store::thread_delete,
             store::threads_import,
             store::blob_put,
+            store::image_fetch,
+            store::image_search,
+            store::blob_data_url,
             store::chats_search,
             store::memory_list,
             store::memory_write,
@@ -104,6 +112,7 @@ pub fn run() {
             store::memory_clear,
             library::pick_folder_attachment,
             library::save_text_file_as,
+            library::save_bytes_file_as,
             library::load_plugin,
             connectors::connector_connect,
             connectors::connector_disconnect,
@@ -115,6 +124,9 @@ pub fn run() {
             whisper::whisper_model_status,
             whisper::whisper_model_download,
             whisper::transcribe_local,
+            windows::tab_drop,
+            windows::tab_hover,
+            windows::session_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sush")

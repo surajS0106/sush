@@ -3,7 +3,7 @@
 // language as AskUserCard: one card, the request as the heading, pill actions
 // in the footer.
 
-import { ChevronRightIcon, FolderIcon, PlugIcon, ScrollTextIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, PlugIcon, ScrollTextIcon, TimerIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -107,6 +107,57 @@ export function SkillSaveCard({ name, command, description, instructions, replac
           </Button>
           <Button size="sm" className="rounded-full" onClick={onSave}>
             {replaces ? "Update skill" : "Save skill"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface AutomationSaveCardProps {
+  name: string;
+  /** e.g. "Daily at 8:00 AM". */
+  schedule: string;
+  prompt: string;
+  /** The folder its runs work in, for an automation made in a Cowork session. */
+  folder?: string;
+  onSave: () => void;
+  onDiscard: () => void;
+}
+
+export function AutomationSaveCard({ name, schedule, prompt, folder, onSave, onDiscard }: AutomationSaveCardProps) {
+  return (
+    <div className="w-full max-w-xl">
+      <div
+        className="overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm"
+        style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}
+      >
+        <div className="flex gap-3 p-3">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
+            <TimerIcon className="size-4" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Save this automation?</div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{name}</span> · {schedule}
+              {folder && (
+                <>
+                  {" · "}
+                  <FolderIcon className="inline size-3 align-[-1px]" /> {folder}
+                </>
+              )}
+            </p>
+            <pre className="mt-2.5 max-h-72 overflow-auto rounded-lg bg-muted/60 p-2.5 font-sans text-xs whitespace-pre-wrap">
+              {prompt}
+            </pre>
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-1.5 border-t p-2.5">
+          <Button variant="ghost" size="sm" className="rounded-full" onClick={onDiscard}>
+            Discard
+          </Button>
+          <Button size="sm" className="rounded-full" onClick={onSave}>
+            Save automation
           </Button>
         </div>
       </div>
