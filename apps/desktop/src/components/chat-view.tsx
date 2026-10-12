@@ -2,12 +2,16 @@ import {
   ArrowDownIcon,
   ArrowUpIcon,
   CopyIcon,
+  CornerDownRightIcon,
   FolderKanbanIcon,
   GhostIcon,
+  PauseIcon,
   PencilIcon,
+  PlayIcon,
   RefreshCcwIcon,
   SettingsIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -58,16 +62,20 @@ import {
   editMessage,
   regenerate,
   respond,
+  resume,
   sendMessage,
+  sendQueued,
   sessionTarget,
   setSessionResearch,
   setSessionTarget,
   stop,
   toResponse,
+  unqueue,
+  useQueued,
   useThread,
 } from "@/lib/sessions";
 import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
-import { errorMessage, type Workspace } from "@/lib/tauri";
+import { errorMessage, type RunStatus, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { CurrentWorkspace, takePendingWorktree, useTurnChanges, useWorkspace } from "@/lib/workspaces";
@@ -183,6 +191,9 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   // Waiting for the first token: nothing visible has arrived yet.
   const last = messages.at(-1);
   const waiting = busy && (last?.role !== "assistant" || !hasVisibleContent(last) || endsWithToolResult(last));
+  // A reply that was stopped, or a message the app closed on before answering, can carry on.
+  const resumable =
+    !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
 
   // An incognito chat's composer has a dashed outline, as in a private window.
   const composer = (
@@ -317,6 +328,15 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               })()}
             />
           ))}
+          {resumable && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <PauseIcon className="size-3.5" />
+              {last?.role === "assistant" ? "Paused" : "Not answered yet"}
+              <Button variant="outline" size="sm" className="h-7 rounded-full text-xs" onClick={() => resume(id)}>
+                <PlayIcon className="size-3" /> Resume
+              </Button>
+            </div>
+          )}
           {waiting && (
             <Message from="assistant">
               <LoadingState label="Thinking" />
@@ -336,7 +356,10 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
         <ConversationScrollButton />
       </Conversation>
 
-      <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">{composer}</div>
+      <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
+        <QueuedMessages threadId={id} status={runStatus} />
+        {composer}
+      </div>
 
       <Dialog
         open={toolsUnsupported && dismissedError !== error}
@@ -369,6 +392,54 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
       {chat}
     </WorkspaceFrame>
+  );
+}
+
+/**
+ * Messages sent while the run worked. Each joins the reply at its next step;
+ * "Send now" stops the run and sends them at once. Ones a stopped run never
+ * took stay here, unsent.
+ */
+function QueuedMessages({ threadId, status }: { threadId: string; status: RunStatus }) {
+  const queued = useQueued(threadId);
+  if (queued.length === 0) return null;
+  // While the run lives it holds them, so they can't be taken back.
+  const live = status === "submitted" || status === "streaming" || status === "awaiting";
+  return (
+    <div className="mb-2 flex flex-col gap-1.5 rounded-2xl border border-foreground/10 bg-foreground/[0.02] p-2 dark:border-white/10">
+      <div className="flex items-center gap-2 px-1.5 text-xs text-muted-foreground">
+        <span className="flex-1">
+          {status === "awaiting"
+            ? "Queued: joins once you answer above"
+            : live
+              ? "Queued: joins the reply at its next step"
+              : "Not sent: the reply stopped first"}
+        </span>
+        <Button variant="ghost" size="sm" className="h-6 rounded-full px-2 text-xs" onClick={() => sendQueued(threadId)}>
+          {live ? "Send now" : "Send"}
+        </Button>
+      </div>
+      {queued.map((m) => {
+        const text = m.parts.find((p) => p.type === "text")?.text;
+        const files = m.parts.filter((p) => p.type === "file").length;
+        return (
+          <div key={m.id} className="flex items-center gap-2 rounded-xl bg-background px-3 py-1.5 text-sm shadow-xs dark:bg-card">
+            <CornerDownRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate">{text || `${files} attachment${files === 1 ? "" : "s"}`}</span>
+            {!live && (
+              <button
+                type="button"
+                aria-label="Remove from queue"
+                onClick={() => unqueue(threadId, m.id)}
+                className="rounded-full p-0.5 text-muted-foreground hover:bg-foreground/5 hover:text-foreground"
+              >
+                <XIcon className="size-3.5" />
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -582,6 +653,14 @@ function ChatMessage({
   const markdownComponents = useMemo(() => citationComponents(sources), [sourceKey]);
   // Failed or aborted turns can leave an assistant message with no content.
   if (!hasVisibleContent(message)) return null;
+  // The note Resume sends when a reply stopped mid-text.
+  if (message.metadata?.resumed) {
+    return (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">
+        <PlayIcon className="size-3" /> Resumed
+      </p>
+    );
+  }
   const text = stripCitations(message.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n\n"));
 
   if (message.role === "user" && editing) {

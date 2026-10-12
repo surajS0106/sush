@@ -6,8 +6,13 @@
 //! inbox, so answering continues the same run. If the app restarted in
 //! between, a `Respond` action starts a fresh run that picks the calls up from
 //! the saved messages.
+//!
+//! A message the user sends while the run works (`Steer`) joins the thread at
+//! the next step boundary: after the current step's tool results, or after
+//! its last step instead of ending. A stopped run marks its reply `paused`;
+//! `Resume` carries on from there.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
@@ -31,7 +36,18 @@ pub enum RunAction {
     Regenerate { message_id: Option<String> },
     /// Answer a tool call that is waiting for the user.
     Respond { call_id: String, response: ToolResponse },
+    /// Add a user message to a live run at its next step boundary (with no
+    /// live run, the same as `Send`).
+    Steer { message: Value },
+    /// Carry on with a reply that was stopped (see [`PAUSED`]).
+    Resume,
 }
+
+/// Metadata key set on the reply a stop interrupted.
+pub const PAUSED: &str = "paused";
+/// Metadata key on the user message `Resume` adds when the reply stopped mid-text.
+pub const RESUMED: &str = "resumed";
+const RESUME_PROMPT: &str = "Continue from where you left off.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
@@ -112,13 +128,14 @@ pub enum RunEvent {
     ToolRunning { call_id: String, running: bool },
 }
 
-/// A response delivered to a live run.
+/// Something delivered to a live run. A config replaces the run's, e.g. after
+/// "Always allow" changed a tool's approval.
 #[derive(Debug, Clone)]
-pub struct Inbox {
-    pub call_id: String,
-    pub response: ToolResponse,
-    /// Replaces the run's config, e.g. after "Always allow" changed a tool's approval.
-    pub config: Option<RunConfig>,
+pub enum Inbox {
+    /// An answer to a tool call waiting for the user.
+    Respond { call_id: String, response: ToolResponse, config: Option<RunConfig> },
+    /// A user message, added at the next step boundary.
+    Steer { message: Value, config: Option<RunConfig> },
 }
 
 /// What the run needs from the app.
@@ -146,18 +163,26 @@ pub async fn run(
     inbox: &mut mpsc::UnboundedReceiver<Inbox>,
     cancel: &CancellationToken,
 ) -> Vec<Value> {
-    let mut r = Runner { host, messages, config, cancel: cancel.clone(), status: None };
-    let mut early = Vec::new();
-    let resume = match action {
+    let mut r = Runner {
+        host,
+        messages,
+        config,
+        cancel: cancel.clone(),
+        status: None,
+        answers: VecDeque::new(),
+        steers: Vec::new(),
+    };
+    let resolve_first = match action {
         RunAction::Send { mut message, replace } => {
             if let Some(i) = replace.as_deref().and_then(|id| r.position(id)) {
                 r.messages.truncate(i);
                 message["id"] = json!(replace);
             }
-            if message.get("id").and_then(Value::as_str).is_none() {
-                message["id"] = json!(ui::new_id());
-            }
-            r.messages.push(message);
+            r.push_user(message);
+            false
+        }
+        RunAction::Steer { message } => {
+            r.push_user(message);
             false
         }
         RunAction::Regenerate { message_id } => {
@@ -172,14 +197,18 @@ pub async fn run(
             false
         }
         RunAction::Respond { call_id, response } => {
-            early.push((call_id, response));
+            r.answers.push_back((call_id, response));
             true
         }
+        RunAction::Resume => r.prepare_resume(),
     };
     // The UI starts each run from exactly what the run sees.
     host.emit(RunEvent::Op(Op::Reset { messages: r.messages.clone() }));
 
-    let outcome = r.drive(inbox, resume, early).await;
+    let outcome = r.drive(inbox, resolve_first).await;
+    if cancel.is_cancelled() && r.messages.last().and_then(ui::role) == Some("assistant") {
+        r.op(Op::SetMetadata { metadata: json!({ PAUSED: true }) });
+    }
     host.save(&r.messages).await;
     match outcome {
         Ok(()) => r.status(RunStatus::Ready, None),
@@ -202,6 +231,10 @@ struct Runner<'a> {
     config: RunConfig,
     cancel: CancellationToken,
     status: Option<RunStatus>,
+    /// Answers to calls waiting for the user, for the next `resolve`.
+    answers: VecDeque<(String, ToolResponse)>,
+    /// User messages sent while the run worked, for the next step boundary.
+    steers: Vec<Value>,
 }
 
 impl Runner<'_> {
@@ -221,27 +254,111 @@ impl Runner<'_> {
         self.messages.iter().position(|m| m.get("id").and_then(Value::as_str) == Some(id))
     }
 
-    async fn drive(
-        &mut self,
-        inbox: &mut mpsc::UnboundedReceiver<Inbox>,
-        mut resolve_first: bool,
-        mut early: Vec<(String, ToolResponse)>,
-    ) -> Result<(), String> {
+    fn push_user(&mut self, mut message: Value) {
+        if message.get("id").and_then(Value::as_str).is_none() {
+            message["id"] = json!(ui::new_id());
+        }
+        self.messages.push(message);
+    }
+
+    /// Set up a `Resume`; returns whether there are calls to resolve first.
+    fn prepare_resume(&mut self) -> bool {
+        let Some(last) = self.messages.last_mut().filter(|m| ui::role(m) == Some("assistant")) else {
+            // Stopped before the reply began: just ask again.
+            return false;
+        };
+        if let Some(metadata) = last.get_mut("metadata").and_then(Value::as_object_mut) {
+            metadata.remove(PAUSED);
+        }
+        // The kind of the last thing the reply got to.
+        let kind = ui::parts(last)
+            .iter()
+            .filter_map(|p| p.get("type").and_then(Value::as_str))
+            .rfind(|t| *t != "step-start")
+            .map(str::to_owned);
+        match kind.as_deref() {
+            // Nothing arrived before the stop.
+            None => {
+                self.messages.pop();
+                false
+            }
+            // Calls waiting for the user ask again; after results, the model just continues.
+            Some("dynamic-tool") => !ui::unresolved_calls(&self.messages).is_empty(),
+            // Cut off mid-reply. Not every provider continues a partial reply
+            // in place, so ask for the rest instead.
+            Some(_) => {
+                self.push_user(json!({
+                    "role": "user",
+                    "parts": [{ "type": "text", "text": RESUME_PROMPT }],
+                    "metadata": { RESUMED: true },
+                }));
+                false
+            }
+        }
+    }
+
+    fn receive(&mut self, msg: Inbox) {
+        let config = match msg {
+            Inbox::Respond { call_id, response, config } => {
+                self.answers.push_back((call_id, response));
+                config
+            }
+            Inbox::Steer { message, config } => {
+                self.steers.push(message);
+                config
+            }
+        };
+        if let Some(config) = config {
+            self.config = config;
+        }
+    }
+
+    fn drain(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) {
+        while let Ok(msg) = inbox.try_recv() {
+            self.receive(msg);
+        }
+    }
+
+    /// Add the messages the user sent meanwhile. Only between steps: every op
+    /// but `Push` targets the last message, which a step may still be writing.
+    fn join_steers(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) {
+        self.drain(inbox);
+        for mut message in std::mem::take(&mut self.steers) {
+            if message.get("id").and_then(Value::as_str).is_none() {
+                message["id"] = json!(ui::new_id());
+            }
+            self.op(Op::Push { message });
+        }
+    }
+
+    async fn drive(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>, mut resolve_first: bool) -> Result<(), String> {
         loop {
             if resolve_first {
-                let resolved = self.resolve(inbox, std::mem::take(&mut early)).await;
+                let resolved = self.resolve(inbox).await;
                 self.host.save(&self.messages).await;
                 match resolved {
                     Resolved::Done => {}
                     Resolved::Nothing | Resolved::Cancelled => return Ok(()),
                 }
             }
+            self.join_steers(inbox);
             let Some(calls) = self.step().await? else { return Ok(()) };
             self.host.save(&self.messages).await;
-            if calls == 0 {
+            resolve_first = calls > 0;
+            if resolve_first {
+                continue;
+            }
+            // The model is done, unless the user said more meanwhile. The inbox
+            // closes before the last look so nothing can arrive unseen after it;
+            // the host starts a new run for anything sent later.
+            self.drain(inbox);
+            if self.steers.is_empty() {
+                inbox.close();
+                self.drain(inbox);
+            }
+            if self.steers.is_empty() || self.cancel.is_cancelled() {
                 return Ok(());
             }
-            resolve_first = true;
         }
     }
 
@@ -325,7 +442,7 @@ impl Runner<'_> {
 
     /// Get a result for every open tool call in the last message: run the ones
     /// that need no approval, and wait for the user on the rest.
-    async fn resolve(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>, early: Vec<(String, ToolResponse)>) -> Resolved {
+    async fn resolve(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) -> Resolved {
         let open = ui::unresolved_calls(&self.messages);
         if open.is_empty() {
             return Resolved::Nothing;
@@ -359,16 +476,12 @@ impl Runner<'_> {
             }
         }
 
-        let mut queued: std::collections::VecDeque<Inbox> =
-            early.into_iter().map(|(call_id, response)| Inbox { call_id, response, config: None }).collect();
+        let mut inbox_open = true;
         loop {
             // Answers first, so a resume applies its response before anything else.
-            while let Some(msg) = queued.pop_front() {
-                if let Some(config) = msg.config {
-                    self.config = config;
-                }
-                let Some((index, call)) = waiting.remove(&msg.call_id) else { continue };
-                match msg.response {
+            while let Some((call_id, response)) = self.answers.pop_front() {
+                let Some((index, call)) = waiting.remove(&call_id) else { continue };
+                match response {
                     ToolResponse::Approve => match self.tool(&call.name).map(|t| t.exec.clone()) {
                         Some(exec) => {
                             in_flight.insert(call.id.clone(), (index, call.clone()));
@@ -392,6 +505,10 @@ impl Runner<'_> {
                 return Resolved::Done;
             }
             if running.is_empty() {
+                if !inbox_open {
+                    // Nobody can answer any more.
+                    return Resolved::Cancelled;
+                }
                 self.status(RunStatus::Awaiting, None);
             }
             tokio::select! {
@@ -402,11 +519,10 @@ impl Runner<'_> {
                     self.host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: false });
                     self.set_result(index, &call, result);
                 }
-                msg = inbox.recv() => match msg {
-                    Some(msg) => queued.push_back(msg),
-                    // The host dropped the run's sender; nobody can answer any more.
-                    None if running.is_empty() => return Resolved::Cancelled,
-                    None => {}
+                msg = inbox.recv(), if inbox_open => match msg {
+                    Some(msg) => self.receive(msg),
+                    // The host dropped the run's sender, or the inbox closed.
+                    None => inbox_open = false,
                 },
             }
         }
@@ -442,6 +558,9 @@ mod tests {
         saves: Mutex<usize>,
         /// Tool calls never finish, to test cancelling.
         hang_tools: bool,
+        /// Messages to deliver to the run while the given step (1-based) streams.
+        during: Mutex<HashMap<usize, Inbox>>,
+        tx: Mutex<Option<mpsc::UnboundedSender<Inbox>>>,
     }
 
     impl FakeHost {
@@ -453,6 +572,8 @@ mod tests {
                 executed: Mutex::default(),
                 saves: Mutex::default(),
                 hang_tools: false,
+                during: Mutex::default(),
+                tx: Mutex::default(),
             })
         }
 
@@ -472,7 +593,14 @@ mod tests {
     #[async_trait]
     impl RunHost for FakeHost {
         async fn stream(&self, _: &str, request: ChatRequest) -> Result<EventStream, String> {
-            self.requests.lock().unwrap().push(request);
+            let step = {
+                let mut requests = self.requests.lock().unwrap();
+                requests.push(request);
+                requests.len()
+            };
+            if let Some(msg) = self.during.lock().unwrap().remove(&step) {
+                self.tx.lock().unwrap().as_ref().unwrap().send(msg).unwrap();
+            }
             let events = self.steps.lock().unwrap().pop().ok_or("no more scripted steps")?;
             Ok(Box::pin(futures::stream::iter(events.into_iter().map(Ok))))
         }
@@ -552,11 +680,141 @@ mod tests {
         while !host.statuses().contains(&RunStatus::Awaiting) {
             tokio::task::yield_now().await;
         }
-        tx.send(Inbox { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
         let messages = runner.await.unwrap();
 
         assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
         assert_eq!(ui::parts(&messages[1])[3]["text"], "thanks");
+    }
+
+    fn steer(text: &str) -> Inbox {
+        Inbox::Steer { message: json!({ "id": text, "role": "user", "parts": [{ "type": "text", "text": text }] }), config: None }
+    }
+
+    #[tokio::test]
+    async fn a_steer_joins_after_the_tool_results() {
+        let host = FakeHost::new(vec![vec![call("ask_tool")], vec![text("ok")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        // Sent while the call waits; it must not land between the call and its result.
+        tx.send(steer("also this")).unwrap();
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        let messages = runner.await.unwrap();
+
+        let roles: Vec<_> = messages.iter().map(|m| ui::role(m).unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+        assert_eq!(ui::parts(&messages[1])[1]["state"], "output-available");
+        assert_eq!(messages[2]["id"], "also this");
+        let second = &host.requests.lock().unwrap()[1];
+        assert_eq!(second.messages.last().unwrap().role, crate::Role::User);
+    }
+
+    #[tokio::test]
+    async fn a_steer_during_the_last_step_keeps_the_run_going() {
+        let host = FakeHost::new(vec![vec![text("first")], vec![text("second")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        host.during.lock().unwrap().insert(1, steer("wait, and"));
+        *host.tx.lock().unwrap() = Some(tx);
+        let messages = run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await;
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2]["id"], "wait, and");
+        assert_eq!(ui::parts(&messages[3])[1]["text"], "second");
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
+        // The run closed its inbox on the way out, so a late message can't be lost.
+        assert!(host.tx.lock().unwrap().as_ref().unwrap().send(steer("late")).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_stopped_reply_is_marked_paused() {
+        let mut host = FakeHost::new(vec![vec![call("auto_tool")]]);
+        Arc::get_mut(&mut host).unwrap().hang_tools = true;
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let runner = {
+            let (host, cancel) = (host.clone(), cancel.clone());
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &cancel).await })
+        };
+        while host.executed.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+        let messages = runner.await.unwrap();
+        assert_eq!(messages[1]["metadata"][PAUSED], true);
+    }
+
+    fn paused(parts: Value) -> Vec<Value> {
+        vec![
+            json!({ "id": "u", "role": "user", "parts": [{ "type": "text", "text": "hi" }] }),
+            json!({ "id": "a", "role": "assistant", "parts": parts, "metadata": { PAUSED: true } }),
+        ]
+    }
+
+    #[tokio::test]
+    async fn resume_after_text_asks_for_the_rest() {
+        let host = FakeHost::new(vec![vec![text("rest")]]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let saved = paused(json!([{ "type": "step-start" }, { "type": "text", "text": "par", "state": "done" }]));
+        let messages = run(&*host, saved, RunAction::Resume, config(), &mut rx, &CancellationToken::new()).await;
+
+        assert_eq!(messages.len(), 4);
+        assert!(messages[1]["metadata"].get(PAUSED).is_none());
+        assert_eq!(messages[2]["metadata"][RESUMED], true);
+        assert_eq!(ui::parts(&messages[3])[1]["text"], "rest");
+    }
+
+    #[tokio::test]
+    async fn resume_after_tool_results_continues_the_same_reply() {
+        let host = FakeHost::new(vec![vec![text("carrying on")]]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let saved = paused(json!([
+            { "type": "step-start" },
+            { "type": "dynamic-tool", "toolName": "auto_tool", "toolCallId": "c1", "state": "output-error", "input": {}, "errorText": STOPPED },
+        ]));
+        let messages = run(&*host, saved, RunAction::Resume, config(), &mut rx, &CancellationToken::new()).await;
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(ui::parts(&messages[1])[3]["text"], "carrying on");
+    }
+
+    #[tokio::test]
+    async fn resume_asks_again_for_calls_left_waiting() {
+        let host = FakeHost::new(vec![vec![text("thanks")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let saved = paused(json!([
+            { "type": "step-start" },
+            { "type": "dynamic-tool", "toolName": "ask_tool", "toolCallId": "c1", "state": "input-available", "input": {} },
+        ]));
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, saved, RunAction::Resume, config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        assert!(host.requests.lock().unwrap().is_empty(), "no step before the answer");
+        tx.send(Inbox::Respond { call_id: "c1".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        let messages = runner.await.unwrap();
+        assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
+        assert_eq!(ui::parts(&messages[1])[3]["text"], "thanks");
+    }
+
+    #[tokio::test]
+    async fn resume_before_any_reply_asks_again() {
+        let host = FakeHost::new(vec![vec![text("hello")]]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let saved = paused(json!([{ "type": "step-start" }]));
+        let messages = run(&*host, saved, RunAction::Resume, config(), &mut rx, &CancellationToken::new()).await;
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(ui::parts(&messages[1]).len(), 2);
+        assert_eq!(ui::parts(&messages[1])[1]["text"], "hello");
     }
 
     #[tokio::test]

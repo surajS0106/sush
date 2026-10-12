@@ -300,7 +300,11 @@ export type ToolResponse = { type: "approve" } | { type: "output"; output: unkno
 export type RunAction =
   | { type: "send"; message: unknown; replace: string | null }
   | { type: "regenerate"; messageId: string | null }
-  | { type: "respond"; callId: string; response: ToolResponse };
+  | { type: "respond"; callId: string; response: ToolResponse }
+  /** Joins the live run at its next step boundary; with no live run, the same as `send`. */
+  | { type: "steer"; message: unknown }
+  /** Carry on with a stopped (`paused`) reply. */
+  | { type: "resume" };
 
 export interface RunTool extends ToolSpec {
   exec: { type: "connector"; connectorId: string; tool: string } | { type: "client" };

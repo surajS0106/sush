@@ -363,8 +363,8 @@ pub fn runs_subscribe(app: AppHandle, window: Window, state: State<'_, AppState>
 }
 
 /// Start a run on a thread. A new message or regenerate replaces whatever is
-/// running there; an answer to a waiting tool call goes to the live run, or
-/// resumes the saved thread if there is none.
+/// running there; an answer to a waiting tool call or a steering message goes
+/// to the live run, or starts from the saved thread if there is none.
 #[tauri::command]
 pub async fn run_start(
     app: AppHandle,
@@ -374,20 +374,39 @@ pub async fn run_start(
     config: RunConfig,
 ) -> AppResult<()> {
     let runs = &state.runs;
-    let _starting = runs.starting.lock().await;
+    let mut starting = runs.starting.lock().await;
     let (config, cowork) = prepare(&state, &thread, config).await?;
-    let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
-    if let Some(live) = existing {
-        if let RunAction::Respond { call_id, response } = &action {
-            if let (Some(current), Some(fresh)) = (&live.cowork, &cowork) {
-                *current.workspace.lock().unwrap() = fresh.workspace.lock().unwrap().clone();
+    loop {
+        let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
+        let Some(live) = existing else { break };
+        match &action {
+            RunAction::Respond { call_id, response } => {
+                if let (Some(current), Some(fresh)) = (&live.cowork, &cowork) {
+                    *current.workspace.lock().unwrap() = fresh.workspace.lock().unwrap().clone();
+                }
+                let answer = Inbox::Respond { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()) };
+                if !live.cancel.is_cancelled() && live.inbox.send(answer).is_ok() {
+                    return Ok(());
+                }
             }
-            let answer = Inbox { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()) };
-            if !live.cancel.is_cancelled() && live.inbox.send(answer).is_ok() {
-                return Ok(());
+            RunAction::Steer { message } if !live.cancel.is_cancelled() => {
+                let steer = Inbox::Steer { message: message.clone(), config: Some(config.clone()) };
+                if live.inbox.send(steer).is_ok() {
+                    return Ok(());
+                }
+                // The run is finishing and takes no more messages. Let it end
+                // (it may need other starts to answer it, so don't hold them
+                // up), then look again: this message starts the next run.
+                drop(starting);
+                let mut done = live.done.clone();
+                let _ = done.wait_for(|d| *d).await;
+                starting = runs.starting.lock().await;
+                continue;
             }
+            _ => {}
         }
         runs.stop(&thread.id).await;
+        break;
     }
 
     let messages = if thread.incognito {

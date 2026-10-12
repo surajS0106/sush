@@ -18,6 +18,10 @@ export interface SushMetadata {
   outputTokens?: number;
   /** When the reply started (ms); missing on replies saved before it was recorded. */
   createdAt?: number;
+  /** On a reply that was stopped before it finished; Resume carries on from it. */
+  paused?: boolean;
+  /** On the "continue" message Resume adds when a reply stopped mid-text. */
+  resumed?: boolean;
 }
 
 /** A provider-run tool (web search/fetch) and the pages it returned. */

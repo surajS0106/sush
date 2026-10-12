@@ -3,10 +3,15 @@
 // saves the thread. This module starts and stops runs, mirrors the messages
 // they stream (one channel carries every thread, so chats keep going whatever
 // is on screen), and runs the tools the UI owns when a run asks.
+//
+// A message sent while a run works steers it: it waits in the thread's queue
+// until the run adds it at its next step boundary. Stopping pauses a reply;
+// `resume` carries on with it.
 
 import { Channel } from "@tauri-apps/api/core";
 import type { FileUIPart } from "ai";
 import { useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
 import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
 import { budgetBlock } from "@/lib/budget";
@@ -44,6 +49,8 @@ export interface ThreadView {
 
 /** Threads with a run this session. Others are read from the saved conversation. */
 const views = createStore<ReadonlyMap<string, ThreadView>>("sush.threads", new Map(), false);
+/** Messages sent while a thread's run worked, until the run adds them to the thread. */
+const queues = createStore<ReadonlyMap<string, SushUIMessage[]>>("sush.queued", new Map(), false);
 /** Per-conversation model and research choice, for its next request. */
 const targets = new Map<string, ModelTarget>();
 const research = new Map<string, boolean>();
@@ -95,10 +102,31 @@ export function applyOp(messages: SushUIMessage[], op: ThreadOp): SushUIMessage[
   return [...messages.slice(0, -1), next];
 }
 
+function setQueue(id: string, change: (q: SushUIMessage[]) => SushUIMessage[]) {
+  queues.set((prev) => {
+    const next = change(prev.get(id) ?? NONE);
+    const map = new Map(prev);
+    if (next.length) map.set(id, next);
+    else map.delete(id);
+    return map;
+  });
+}
+
+const NONE: SushUIMessage[] = [];
+
+/** Drop queued messages the thread now has. */
+function dequeue(id: string, op: ThreadOp) {
+  const queued = queues.get().get(id);
+  if (!queued || (op.type !== "push" && op.type !== "reset")) return;
+  const added = new Set((op.type === "push" ? [op.message] : op.messages).map((m) => (m as SushUIMessage).id));
+  if (queued.some((m) => added.has(m.id))) setQueue(id, (q) => q.filter((m) => !added.has(m.id)));
+}
+
 function onFrame(frame: RunFrame) {
   switch (frame.type) {
     case "op":
       setView(frame.threadId, (v) => ({ ...v, messages: applyOp(v.messages, frame.op) }));
+      dequeue(frame.threadId, frame.op);
       break;
     case "status":
       setView(frame.threadId, (v) => ({ ...v, status: frame.status, error: frame.error ?? undefined }));
@@ -184,7 +212,9 @@ async function start(id: string, action: RunAction, messages: SushUIMessage[]) {
     if (blocked) throw new Error(blocked);
     await api.runStart(thread, action, config);
   } catch (e) {
-    setView(id, (v) => ({ ...v, status: "error", error: errorMessage(e) }));
+    // A steer that fails leaves the run it was meant for going; it stays queued, unsent.
+    if (action.type === "steer") toast.error("Couldn’t send that message", { description: errorMessage(e) });
+    else setView(id, (v) => ({ ...v, status: "error", error: errorMessage(e) }));
   }
 }
 
@@ -194,8 +224,49 @@ function userMessage(id: string, text: string, files: FileUIPart[]): SushUIMessa
   return { id, role: "user", parts: text ? [...files, { type: "text", text }] : files };
 }
 
+/** Several messages as one, attachments first. */
+function merge(messages: SushUIMessage[]): SushUIMessage {
+  if (messages.length === 1) return messages[0];
+  const parts = messages.flatMap((m) => m.parts);
+  const files = parts.filter((p): p is FileUIPart => p.type === "file");
+  const text = parts.flatMap((p) => (p.type === "text" && p.text ? [p.text] : [])).join("\n\n");
+  return userMessage(crypto.randomUUID(), text, files);
+}
+
+const isBusy = (id: string) => {
+  const status = views.get().get(id)?.status;
+  return status === "submitted" || status === "streaming";
+};
+
+/**
+ * Send a message. While the run works, it steers the run instead: the run
+ * adds it at its next step boundary. Otherwise anything still queued (from a
+ * run that stopped before taking it) goes along with it.
+ */
 export function sendMessage(id: string, text: string, files: FileUIPart[]) {
-  const message = userMessage(crypto.randomUUID(), text, files);
+  const sent = userMessage(crypto.randomUUID(), text, files);
+  if (isBusy(id)) {
+    setQueue(id, (q) => [...q, sent]);
+    void start(id, { type: "steer", message: sent }, [...current(id), ...(queues.get().get(id) ?? NONE)]);
+    return;
+  }
+  send(id, [...(queues.get().get(id) ?? NONE), sent]);
+}
+
+/** Send what's queued now, stopping the run if it's still working. */
+export function sendQueued(id: string) {
+  const queued = queues.get().get(id);
+  if (queued?.length) send(id, queued);
+}
+
+/** Take a message out of the queue. Only before a run has it: once steered, it can't be called back. */
+export function unqueue(id: string, messageId: string) {
+  setQueue(id, (q) => q.filter((m) => m.id !== messageId));
+}
+
+function send(id: string, outgoing: SushUIMessage[]) {
+  setQueue(id, () => NONE);
+  const message = merge(outgoing);
   const messages = [...current(id), message];
   // Show it right away; the run's first update replaces this with the same.
   setView(id, (v) => ({ ...v, messages, status: "submitted", error: undefined }));
@@ -228,7 +299,13 @@ export function respond(id: string, callId: string, response: ToolResponse) {
 export const toResponse = (result: ToolResult): ToolResponse =>
   "output" in result ? { type: "output", output: result.output } : { type: "error", errorText: result.errorText };
 
-/** Stop the run: the model stream and any tool calls in flight. */
+/** Carry on with a stopped reply, or answer a message the app closed on. */
+export function resume(id: string) {
+  setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
+  void start(id, { type: "resume" }, current(id));
+}
+
+/** Stop (pause) the run: the model stream and any tool calls in flight. The reply can be resumed. */
 export function stop(id: string) {
   void api.runCancel(id).catch((e) => console.error("Could not stop the run", e));
 }
@@ -251,6 +328,11 @@ function subscribe(listener: () => void) {
 /** A conversation's messages and run status, live while a run streams. */
 export function useThread(id: string): ThreadView {
   return useSyncExternalStore(subscribe, () => views.get().get(id) ?? saved(id));
+}
+
+/** Messages waiting to steer a thread's run, oldest first. */
+export function useQueued(id: string): SushUIMessage[] {
+  return useSyncExternalStore(queues.subscribe, () => queues.get().get(id) ?? NONE);
 }
 
 /** `working`: streaming or running tools. `needs-input`: waiting on an approval or an answer. */

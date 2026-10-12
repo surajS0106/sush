@@ -1,5 +1,5 @@
 import type { ChatStatus } from "ai";
-import { ArrowUpIcon, FileIcon, FolderIcon, MicIcon, SquareIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -34,6 +34,8 @@ const PLACEHOLDERS = [
   "Explain this error message…",
   "Brainstorm names for a project…",
 ];
+/** While a reply is coming: what's sent now joins it at its next step. */
+const STEER_PLACEHOLDER = "Steer the reply, or add to it…";
 
 // Two soft brand-tinted pools blurred behind the input; tracks --brand in both themes.
 const GLOW =
@@ -89,6 +91,8 @@ export function Composer({
   const busy = status === "submitted" || status === "streaming";
   const empty = textInput.value.length === 0;
   const canSend = !!target && (textInput.value.trim().length > 0 || attachments.files.length > 0);
+  // Mid-reply, the button sends (steers) once there's something to send, and pauses otherwise.
+  const steering = busy && canSend;
   const [promptIndex, setPromptIndex] = useState(0);
   const speechProviders = useMemo(() => catalog.map((c) => c.provider), [catalog]);
   const dictation = useDictation(textInput.value, textInput.setInput, speechProviders);
@@ -228,7 +232,7 @@ export function Composer({
                 <div aria-hidden className="pointer-events-none absolute inset-x-4 top-3.5 overflow-hidden">
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.span
-                      key={dictating ? dictation.status : promptIndex}
+                      key={dictating ? dictation.status : busy ? "busy" : promptIndex}
                       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
@@ -241,7 +245,9 @@ export function Composer({
                           ? `Downloading speech model… ${Math.round(dictation.progress * 100)}%`
                           : dictating
                             ? "Transcribing…"
-                            : PLACEHOLDERS[promptIndex]}
+                            : busy
+                              ? STEER_PLACEHOLDER
+                              : PLACEHOLDERS[promptIndex]}
                     </motion.span>
                   </AnimatePresence>
                 </div>
@@ -301,9 +307,10 @@ export function Composer({
                   />
                 )}
                 <PromptInputSubmit
-                  status={status}
+                  status={steering ? "ready" : status}
                   onStop={onStop}
                   disabled={!busy && !canSend}
+                  aria-label={steering ? "Send now; it joins the reply at its next step" : busy ? "Pause" : "Send"}
                   className={
                     busy || canSend
                       ? "rounded-full bg-linear-to-br from-brand via-brand/85 to-brand text-brand-foreground shadow-[0_4px_18px_-4px_color-mix(in_oklch,var(--brand)_65%,transparent)] hover:bg-brand/90"
@@ -312,17 +319,19 @@ export function Composer({
                 >
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.span
-                      key={busy ? status : "idle"}
+                      key={steering ? "steer" : busy ? status : "idle"}
                       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.6, rotate: -45 }}
                       animate={{ opacity: 1, scale: 1, rotate: 0 }}
                       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.6, rotate: 45 }}
                       transition={{ duration: 0.18, ease: EASE_OUT }}
                       className="flex items-center justify-center"
                     >
-                      {status === "submitted" ? (
+                      {steering ? (
+                        <ArrowUpIcon className="size-4" />
+                      ) : status === "submitted" ? (
                         <Spinner />
                       ) : status === "streaming" ? (
-                        <SquareIcon className="size-3 fill-current" />
+                        <PauseIcon className="size-3.5 fill-current" />
                       ) : (
                         <ArrowUpIcon className="size-4" />
                       )}
