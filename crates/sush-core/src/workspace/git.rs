@@ -84,6 +84,45 @@ pub fn add_worktree(root: &Path, base: &str, dest: &Path, new_branch: &str) -> R
     git(root, &["worktree", "add", "-b", new_branch, dest, base]).map(|_| ())
 }
 
+/// The commit HEAD points at, if the folder is in a repo with one.
+pub fn head(root: &Path) -> Option<String> {
+    git(root, &["rev-parse", "HEAD"]).ok().filter(|h| !h.is_empty())
+}
+
+/// Changes as a unified diff: uncommitted ones (staged or not) against HEAD
+/// when `base` is `None`, with untracked files listed after it; otherwise the
+/// commits on HEAD since it left `base`. `path` limits it to a file or folder,
+/// and `stat` gives the per-file summary instead of the diff.
+///
+/// The folder may not be trusted, so nothing its config names is run: no
+/// external diff tools, text conversions or fsmonitor hooks.
+pub fn diff(root: &Path, base: Option<&str>, path: Option<&str>, stat: bool) -> Result<String, String> {
+    let range = match base {
+        Some(b) => {
+            check_branch(root, b)?;
+            format!("{b}...HEAD")
+        }
+        None => "HEAD".into(),
+    };
+    let mut args = vec!["-c", "core.fsmonitor=false", "diff", "--no-ext-diff", "--no-textconv", "--no-color"];
+    if stat {
+        args.push("--stat");
+    }
+    args.extend([range.as_str(), "--"]);
+    args.extend(path);
+    let mut out = git(root, &args)?;
+    if base.is_none() {
+        let mut ls = vec!["-c", "core.fsmonitor=false", "ls-files", "--others", "--exclude-standard", "--"];
+        ls.extend(path);
+        let untracked = git(root, &ls).unwrap_or_default();
+        if !untracked.is_empty() {
+            out.push_str("\n\nNew files git doesn't track yet (not in the diff above; read them):\n");
+            out.push_str(&untracked);
+        }
+    }
+    Ok(if out.trim().is_empty() { "No changes.".into() } else { out })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,5 +180,29 @@ mod tests {
         add_worktree(dir.path(), "main", &dest, "sush/abc").unwrap();
         let got = info(&dest).unwrap();
         assert_eq!((got.branch.as_deref(), got.worktree), (Some("sush/abc"), true));
+    }
+
+    #[test]
+    fn diffs_uncommitted_changes_and_branches() {
+        if !have_git() {
+            return;
+        }
+        let dir = repo();
+        let root = dir.path();
+        std::fs::write(root.join("a.txt"), "one\n").unwrap();
+        git(root, &["add", "a.txt"]).unwrap();
+        git(root, &["commit", "-q", "-m", "a"]).unwrap();
+        assert!(head(root).is_some_and(|h| h.len() == 40));
+        assert_eq!(diff(root, None, None, false).unwrap(), "No changes.");
+
+        std::fs::write(root.join("a.txt"), "two\n").unwrap();
+        std::fs::write(root.join("new.txt"), "hi\n").unwrap();
+        let out = diff(root, None, None, false).unwrap();
+        assert!(out.contains("+two") && out.contains("new.txt"), "{out}");
+        assert!(diff(root, None, Some("a.txt"), true).unwrap().contains("a.txt |"));
+
+        // `feature` was branched before the commit; main's commit is what main adds since.
+        assert!(diff(root, Some("feature"), None, false).unwrap().contains("+one"));
+        assert!(diff(root, Some("--output=x"), None, false).is_err());
     }
 }

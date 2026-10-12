@@ -8,6 +8,7 @@ mod connectors;
 mod dock_icon;
 mod error;
 mod library;
+mod reports;
 mod runs;
 mod secrets;
 mod speech;
@@ -69,6 +70,7 @@ pub fn run() {
             runs::runs_subscribe,
             runs::run_start,
             runs::run_cancel,
+            runs::run_interrupt,
             runs::tool_result,
             workspaces::workspaces_list,
             workspaces::workspace_add,
@@ -87,6 +89,11 @@ pub fn run() {
             workspaces::workspace_reveal,
             workspaces::workspace_open_in,
             workspaces::sandbox_status,
+            reports::reports_list,
+            reports::report_create,
+            reports::report_rerun,
+            reports::report_ask_thread,
+            reports::report_delete,
             browser::browser_subscribe,
             browser::browser_open,
             browser::browser_go,

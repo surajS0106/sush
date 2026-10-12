@@ -253,6 +253,66 @@ export interface TerminalInfo {
   shell: "powershell" | "bash" | "sh";
 }
 
+export type ReportKind = "security" | "review" | "wiki";
+
+/** What a report covers (`sush_core::reports::Scope`). */
+export type ReportScope =
+  | { type: "project" }
+  | { type: "uncommitted" }
+  /** The current branch's commits since it left `base`. */
+  | { type: "branch"; base: string }
+  | { type: "pull-request"; repo: string; number: number };
+
+export type ReportStatus = "running" | "done" | "stopped" | "failed";
+
+export type Severity = "critical" | "high" | "medium" | "low" | "info";
+
+export interface Finding {
+  id: string;
+  severity: Severity;
+  title: string;
+  /** Relative to the workspace folder. */
+  file?: string;
+  line?: number;
+  /** Markdown. */
+  description: string;
+  /** Markdown. */
+  suggestion?: string;
+}
+
+export interface WikiPage {
+  slug: string;
+  title: string;
+  /** Markdown. */
+  content: string;
+  updatedAt: number;
+}
+
+/** A security review, code review or wiki of a workspace (`sush_core::reports::Report`). */
+export interface Report {
+  id: string;
+  workspaceId: string;
+  kind: ReportKind;
+  scope: ReportScope;
+  title: string;
+  /** The thread its latest run is on. */
+  threadId: string;
+  /** A wiki's question thread. */
+  askThreadId?: string;
+  status: ReportStatus;
+  error?: string;
+  createdAt: number;
+  updatedAt: number;
+  /** When the latest run began. */
+  runStartedAt: number;
+  /** HEAD when the latest run began. */
+  commit?: string;
+  summary?: string;
+  findings: Finding[];
+  /** In reading order. */
+  pages: WikiPage[];
+}
+
 export interface ChatHit {
   id: string;
   title: string;
@@ -285,7 +345,8 @@ export type RunFrame =
   | { type: "tool-running"; threadId: string; callId: string; running: boolean }
   | { type: "client-tool"; threadId: string; callId: string; name: string; input: unknown }
   | { type: "saved"; thread: ThreadMeta }
-  | { type: "files-changed"; threadId: string; workspaceId: string };
+  | { type: "files-changed"; threadId: string; workspaceId: string }
+  | { type: "report"; report: Report };
 
 export interface LiveRun {
   threadId: string;
@@ -339,6 +400,8 @@ export const api = {
   runsSubscribe: (onFrame: Channel<RunFrame>) => invoke<LiveRun[]>("runs_subscribe", { onFrame }),
   runStart: (thread: ThreadMeta, action: RunAction, config: RunConfig) => invoke<void>("run_start", { thread, action, config }),
   runCancel: (threadId: string) => invoke<void>("run_cancel", { threadId }),
+  /** Have the messages steering a run join it now, cutting its current step or tool calls short. */
+  runInterrupt: (threadId: string) => invoke<void>("run_interrupt", { threadId }),
   toolResult: (callId: string, result: { output: unknown } | { errorText: string }) => invoke<void>("tool_result", { callId, result }),
   threadsLoad: () => invoke<StoredThread[]>("threads_load"),
   /** Without `messages`, only the metadata (title, pin, project, model) is updated. */
@@ -382,6 +445,14 @@ export const api = {
   workspaceReadFile: (id: string, path: string) => invoke<FileView>("workspace_read_file", { id, path }),
   workspaceFind: (id: string, query: string) => invoke<string[]>("workspace_find", { id, query }),
   sandboxStatus: () => invoke<SandboxStatus>("sandbox_status"),
+  reportsList: () => invoke<Report[]>("reports_list"),
+  /** A report to run on `threadId`, a Cowork thread in the workspace (`lib/reports.ts`). */
+  reportCreate: (workspaceId: string, kind: ReportKind, scope: ReportScope, threadId: string) =>
+    invoke<Report>("report_create", { workspaceId, kind, scope, threadId }),
+  /** Run it again on a new thread; its results stay until that run finishes. */
+  reportRerun: (id: string, threadId: string) => invoke<Report>("report_rerun", { id, threadId }),
+  reportAskThread: (id: string, threadId: string | null) => invoke<Report>("report_ask_thread", { id, threadId }),
+  reportDelete: (id: string) => invoke<void>("report_delete", { id }),
   /** Save a file the user edited in the viewer. */
   workspaceWriteFile: (id: string, path: string, text: string) => invoke<void>("workspace_write_file", { id, path, text }),
   /** Show a workspace file or folder in the system file manager. */

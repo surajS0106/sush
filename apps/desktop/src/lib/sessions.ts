@@ -17,6 +17,7 @@ import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from
 import { budgetBlock } from "@/lib/budget";
 import { expandMentions } from "@/lib/mentions";
 import { getProject } from "@/lib/projects";
+import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
 import {
   applySaved,
@@ -72,7 +73,7 @@ function saved(id: string): ThreadView {
 
 /** Apply a run's change to a thread's messages, exactly as Rust does (`sush_core::agent::ui::apply`). */
 export function applyOp(messages: SushUIMessage[], op: ThreadOp): SushUIMessage[] {
-  if (op.type === "reset") return op.messages as SushUIMessage[];
+  if (op.type === "reset") return keepUnchanged(messages, op.messages as SushUIMessage[]);
   if (op.type === "push") return [...messages, op.message as SushUIMessage];
   const last = messages.at(-1);
   if (!last) return messages;
@@ -100,6 +101,31 @@ export function applyOp(messages: SushUIMessage[], op: ThreadOp): SushUIMessage[
       break;
   }
   return [...messages.slice(0, -1), next];
+}
+
+/**
+ * A reset's messages, keeping the ones the thread already shows as they are.
+ * Each run starts with the whole thread, which for a long one (a review that
+ * read many files) is a lot to redraw; unchanged messages then skip it.
+ */
+function keepUnchanged(prev: SushUIMessage[], next: SushUIMessage[]): SushUIMessage[] {
+  const byId = new Map(prev.map((m) => [m.id, m]));
+  const kept = next.map((m) => {
+    const old = byId.get(m.id);
+    return old && sameValue(old, m) ? old : m;
+  });
+  return kept.length === prev.length && kept.every((m, i) => m === prev[i]) ? prev : kept;
+}
+
+/** Deep equality of JSON values; key order doesn't matter. */
+function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  if (Array.isArray(b)) return false;
+  const ka = Object.keys(a).filter((k) => (a as Record<string, unknown>)[k] !== undefined);
+  const kb = Object.keys(b).filter((k) => (b as Record<string, unknown>)[k] !== undefined);
+  return ka.length === kb.length && ka.every((k) => sameValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));
 }
 
 function setQueue(id: string, change: (q: SushUIMessage[]) => SushUIMessage[]) {
@@ -145,6 +171,9 @@ function onFrame(frame: RunFrame) {
     case "files-changed":
       notifyFilesChanged(frame.threadId, frame.workspaceId);
       break;
+    case "report":
+      applyReport(frame.report);
+      break;
   }
 }
 
@@ -177,6 +206,11 @@ export function setSessionResearch(id: string, on: boolean) {
 function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   const target = sessionTarget(id);
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
+  // A report's run is held to reading: Rust gives it its own instructions and tools.
+  const report = reportForThread(id);
+  if (report) {
+    return { providerId: target.providerId, model: target.model, system: null, tools: reportRunTools(report, id), research: false, expansions: {} };
+  }
   const convo = getConversations().find((c) => c.id === id);
   const ctx = buildContext({
     askUser: getAskUser(),
@@ -253,10 +287,20 @@ export function sendMessage(id: string, text: string, files: FileUIPart[]) {
   send(id, [...(queues.get().get(id) ?? NONE), sent]);
 }
 
-/** Send what's queued now, stopping the run if it's still working. */
+/**
+ * Send what's queued now. A live run already holds them: it cuts its current
+ * step or tool calls short so they join at once, and carries on. Otherwise
+ * (the run stopped before taking them) they start the next one.
+ */
 export function sendQueued(id: string) {
   const queued = queues.get().get(id);
-  if (queued?.length) send(id, queued);
+  if (!queued?.length) return;
+  const status = views.get().get(id)?.status;
+  if (status === "submitted" || status === "streaming" || status === "awaiting") {
+    void api.runInterrupt(id).catch((e) => toast.error("Couldn’t send that now", { description: errorMessage(e) }));
+    return;
+  }
+  send(id, queued);
 }
 
 /** Take a message out of the queue. Only before a run has it: once steered, it can't be called back. */
@@ -345,12 +389,12 @@ export function useSessionStatus(id: string): SessionStatus | null {
   });
 }
 
-/** Across every Cowork session: `needs-input` if any is waiting on the user, else `working` if any is running. */
+/** Across every Cowork session (reports' runs aside): `needs-input` if any is waiting on the user, else `working` if any is running. */
 export function useCoworkStatus(): SessionStatus | null {
   return useSyncExternalStore(subscribe, () => {
     let working = false;
     for (const c of getConversations()) {
-      if (!c.workspaceId) continue;
+      if (!c.workspaceId || isReportThread(c.id)) continue;
       const status = views.get().get(c.id)?.status;
       if (status === "awaiting") return "needs-input";
       if (status === "submitted" || status === "streaming") working = true;

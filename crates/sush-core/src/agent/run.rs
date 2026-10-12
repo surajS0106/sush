@@ -9,7 +9,9 @@
 //!
 //! A message the user sends while the run works (`Steer`) joins the thread at
 //! the next step boundary: after the current step's tool results, or after
-//! its last step instead of ending. A stopped run marks its reply `paused`;
+//! its last step instead of ending. `Interrupt` ("Send now") has them join
+//! at once: it ends the step or tool calls in progress, and the calls it cuts
+//! short get an [`INTERRUPTED`] result. A stopped run marks its reply `paused`;
 //! `Resume` carries on from there.
 
 use std::collections::{HashMap, VecDeque};
@@ -47,6 +49,8 @@ pub enum RunAction {
 pub const PAUSED: &str = "paused";
 /// Metadata key on the user message `Resume` adds when the reply stopped mid-text.
 pub const RESUMED: &str = "resumed";
+/// The result of a tool call that `Inbox::Interrupt` cut short.
+pub const INTERRUPTED: &str = "Interrupted: the user sent a message.";
 const RESUME_PROMPT: &str = "Continue from where you left off.";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,6 +104,9 @@ pub enum ToolExec {
     /// A tool for the host's built-in browser (`crate::browser`). Like
     /// workspace tools, only the host adds these.
     Browser,
+    /// A report run's own tools (`crate::reports`): its diff and recording
+    /// its results. Only the host adds these.
+    Report,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +143,9 @@ pub enum Inbox {
     Respond { call_id: String, response: ToolResponse, config: Option<RunConfig> },
     /// A user message, added at the next step boundary.
     Steer { message: Value, config: Option<RunConfig> },
+    /// Add the steering messages now: end the current step or tool calls
+    /// early. Does nothing when none are waiting.
+    Interrupt,
 }
 
 /// What the run needs from the app.
@@ -171,6 +181,7 @@ pub async fn run(
         status: None,
         answers: VecDeque::new(),
         steers: Vec::new(),
+        interrupt: false,
     };
     let resolve_first = match action {
         RunAction::Send { mut message, replace } => {
@@ -235,6 +246,8 @@ struct Runner<'a> {
     answers: VecDeque<(String, ToolResponse)>,
     /// User messages sent while the run worked, for the next step boundary.
     steers: Vec<Value>,
+    /// The user asked for `steers` to join now.
+    interrupt: bool,
 }
 
 impl Runner<'_> {
@@ -307,6 +320,10 @@ impl Runner<'_> {
                 self.steers.push(message);
                 config
             }
+            Inbox::Interrupt => {
+                self.interrupt = true;
+                None
+            }
         };
         if let Some(config) = config {
             self.config = config;
@@ -319,10 +336,16 @@ impl Runner<'_> {
         }
     }
 
+    /// Whether to cut the work in progress short so the steers join now.
+    fn take_interrupt(&mut self) -> bool {
+        std::mem::take(&mut self.interrupt) && !self.steers.is_empty()
+    }
+
     /// Add the messages the user sent meanwhile. Only between steps: every op
     /// but `Push` targets the last message, which a step may still be writing.
     fn join_steers(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) {
         self.drain(inbox);
+        self.interrupt = false;
         for mut message in std::mem::take(&mut self.steers) {
             if message.get("id").and_then(Value::as_str).is_none() {
                 message["id"] = json!(ui::new_id());
@@ -342,7 +365,7 @@ impl Runner<'_> {
                 }
             }
             self.join_steers(inbox);
-            let Some(calls) = self.step().await? else { return Ok(()) };
+            let Some(calls) = self.step(inbox).await? else { return Ok(()) };
             self.host.save(&self.messages).await;
             resolve_first = calls > 0;
             if resolve_first {
@@ -363,8 +386,9 @@ impl Runner<'_> {
     }
 
     /// One model request, streamed into the last assistant message. Returns
-    /// how many tool calls it made, or None if it was cancelled.
-    async fn step(&mut self) -> Result<Option<usize>, String> {
+    /// how many tool calls it made, or None if it was cancelled. An interrupt
+    /// ends it early with what arrived so far, and no calls.
+    async fn step(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) -> Result<Option<usize>, String> {
         if self.cancel.is_cancelled() {
             return Ok(None);
         }
@@ -402,12 +426,29 @@ impl Runner<'_> {
         };
         let last = self.messages.last();
         let mut builder = StepBuilder::new(last.map_or(0, |m| ui::parts(m).len())).after(last.and_then(|m| m.get("metadata")));
+        let mut inbox_open = true;
         loop {
             let next = tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => {
                     for op in builder.end() { self.op(op); }
                     return Ok(None);
+                }
+                msg = inbox.recv(), if inbox_open => {
+                    match msg {
+                        Some(msg) => self.receive(msg),
+                        None => inbox_open = false,
+                    }
+                    if self.take_interrupt() {
+                        // Keep what arrived; calls it began don't run.
+                        let (ops, _) = builder.finish();
+                        for op in ops { self.op(op); }
+                        for (index, call) in ui::unresolved_calls(&self.messages) {
+                            self.set_result(index, &call, Err(INTERRUPTED.into()));
+                        }
+                        return Ok(Some(0));
+                    }
+                    continue;
                 }
                 next = stream.next() => next,
             };
@@ -451,6 +492,8 @@ impl Runner<'_> {
         let mut waiting: HashMap<String, (usize, ToolCall)> = HashMap::new();
         let mut running = FuturesUnordered::new();
         let mut in_flight: HashMap<String, (usize, ToolCall)> = HashMap::new();
+        // Cancels the running calls on an interrupt; a stop cancels it too.
+        let interrupt = self.cancel.child_token();
 
         let start = |index: usize, call: ToolCall, exec: ToolExec, cancel: CancellationToken| {
             host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: true });
@@ -468,7 +511,7 @@ impl Runner<'_> {
                 ))),
                 Some(t) if host.approval(&call, &t) == Approval::Auto => {
                     in_flight.insert(call.id.clone(), (index, call.clone()));
-                    running.push(start(index, call, t.exec, self.cancel.child_token()));
+                    running.push(start(index, call, t.exec, interrupt.child_token()));
                 }
                 Some(_) => {
                     waiting.insert(call.id.clone(), (index, call));
@@ -485,7 +528,7 @@ impl Runner<'_> {
                     ToolResponse::Approve => match self.tool(&call.name).map(|t| t.exec.clone()) {
                         Some(exec) => {
                             in_flight.insert(call.id.clone(), (index, call.clone()));
-                            running.push(start(index, call, exec, self.cancel.child_token()));
+                            running.push(start(index, call, exec, interrupt.child_token()));
                         }
                         None => self.set_result(index, &call, Err(format!("Unknown tool {}.", call.name))),
                     },
@@ -500,6 +543,18 @@ impl Runner<'_> {
                     self.set_result(index, &call, Err(STOPPED.into()));
                 }
                 return Resolved::Cancelled;
+            }
+            // "Send now": the calls still going or waiting give way to the user's message.
+            if self.take_interrupt() {
+                interrupt.cancel();
+                for (_, (index, call)) in in_flight.drain() {
+                    self.host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: false });
+                    self.set_result(index, &call, Err(INTERRUPTED.into()));
+                }
+                for (_, (index, call)) in waiting.drain() {
+                    self.set_result(index, &call, Err(INTERRUPTED.into()));
+                }
+                return Resolved::Done;
             }
             if waiting.is_empty() && running.is_empty() {
                 return Resolved::Done;
@@ -559,7 +614,7 @@ mod tests {
         /// Tool calls never finish, to test cancelling.
         hang_tools: bool,
         /// Messages to deliver to the run while the given step (1-based) streams.
-        during: Mutex<HashMap<usize, Inbox>>,
+        during: Mutex<HashMap<usize, Vec<Inbox>>>,
         tx: Mutex<Option<mpsc::UnboundedSender<Inbox>>>,
     }
 
@@ -598,7 +653,7 @@ mod tests {
                 requests.push(request);
                 requests.len()
             };
-            if let Some(msg) = self.during.lock().unwrap().remove(&step) {
+            for msg in self.during.lock().unwrap().remove(&step).unwrap_or_default() {
                 self.tx.lock().unwrap().as_ref().unwrap().send(msg).unwrap();
             }
             let events = self.steps.lock().unwrap().pop().ok_or("no more scripted steps")?;
@@ -719,7 +774,7 @@ mod tests {
     async fn a_steer_during_the_last_step_keeps_the_run_going() {
         let host = FakeHost::new(vec![vec![text("first")], vec![text("second")]]);
         let (tx, mut rx) = mpsc::unbounded_channel();
-        host.during.lock().unwrap().insert(1, steer("wait, and"));
+        host.during.lock().unwrap().insert(1, vec![steer("wait, and")]);
         *host.tx.lock().unwrap() = Some(tx);
         let messages = run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await;
 
@@ -729,6 +784,54 @@ mod tests {
         assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
         // The run closed its inbox on the way out, so a late message can't be lost.
         assert!(host.tx.lock().unwrap().as_ref().unwrap().send(steer("late")).is_err());
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_ends_the_step_and_the_steer_joins_at_once() {
+        let host = FakeHost::new(vec![vec![text("never seen"), call("auto_tool")], vec![text("second")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        host.during.lock().unwrap().insert(1, vec![steer("now"), Inbox::Interrupt]);
+        *host.tx.lock().unwrap() = Some(tx);
+        let messages = run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await;
+
+        let roles: Vec<_> = messages.iter().map(|m| ui::role(m).unwrap()).collect();
+        assert_eq!(roles, ["user", "assistant", "user", "assistant"]);
+        assert_eq!(messages[2]["id"], "now");
+        assert_eq!(ui::parts(&messages[3])[1]["text"], "second");
+        assert!(host.executed.lock().unwrap().is_empty());
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_cuts_running_tools_short() {
+        let mut host = FakeHost::new(vec![vec![call("auto_tool")], vec![text("ok")]]);
+        Arc::get_mut(&mut host).unwrap().hang_tools = true;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while host.executed.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        tx.send(steer("now")).unwrap();
+        tx.send(Inbox::Interrupt).unwrap();
+        let messages = runner.await.unwrap();
+
+        assert_eq!(ui::parts(&messages[1])[1]["errorText"], INTERRUPTED);
+        assert_eq!(messages[2]["id"], "now");
+        assert_eq!(ui::parts(&messages[3])[1]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn an_interrupt_with_nothing_to_send_is_ignored() {
+        let host = FakeHost::new(vec![vec![text("all of it")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        host.during.lock().unwrap().insert(1, vec![Inbox::Interrupt]);
+        *host.tx.lock().unwrap() = Some(tx);
+        let messages = run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await;
+        assert_eq!(messages.len(), 2);
+        assert_eq!(ui::parts(&messages[1])[1]["text"], "all of it");
     }
 
     #[tokio::test]

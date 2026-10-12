@@ -214,15 +214,28 @@ const openFiles = createStore<Readonly<Record<string, OpenFiles>>>("sush.open-fi
 export const useOpenFiles = (workspaceId: string) =>
   useSyncExternalStore(openFiles.subscribe, () => openFiles.get()[workspaceId] ?? NO_FILES);
 
-/** Show a file in the viewer (opening the files panel if it's closed). */
-export function openFile(workspaceId: string, path: string) {
+/** Show a file in the viewer (opening the files panel if it's closed), at `line` if given. */
+export function openFile(workspaceId: string, path: string, line?: number) {
   openFiles.set((all) => {
     const cur = all[workspaceId] ?? NO_FILES;
     const tabs = cur.tabs.includes(path) ? cur.tabs : [...cur.tabs, path];
     return { ...all, [workspaceId]: { tabs, active: path } };
   });
   togglePanel("files", true);
+  if (line) reveal.set({ workspaceId, path, line });
 }
+
+/** A line the viewer should scroll to once it shows the file; it clears this when it has. */
+const reveal = createStore<{ workspaceId: string; path: string; line: number } | null>("sush.file-reveal", null, false);
+
+export function useRevealLine(workspaceId: string, path: string): number | undefined {
+  return useSyncExternalStore(reveal.subscribe, () => {
+    const r = reveal.get();
+    return r?.workspaceId === workspaceId && r.path === path ? r.line : undefined;
+  });
+}
+
+export const clearRevealLine = () => reveal.set(null);
 
 /** Close a tab; asks first if it has unsaved edits. Returns whether it closed. */
 export function closeFile(workspaceId: string, path: string) {

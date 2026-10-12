@@ -10,6 +10,7 @@ pub mod memory;
 pub mod message;
 pub mod provider;
 pub mod providers;
+pub mod reports;
 pub mod sse;
 pub mod store;
 pub mod transcribe;

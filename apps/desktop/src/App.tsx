@@ -6,7 +6,10 @@ import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { AppSidebar, type Page, type SessionMode } from "@/components/app-sidebar";
 import { AutomationsPage } from "@/components/automations-page";
 import { ChatView } from "@/components/chat-view";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { NavControls, type Nav } from "@/components/nav-controls";
+import { ReportsPage } from "@/components/reports-page";
+import { WikiPage } from "@/components/wiki-page";
 import { IncognitoToggle, SessionDialogs, SessionMenu } from "@/components/session-actions";
 import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -211,19 +214,23 @@ export default function App() {
                 }
               />
             </AppHeader>
-            {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
-            {page === "session" && current && (
-              // Re-keyed on a prefill so the composer picks it up even if this chat was already open.
-              <PromptInputProvider key={prefilled?.id ?? current.id} initialInput={current.messages.length === 0 ? prefilled?.prompt : undefined}>
-                <ChatView
-                  conversation={current}
-                  catalog={catalog}
-                  // Known as soon as the provider list loads; the catalog waits on every model list.
-                  hasProviders={providers ? providers.length > 0 : null}
-                  onOpenSettings={() => openSettings({ section: "providers" })}
-                />
-              </PromptInputProvider>
-            )}
+            <ErrorBoundary title="Something went wrong showing this" resetKey={`${page}:${activeId}`}>
+              {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
+              {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}
+              {page === "wiki" && <WikiPage onOpenSession={tabs.openInNewTab} />}
+              {page === "session" && current && (
+                // Re-keyed on a prefill so the composer picks it up even if this chat was already open.
+                <PromptInputProvider key={prefilled?.id ?? current.id} initialInput={current.messages.length === 0 ? prefilled?.prompt : undefined}>
+                  <ChatView
+                    conversation={current}
+                    catalog={catalog}
+                    // Known as soon as the provider list loads; the catalog waits on every model list.
+                    hasProviders={providers ? providers.length > 0 : null}
+                    onOpenSettings={() => openSettings({ section: "providers" })}
+                  />
+                </PromptInputProvider>
+              )}
+            </ErrorBoundary>
           </SidebarInset>
         </SidebarProvider>
         <SessionDialogs />

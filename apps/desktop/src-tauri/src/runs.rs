@@ -15,6 +15,11 @@
 //! approval is decided here too (`workspace::tools::approval`). Every change
 //! is checkpointed first so a turn can be undone (`workspaces.rs`).
 //! It gets the built-in browser's tools as well (`browser.rs`).
+//!
+//! A report's thread (a security review, code review or wiki, `reports.rs`)
+//! is held to reading: its folder is read-only whatever the workspace allows,
+//! it gets no browser and none of the UI's tools, only `sush_core::reports`'
+//! own. Its results reach every window as `report` frames.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -27,9 +32,10 @@ use sush_core::agent::ui::{self, ToolCall, STOPPED};
 use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
 use sush_core::browser as browser_tools;
 use sush_core::provider::EventStream;
+use sush_core::reports::{self, Report, ReportStatus, Role};
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::sandbox::SandboxStatus;
-use sush_core::workspace::{tools as ws_tools, Workspace, WorkspaceFs};
+use sush_core::workspace::{tools as ws_tools, Access, Workspace, WorkspaceFs};
 use sush_core::ChatRequest;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
@@ -54,6 +60,8 @@ pub enum RunFrame {
     Saved { thread: ThreadMeta },
     /// A Cowork tool changed files (or may have, for shell commands).
     FilesChanged { thread_id: String, workspace_id: String },
+    /// A report changed: its run started or ended, or recorded results.
+    Report { report: Report },
 }
 
 #[derive(Serialize)]
@@ -86,6 +94,13 @@ struct Live {
     /// Becomes true once the run has saved and ended.
     done: watch::Receiver<bool>,
     cowork: Option<Cowork>,
+    report: Option<ReportRun>,
+}
+
+/// The report a thread works for, as it was when the run started (its scope can't change).
+struct ReportRun {
+    report: Report,
+    role: Role,
 }
 
 /// A Cowork run's folder. The workspace settings refresh when the user
@@ -176,6 +191,15 @@ impl Runs {
     pub fn forget(&self, thread_id: &str) {
         self.incognito.lock().unwrap().remove(thread_id);
     }
+
+    pub fn is_running(&self, thread_id: &str) -> bool {
+        self.live.lock().unwrap().contains_key(thread_id)
+    }
+
+    /// Tell every window a report changed.
+    pub fn report_changed(&self, report: Report) {
+        self.send(RunFrame::Report { report });
+    }
 }
 
 struct Host {
@@ -264,6 +288,26 @@ impl RunHost for Host {
             ToolExec::Browser => {
                 let browser = self.app.state::<Browser>();
                 browser.execute(&self.app, &self.thread_id, &call.name, &call.input, cancel).await
+            }
+            ToolExec::Report => {
+                let (Some(run), Some(cowork)) = (&self.live.report, &self.live.cowork) else {
+                    return Err("This tool is only for reports.".into());
+                };
+                let (input, name) = (call.input.clone(), call.name.clone());
+                if name == reports::GIT_DIFF {
+                    let (root, report) = (cowork.fs.root().to_path_buf(), run.report.clone());
+                    return blocking(move || Ok(reports::git_diff(&root, &report, &input)))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .map(Value::String);
+                }
+                let (store, id) = (state.store.clone(), run.report.id.clone());
+                let (report, said) =
+                    blocking(move || Ok(store.update_report(&id, |r| reports::apply_tool(r, &name, &input, now_ms()))?))
+                        .await
+                        .map_err(|e| e.to_string())?;
+                state.runs.report_changed(report);
+                Ok(Value::String(said))
             }
         }
     }
@@ -375,7 +419,7 @@ pub async fn run_start(
 ) -> AppResult<()> {
     let runs = &state.runs;
     let mut starting = runs.starting.lock().await;
-    let (config, cowork) = prepare(&state, &thread, config).await?;
+    let (config, cowork, report) = prepare(&state, &thread, config).await?;
     loop {
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
         let Some(live) = existing else { break };
@@ -427,13 +471,30 @@ pub async fn run_start(
         inbox,
         done,
         cowork,
+        report,
     });
     runs.live.lock().unwrap().insert(thread.id.clone(), live.clone());
+
+    let report = live.report.as_ref().filter(|r| r.role == Role::Run).map(|r| r.report.id.clone());
+    if let Some(id) = &report {
+        set_report_status(&state, id, &thread.id, ReportStatus::Running, None).await;
+    }
 
     let host = Host { app: app.clone(), thread_id: thread.id.clone(), live };
     tauri::async_runtime::spawn(async move {
         let cancel = host.live.cancel.clone();
         agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
+        if let Some(id) = &report {
+            let (status, error) = {
+                let s = host.live.state.lock().unwrap();
+                match (cancel.is_cancelled(), s.status) {
+                    (true, _) => (ReportStatus::Stopped, None),
+                    (false, RunStatus::Error) => (ReportStatus::Failed, s.error.clone()),
+                    _ => (ReportStatus::Done, None),
+                }
+            };
+            set_report_status(&host.app.state::<AppState>(), id, &host.thread_id, status, error).await;
+        }
         let runs = &host.app.state::<AppState>().runs;
         let mut live = runs.live.lock().unwrap();
         if live.get(&host.thread_id).is_some_and(|l| Arc::ptr_eq(l, &host.live)) {
@@ -445,31 +506,39 @@ pub async fn run_start(
     Ok(())
 }
 
-/// The config a run gets: the UI's, minus anything posing as a workspace or
-/// browser tool, plus the workspace's and the browser's tools and
-/// instructions for a Cowork session.
-async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>)> {
+/// The config a run gets: the UI's, minus anything posing as a workspace,
+/// browser or report tool, plus the workspace's and the browser's tools and
+/// instructions for a Cowork session. A report's thread gets its own (`report_config`).
+async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>)> {
     config.tools.retain(|t| {
-        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser)
+        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Report)
             && !ws_tools::is_workspace_tool(&t.spec.name)
             && !browser_tools::is_browser_tool(&t.spec.name)
+            && !reports::is_report_tool(&t.spec.name)
     });
     // Incognito is chat only: Cowork would leave checkpoints of its edits on disk.
     if thread.incognito {
-        return Ok((config, None));
+        return Ok((config, None, None));
     }
     let store = state.store.clone();
     let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
-    let workspace = blocking(move || {
+    let (workspace, report) = blocking(move || {
         // A saved session keeps the workspace it was created with.
         let workspace_id = store.thread_workspace(&id)?.or(claimed);
-        Ok(match workspace_id {
+        let workspace = match workspace_id {
             Some(w) => store.workspace(&w)?,
             None => None,
-        })
+        };
+        Ok((workspace, store.report_for_thread(&id)?))
     })
     .await?;
-    let Some(workspace) = workspace else { return Ok((config, None)) };
+    if let Some(report) = report {
+        let workspace = workspace.ok_or_else(|| AppError::Invalid("This report's folder was removed, so it can't run.".into()))?;
+        let role = report.role_of(&thread.id).unwrap_or(Role::Ask);
+        let (config, cowork) = report_config(config, &report, role, workspace)?;
+        return Ok((config, Some(cowork), Some(ReportRun { report, role })));
+    }
+    let Some(workspace) = workspace else { return Ok((config, None, None)) };
     let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
     let mut sandbox = state.sandbox.status().await;
     if sandbox.available {
@@ -494,7 +563,56 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
     config.tools.extend(
         browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask }),
     );
-    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox })))
+    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None))
+}
+
+/// A report thread's config: the folder read-only whatever the workspace
+/// allows, the report's own tools and instructions in place of the UI's, and
+/// of the UI's tools only connector ones, for a pull request's run.
+fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspace: Workspace) -> AppResult<(RunConfig, Cowork)> {
+    workspace.access = Access::ReadOnly;
+    let pull_request = role == Role::Run && matches!(report.scope, reports::Scope::PullRequest { .. });
+    config.tools.retain(|t| pull_request && matches!(t.exec, ToolExec::Connector { .. }));
+    config.research = false;
+    let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
+    // No commands run, so the sandbox doesn't come into it.
+    let sandbox = SandboxStatus { mechanism: String::new(), available: false, network_blocked: false, detail: String::new() };
+    config.system = Some(format!(
+        "{}\n\n---\n\n{}",
+        reports::system_prompt(report, role, &workspace.name),
+        ws_tools::system_section(&workspace, &fs, &sandbox)
+    ));
+    config.tools.extend(
+        ws_tools::specs(Access::ReadOnly).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+    );
+    config.tools.extend(
+        reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto }),
+    );
+    Ok((config, Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }))
+}
+
+/// Set a report's run status, if `thread_id` still runs it (a wiki's regeneration moves it to a new thread).
+async fn set_report_status(state: &AppState, id: &str, thread_id: &str, status: ReportStatus, error: Option<String>) {
+    let (store, id, thread_id) = (state.store.clone(), id.to_string(), thread_id.to_string());
+    let updated = blocking(move || {
+        Ok(store.update_report(&id, |r| {
+            if r.thread_id != thread_id {
+                return Err("Another run took over.".to_string());
+            }
+            match status {
+                ReportStatus::Running => {
+                    r.status = status;
+                    r.error = None;
+                }
+                _ => r.finish(status, error, now_ms()),
+            }
+            Ok(())
+        })?)
+    })
+    .await;
+    if let Ok((report, ())) = updated {
+        state.runs.report_changed(report);
+    }
 }
 
 /// Stop a thread's run: the model stream and any tool calls in flight.
@@ -502,6 +620,16 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
 pub async fn run_cancel(state: State<'_, AppState>, thread_id: String) -> AppResult<()> {
     state.runs.stop(&thread_id).await;
     Ok(())
+}
+
+/// "Send now": the messages steering a thread's run join it at once, ending
+/// its current step or tool calls early. Nothing happens if no run takes them.
+#[tauri::command]
+pub fn run_interrupt(state: State<'_, AppState>, thread_id: String) {
+    let live = state.runs.live.lock().unwrap().get(&thread_id).cloned();
+    if let Some(live) = live.filter(|l| !l.cancel.is_cancelled()) {
+        let _ = live.inbox.send(Inbox::Interrupt);
+    }
 }
 
 /// The UI's answer to a `client-tool` frame.

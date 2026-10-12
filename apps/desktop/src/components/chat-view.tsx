@@ -13,7 +13,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -322,10 +322,10 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               artifacts={artifacts}
               threadId={id}
               decks={decks}
-              fileChanges={(() => {
+              workspaceId={workspaceId}
+              fileTurn={(() => {
                 const turnId = turnEnds.get(message.id);
-                if (busy || !workspaceId || !turnId || !turnChanges.has(turnId)) return null;
-                return <FileChanges threadId={id} workspaceId={workspaceId} turnId={turnId} />;
+                return busy || !workspaceId || !turnId || !turnChanges.has(turnId) ? undefined : turnId;
               })()}
             />
           ))}
@@ -398,7 +398,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
 
 /**
  * Messages sent while the run worked. Each joins the reply at its next step;
- * "Send now" stops the run and sends them at once. Ones a stopped run never
+ * "Send now" has the run cut its current step or tool calls short so they
+ * join at once, and the run carries on. Ones a stopped run never
  * took stay here, unsent.
  */
 function QueuedMessages({ threadId, status }: { threadId: string; status: RunStatus }) {
@@ -573,8 +574,34 @@ interface ChatMessageProps {
   artifacts: Map<string, ArtifactView>;
   threadId: string;
   decks: Decks;
-  /** Cowork: the files this turn changed, under its last reply. */
-  fileChanges?: React.ReactNode;
+  workspaceId?: string;
+  /** Cowork: the turn whose changed files show under this, its last reply. */
+  fileTurn?: string;
+}
+
+/**
+ * Redraw a message only when something it shows changed: a long thread
+ * otherwise redraws every message on each streamed token. The callbacks are
+ * left out, as they act on this message and thread, which are compared.
+ */
+function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
+  const same =
+    a.message === b.message &&
+    a.streaming === b.streaming &&
+    a.local === b.local &&
+    a.logo === b.logo &&
+    a.canRegenerate === b.canRegenerate &&
+    a.canEdit === b.canEdit &&
+    a.canAnswer === b.canAnswer &&
+    a.threadId === b.threadId &&
+    a.workspaceId === b.workspaceId &&
+    a.fileTurn === b.fileTurn;
+  if (!same) return false;
+  // Artifact and deck views are built from the whole thread; only their own cards read them.
+  const usesViews = b.message.parts.some(
+    (p) => p.type === "dynamic-tool" && (p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE),
+  );
+  return !usesViews || (a.artifacts === b.artifacts && a.decks === b.decks);
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -628,7 +655,7 @@ function UserTextEditor({ initial, onSave, onCancel }: { initial: string; onSave
   );
 }
 
-function ChatMessage({
+const ChatMessage = memo(function ChatMessage({
   message,
   streaming,
   local,
@@ -643,7 +670,8 @@ function ChatMessage({
   artifacts,
   threadId,
   decks,
-  fileChanges,
+  workspaceId,
+  fileTurn,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
   // Web pages the reply cites inline, numbered by first citation.
@@ -755,7 +783,7 @@ function ChatMessage({
           ),
         )}
         {sources.length > 0 && <CitedSourceList sources={sources} />}
-        {fileChanges}
+        {workspaceId && fileTurn && <FileChanges threadId={threadId} workspaceId={workspaceId} turnId={fileTurn} />}
         {message.role === "user" && text && (
           <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
@@ -788,7 +816,7 @@ function ChatMessage({
       </Message>
     </SourcesProvider>
   );
-}
+}, sameMessageProps);
 
 
 /** The model family's logo, falling back to the provider's. */

@@ -15,6 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::message::{ChatRequest, Part};
+use crate::reports::Report;
 use crate::workspace::{Access, EditApproval, Workspace};
 
 #[derive(Debug, thiserror::Error)]
@@ -118,6 +119,17 @@ const MIGRATIONS: &[&str] = &[r#"
     );
 "#, r#"
     ALTER TABLE threads ADD COLUMN project_id TEXT;
+"#, r#"
+    -- Security reviews, code reviews and wikis (`crate::reports`); `data` is the whole report as JSON.
+    CREATE TABLE reports (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        ask_thread_id TEXT,
+        created_at INTEGER NOT NULL,
+        data TEXT NOT NULL
+    );
+    CREATE INDEX reports_thread ON reports (thread_id);
 "#];
 
 pub struct Store {
@@ -540,6 +552,62 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Every report, newest first.
+    pub fn reports(&self) -> StoreResult<Vec<Report>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data FROM reports ORDER BY created_at DESC")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
+    }
+
+    pub fn report(&self, id: &str) -> StoreResult<Option<Report>> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn.query_row("SELECT data FROM reports WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        Ok(data.map(|d| serde_json::from_str(&d)).transpose()?)
+    }
+
+    /// The report a thread runs or asks questions for, if any.
+    pub fn report_for_thread(&self, thread_id: &str) -> StoreResult<Option<Report>> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn
+            .query_row("SELECT data FROM reports WHERE thread_id = ?1 OR ask_thread_id = ?1 LIMIT 1", [thread_id], |r| r.get(0))
+            .optional()?;
+        Ok(data.map(|d| serde_json::from_str(&d)).transpose()?)
+    }
+
+    pub fn save_report(&self, report: &Report) -> StoreResult<()> {
+        save_report(&self.conn.lock().unwrap(), report)
+    }
+
+    /// Change a report in place; nothing is written if `change` fails. Holds the
+    /// lock throughout, so a run's results and the user's changes can't cross.
+    pub fn update_report<T>(&self, id: &str, change: impl FnOnce(&mut Report) -> Result<T, String>) -> StoreResult<(Report, T)> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn.query_row("SELECT data FROM reports WHERE id = ?1", [id], |r| r.get(0)).optional()?;
+        let mut report: Report =
+            serde_json::from_str(&data.ok_or_else(|| StoreError::Invalid("That report no longer exists.".into()))?)?;
+        let out = change(&mut report).map_err(StoreError::Invalid)?;
+        save_report(&conn, &report)?;
+        Ok((report, out))
+    }
+
+    /// Forget a report. Its threads are the caller's to delete.
+    pub fn delete_report(&self, id: &str) -> StoreResult<()> {
+        self.conn.lock().unwrap().execute("DELETE FROM reports WHERE id = ?1", [id])?;
+        Ok(())
+    }
+}
+
+fn save_report(conn: &Connection, r: &Report) -> StoreResult<()> {
+    conn.execute(
+        "INSERT INTO reports (id, workspace_id, thread_id, ask_thread_id, created_at, data) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT (id) DO UPDATE SET thread_id = ?3, ask_thread_id = ?4, data = ?6",
+        params![r.id, r.workspace_id, r.thread_id, r.ask_thread_id, r.created_at, serde_json::to_string(r)?],
+    )?;
+    Ok(())
+}
+
 fn workspace_row(r: &rusqlite::Row) -> rusqlite::Result<Workspace> {
     let access: String = r.get(3)?;
     let approval: String = r.get(4)?;
@@ -869,6 +937,34 @@ mod tests {
         // A later save without it doesn't detach the session.
         store.save_thread(&meta("t", "Cowork", 1), None).unwrap();
         assert_eq!(store.threads().unwrap()[0].meta.workspace_id.as_deref(), Some("w"));
+    }
+
+    #[test]
+    fn reports_are_found_by_their_threads_and_updated_in_place() {
+        use crate::reports::{ReportKind, ReportStatus, Scope};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let mut wiki = Report::new("r".into(), "w".into(), ReportKind::Wiki, Scope::Project, "t1".into(), dir.path(), 1).unwrap();
+        wiki.ask_thread_id = Some("q1".into());
+        store.save_report(&wiki).unwrap();
+
+        assert_eq!(store.report_for_thread("t1").unwrap().map(|r| r.id), Some("r".into()));
+        assert_eq!(store.report_for_thread("q1").unwrap().map(|r| r.id), Some("r".into()));
+        assert_eq!(store.report_for_thread("other").unwrap(), None);
+
+        let (updated, ()) = store.update_report("r", |r| {
+            r.finish(ReportStatus::Done, None, 5);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(store.report("r").unwrap(), Some(updated));
+        // A failed change leaves it as it was.
+        assert!(store.update_report("r", |r| -> Result<(), String> { r.title = "x".into(); Err("no".into()) }).is_err());
+        assert_eq!(store.reports().unwrap()[0].title, "Wiki");
+
+        store.delete_report("r").unwrap();
+        assert!(store.reports().unwrap().is_empty());
+        assert!(store.update_report("r", |_| Ok(())).is_err());
     }
 
     #[test]

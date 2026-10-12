@@ -76,6 +76,7 @@ import { automationForThread, useAutomations } from "@/lib/automations";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
 import { useProjects, type Project } from "@/lib/projects";
+import { useReportThreads } from "@/lib/reports";
 import { errorMessage } from "@/lib/tauri";
 import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
@@ -89,7 +90,6 @@ const RECENT_LIMIT = 8;
 const NAV = [
   { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
   { id: "automations", label: "Automations", icon: TimerIcon },
-  // Destinations that don't exist yet; they're in the nav so the layout is final.
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
   { id: "wiki", label: "Wiki", icon: BookOpenIcon },
@@ -106,7 +106,7 @@ export const NEW_SHORTCUT_LABEL = IS_MAC ? "⌘N" : "Ctrl+N";
 export type SessionMode = "chat" | "cowork";
 
 /** What the main area shows: the open session, or a page the sidebar opens in its place. */
-export type Page = "session" | "automations";
+export type Page = "session" | "automations" | "security" | "review" | "wiki";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -171,7 +171,9 @@ export function AppSidebar({
   const searching = query.trim() !== "";
   const [showAll, setShowAll] = useState(false);
   // The blank chat behind "New session" isn't listed until something is sent; incognito chats never are.
-  const started = conversations.filter((c) => c.messages.length > 0 && !c.incognito);
+  // Reviews and wikis run on threads of their own, shown on their pages.
+  const reportThreads = useReportThreads();
+  const started = conversations.filter((c) => c.messages.length > 0 && !c.incognito && !reportThreads.has(c.id));
   const matches = searching ? started.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase())) : started;
   const projects = useProjects();
   const projectIds = new Set(projects.map((p) => p.id));
@@ -189,8 +191,7 @@ export function AppSidebar({
   const [editingNav, setEditingNav] = useState(false);
   const openNav = (n: NavItem) => {
     if (n.id === "cowork") onSwitchMode("cowork");
-    else if (n.id === "automations") onOpenPage("automations");
-    else comingSoon(n.label);
+    else onOpenPage(n.id);
   };
   const row = (c: Conversation) => (
     <SessionRow
@@ -254,7 +255,7 @@ export function AppSidebar({
                   <CoworkMenu key={n.id} onNewCowork={onNewCowork} />
                 ) : (
                   <SidebarMenuItem key={n.id}>
-                    <SidebarMenuButton tooltip={n.label} isActive={n.id === "automations" && page === "automations"} onClick={() => openNav(n)}>
+                    <SidebarMenuButton tooltip={n.label} isActive={page === n.id} onClick={() => openNav(n)}>
                       <n.icon /> <span>{n.label}</span>
                       {n.id === "automations" && unseen && <UnseenDot />}
                     </SidebarMenuButton>

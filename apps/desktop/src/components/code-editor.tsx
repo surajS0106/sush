@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { api, errorMessage, type FileView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { hasDraft, notifyWorkspaceChanged, setDraft, useDraft, useFilesVersion } from "@/lib/workspaces";
+import { clearRevealLine, hasDraft, notifyWorkspaceChanged, setDraft, useDraft, useFilesVersion, useRevealLine } from "@/lib/workspaces";
 
 /** Shiki language ids by file extension (or whole file name). */
 const LANGS: Record<string, string> = {
@@ -181,6 +181,25 @@ export function CodeEditor({ workspaceId, path }: { workspaceId: string; path: s
     setCaret({ line, col: ta.selectionStart - before.lastIndexOf("\n") });
   };
 
+  // Asked to show a line (a review finding, a wiki citation): scroll to it and put the caret there.
+  const revealLine = useRevealLine(workspaceId, path);
+  const scroller = useRef<HTMLDivElement>(null);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!revealLine || disk == null || !el) return;
+    clearRevealLine();
+    const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 19;
+    el.scrollTop = Math.max(0, (revealLine - 1) * lineHeight - el.clientHeight / 3);
+    const ta = textarea.current;
+    if (!ta) return;
+    const lines = ta.value.split("\n");
+    const at = lines.slice(0, Math.min(revealLine, lines.length) - 1).reduce((n, l) => n + l.length + 1, 0);
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(at, at);
+    trackCaret(ta);
+  }, [revealLine, disk]);
+
   const crumbs = path.split("/");
   const plainLines = useMemo(() => (html ? [] : text.split("\n")), [html, text]);
 
@@ -222,7 +241,7 @@ export function CodeEditor({ workspaceId, path }: { workspaceId: string; path: s
           </Button>
         </div>
       )}
-      <div className="code-view min-h-0 flex-1 overflow-auto text-[12.5px] leading-[1.55]">
+      <div ref={scroller} className="code-view min-h-0 flex-1 overflow-auto text-[12.5px] leading-[1.55]">
         {error ? (
           <p className="p-4 font-sans text-sm text-destructive">{error}</p>
         ) : !file ? (
@@ -250,6 +269,7 @@ export function CodeEditor({ workspaceId, path }: { workspaceId: string; path: s
             )}
             {editable && (
               <textarea
+                ref={textarea}
                 value={text}
                 onChange={(e) => {
                   setDraft(workspaceId, path, e.target.value);
