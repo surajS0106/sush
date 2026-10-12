@@ -38,6 +38,15 @@ export interface UsageSummary {
 
 export const totalTokens = (t: Tally) => t.inputTokens + t.outputTokens;
 
+// Token counts always use international grouping and K / M / B, whatever the
+// OS locale ("en-IN" would otherwise give lakh and crore, "10L", "1Cr").
+const compactTokens = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const exactTokens = new Intl.NumberFormat("en-US");
+/** 1_234_567 → "1.2M". */
+export const formatTokens = (n: number) => compactTokens.format(n);
+/** 1_234_567 → "1,234,567". */
+export const formatTokensExact = (n: number) => exactTokens.format(n);
+
 const emptyTally = (): Tally => ({ inputTokens: 0, outputTokens: 0, replies: 0, usd: 0, unpricedTokens: 0 });
 
 function add(t: Tally, input: number, output: number, usd: number | undefined) {

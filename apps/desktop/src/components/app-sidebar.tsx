@@ -34,6 +34,8 @@ import { toast } from "sonner";
 
 import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
 import { confirmDeleteProject, openProjectEditor, SessionMenuItems } from "@/components/session-actions";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   DropdownMenu,
@@ -48,6 +50,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Sidebar,
   SidebarContent,
@@ -82,12 +85,17 @@ import { cn } from "@/lib/utils";
 /** Sessions listed before the "More" toggle. */
 const RECENT_LIMIT = 8;
 
-/** Destinations that don't exist yet; they're in the nav so the layout is final. */
-const PLANNED = [
-  { label: "Security", icon: ShieldIcon },
-  { label: "Review", icon: GitPullRequestIcon },
-  { label: "Wiki", icon: BookOpenIcon },
-];
+/** The sidebar's destinations, in order. "Edit sidebar…" moves any of them under "More". */
+const NAV = [
+  { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
+  { id: "automations", label: "Automations", icon: TimerIcon },
+  // Destinations that don't exist yet; they're in the nav so the layout is final.
+  { id: "security", label: "Security", icon: ShieldIcon },
+  { id: "review", label: "Review", icon: GitPullRequestIcon },
+  { id: "wiki", label: "Wiki", icon: BookOpenIcon },
+] as const;
+
+type NavItem = (typeof NAV)[number];
 
 const comingSoon = (what: string) => toast(`${what} is coming soon`);
 
@@ -174,6 +182,16 @@ export function AppSidebar({
   const visible = showAll || searching ? rest : rest.slice(0, RECENT_LIMIT);
 
   const automations = useAutomations();
+  const unseen = automations.some((a) => a.unseen);
+  const { hiddenNav } = useLayout();
+  const shown = NAV.filter((n) => !hiddenNav.includes(n.id));
+  const hidden = NAV.filter((n) => hiddenNav.includes(n.id));
+  const [editingNav, setEditingNav] = useState(false);
+  const openNav = (n: NavItem) => {
+    if (n.id === "cowork") onSwitchMode("cowork");
+    else if (n.id === "automations") onOpenPage("automations");
+    else comingSoon(n.label);
+  };
   const row = (c: Conversation) => (
     <SessionRow
       key={c.id}
@@ -231,24 +249,22 @@ export function AppSidebar({
         >
           <SidebarGroup>
             <SidebarMenu>
-              <CoworkMenu onNewCowork={onNewCowork} />
-              <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Automations" isActive={page === "automations"} onClick={() => onOpenPage("automations")}>
-                  <TimerIcon /> <span>Automations</span>
-                  {automations.some((a) => a.unseen) && (
-                    <span className="ml-auto size-2 shrink-0 rounded-full bg-brand" aria-label="New runs" title="New runs" />
-                  )}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              {PLANNED.map(({ label, icon: Icon }) => (
-                <SidebarMenuItem key={label}>
-                  <SidebarMenuButton tooltip={label} onClick={() => comingSoon(label)}>
-                    <Icon /> <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {shown.map((n) =>
+                n.id === "cowork" ? (
+                  <CoworkMenu key={n.id} onNewCowork={onNewCowork} />
+                ) : (
+                  <SidebarMenuItem key={n.id}>
+                    <SidebarMenuButton tooltip={n.label} isActive={n.id === "automations" && page === "automations"} onClick={() => openNav(n)}>
+                      <n.icon /> <span>{n.label}</span>
+                      {n.id === "automations" && unseen && <UnseenDot />}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ),
+              )}
+              <NavMoreMenu hidden={hidden} unseen={unseen} onOpen={openNav} onEdit={() => setEditingNav(true)} />
             </SidebarMenu>
           </SidebarGroup>
+          <EditSidebarDialog open={editingNav} onOpenChange={setEditingNav} />
 
           <SidebarGroup>
             <div className="flex items-center pr-1">
@@ -333,6 +349,88 @@ export function AppSidebar({
       </SidebarFooter>
       <SidebarResizer />
     </Sidebar>
+  );
+}
+
+/** Automations has runs nobody has looked at yet. */
+function UnseenDot() {
+  return <span className="ml-auto size-2 shrink-0 rounded-full bg-brand" aria-label="New runs" title="New runs" />;
+}
+
+/** "More": the destinations hidden from the sidebar, and "Edit sidebar…" to choose them. */
+function NavMoreMenu({
+  hidden,
+  unseen,
+  onOpen,
+  onEdit,
+}: {
+  hidden: NavItem[];
+  /** Automations has new runs (shown on "More" too while Automations is hidden). */
+  unseen: boolean;
+  onOpen: (n: NavItem) => void;
+  onEdit: () => void;
+}) {
+  const { isMobile } = useSidebar();
+  return (
+    <SidebarMenuItem>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <SidebarMenuButton tooltip="More" className="text-muted-foreground">
+            <ChevronRightIcon /> <span>More</span>
+            {unseen && hidden.some((n) => n.id === "automations") && <UnseenDot />}
+          </SidebarMenuButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent className="w-52" side={isMobile ? "bottom" : "right"} align="start">
+          {hidden.map((n) => (
+            <DropdownMenuItem key={n.id} onSelect={() => onOpen(n)}>
+              <n.icon /> <span>{n.label}</span>
+              {n.id === "automations" && unseen && <UnseenDot />}
+            </DropdownMenuItem>
+          ))}
+          {hidden.length > 0 && <DropdownMenuSeparator />}
+          <DropdownMenuItem onSelect={onEdit}>
+            <span>Edit sidebar…</span>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </SidebarMenuItem>
+  );
+}
+
+/** Choose which destinations the sidebar lists; unchecked ones move under "More". Changes apply as you tick. */
+function EditSidebarDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { hiddenNav } = useLayout();
+  const toggle = (id: string, show: boolean) =>
+    setLayout({ hiddenNav: show ? hiddenNav.filter((h) => h !== id) : [...hiddenNav, id] });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Edit sidebar</DialogTitle>
+          <DialogDescription>Choose which items appear in your sidebar.</DialogDescription>
+        </DialogHeader>
+        {/* One background glides between rows on hover, as in the sidebar. */}
+        <HoverHighlight className="flex flex-col gap-1" highlightClassName="rounded-md bg-accent/50">
+          {NAV.map((n) => {
+            const checked = !hiddenNav.includes(n.id);
+            return (
+              <label
+                key={n.id}
+                data-hover-item
+                className="relative flex cursor-pointer items-center gap-3 rounded-md px-1 py-1.5 text-sm [&>svg]:size-4"
+              >
+                <Checkbox checked={checked} onCheckedChange={(v) => toggle(n.id, v === true)} />
+                <n.icon className={cn(!checked && "text-muted-foreground")} />
+                <span className={cn(!checked && "text-muted-foreground")}>{n.label}</span>
+              </label>
+            );
+          })}
+        </HoverHighlight>
+        <DialogFooter>
+          <Button onClick={() => onOpenChange(false)}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -8,6 +8,7 @@
     "dev:server": "bun --filter server dev",
     "dev:ollama": "ollama ps || ollama serve",
     "build": "bun --filter server compile && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json",
+    "build:mac": "export PATH=\"$HOME/.cargo/bin:$PATH\" MACOSX_DEPLOYMENT_TARGET=11.0 && bun --filter server compile && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json --bundles dmg",
     "typecheck": "bun --filter '*' typecheck"
   },
   "devDependencies": {

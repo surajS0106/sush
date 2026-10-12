@@ -520,7 +520,7 @@ function ToolMenuRow({
               }}
               onMouseEnter={onEnter}
               onMouseLeave={onLeave}
-              className={`z-[60] ${panelWidth} rounded-2xl border border-stone-200 bg-white p-1.5 shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none dark:border-stone-800 dark:bg-stone-900`}
+              className={`z-60 ${panelWidth} rounded-2xl border border-stone-200 bg-white p-1.5 shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none dark:border-stone-800 dark:bg-stone-900`}
             >
               {children}
             </motion.div>
@@ -858,7 +858,7 @@ export function ChatInputBar({
           <div className="relative rounded-2xl border border-stone-200 bg-white shadow-[0_25px_60px_-25px_rgba(5,150,105,0.35)] transition-colors duration-150 dark:border-stone-800 dark:bg-stone-900 dark:shadow-[0_25px_60px_-20px_rgba(0,0,0,0.7)]">
             <span
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 h-px rounded-t-[28px] bg-gradient-to-r from-transparent via-white/60 to-transparent dark:via-white/25"
+              className="pointer-events-none absolute inset-x-0 top-0 h-px rounded-t-[28px] bg-linear-to-r from-transparent via-white/60 to-transparent dark:via-white/25"
             />
             <AnimatePresence>
               {(attachment || recordedUrl) && (
@@ -933,7 +933,7 @@ export function ChatInputBar({
               )}
             </div>
 
-            <div className="mt-2 flex items-center justify-between gap-2 rounded-b-[26px] border-t border-stone-900/5 bg-black/[0.015] px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.02]">
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-b-[26px] border-t border-stone-900/5 bg-black/1.5 px-3 py-2.5 dark:border-white/10 dark:bg-white/2">
               <div className="flex items-center gap-1">
                 <div ref={toolsRef} className="relative">
                   <button
@@ -944,7 +944,7 @@ export function ChatInputBar({
                     aria-haspopup="menu"
                     aria-expanded={toolsOpen}
                     aria-label="Add tools and context"
-                    className="relative inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
+                    className="relative inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
                   >
                     <motion.span
                       className="flex items-center justify-center"
@@ -1072,7 +1072,7 @@ export function ChatInputBar({
                               value={instructionsDraft}
                               onChange={(e) => setInstructionsDraft(e.target.value)}
                               placeholder="e.g. Keep answers short, skip the pleasantries, prefer bullet points…"
-                              className="w-full resize-none rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-2 text-xs leading-relaxed text-stone-700 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
+                              className="w-full resize-none rounded-xl border border-stone-200 bg-stone-50 px-2.5 py-2 text-xs leading-relaxed text-stone-700 outline-none focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
                             />
                             <div className="mt-2 flex items-center justify-end gap-1.5">
                               <button
@@ -1112,7 +1112,7 @@ export function ChatInputBar({
                               onChange={(e) => setSkillQuery(e.target.value)}
                               placeholder="Search skills…"
                               aria-label="Search skills"
-                              className="w-full rounded-lg border border-stone-200 bg-stone-50 py-1.5 pl-7 pr-2 text-xs text-stone-700 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
+                              className="w-full rounded-lg border border-stone-200 bg-stone-50 py-1.5 pl-7 pr-2 text-xs text-stone-700 outline-none focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
                             />
                           </div>
                           <div data-lenis-prevent className="scrollbar-thin max-h-40 overflow-y-auto">
@@ -1155,7 +1155,7 @@ export function ChatInputBar({
                               }}
                               placeholder="Add a new skill…"
                               aria-label="New skill name"
-                              className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs text-stone-700 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
+                              className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-stone-50 px-2 py-1.5 text-xs text-stone-700 outline-none focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
                             />
                             <button
                               type="button"
@@ -1188,7 +1188,7 @@ export function ChatInputBar({
                               onChange={(e) => setMcpQuery(e.target.value)}
                               placeholder="Search MCP servers…"
                               aria-label="Search MCP servers"
-                              className="w-full rounded-lg border border-stone-200 bg-stone-50 py-1.5 pl-7 pr-2 text-xs text-stone-700 outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
+                              className="w-full rounded-lg border border-stone-200 bg-stone-50 py-1.5 pl-7 pr-2 text-xs text-stone-700 outline-none focus-visible:outline-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 dark:border-white/10 dark:bg-white/5 dark:text-stone-200"
                             />
                           </div>
                           <div data-lenis-prevent className="scrollbar-thin max-h-40 overflow-y-auto">
@@ -1281,7 +1281,7 @@ export function ChatInputBar({
                   onClick={() => setAttachment((a) => a ?? "brief.pdf")}
                   disabled={busy}
                   aria-label="Attach file"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
                 >
                   <PaperclipIcon />
                 </button>
@@ -1292,7 +1292,7 @@ export function ChatInputBar({
                     disabled={phase === "thinking"}
                     aria-pressed={recording}
                     aria-label={recording ? "Stop recording" : "Record a voice message"}
-                    className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 ${
+                    className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 ${
                       recording
                         ? "bg-emerald-700 text-white"
                         : "text-stone-500 hover:bg-black/5 hover:text-stone-700 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
@@ -1301,7 +1301,7 @@ export function ChatInputBar({
                     {recording && (
                       <motion.span
                         aria-hidden
-                        className="absolute inset-[-4px] rounded-full border border-amber-400/60"
+                        className="absolute -inset-1 rounded-full border border-amber-400/60"
                         animate={shouldReduceMotion ? undefined : { scale: [1, 1.35], opacity: [0.6, 0] }}
                         transition={{ duration: 1.1, repeat: Infinity, ease: "easeOut" }}
                       />
@@ -1316,7 +1316,7 @@ export function ChatInputBar({
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 4 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute bottom-full left-1/2 mb-2 w-max max-w-[180px] -translate-x-1/2 rounded-lg bg-red-600 px-2.5 py-1.5 text-center text-[11px] font-medium text-white shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none"
+                        className="absolute bottom-full left-1/2 mb-2 w-max max-w-45 -translate-x-1/2 rounded-lg bg-red-600 px-2.5 py-1.5 text-center text-[11px] font-medium text-white shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none"
                       >
                         {micError}
                       </motion.p>
@@ -1328,7 +1328,7 @@ export function ChatInputBar({
                   onClick={startNewConversation}
                   disabled={busy}
                   aria-label="Start new conversation"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
                 >
                   <NewConversationIcon />
                 </button>
@@ -1342,7 +1342,7 @@ export function ChatInputBar({
                     disabled={busy}
                     aria-haspopup="listbox"
                     aria-expanded={modelOpen}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-stone-900/10 bg-black/[0.02] px-2.5 py-1 text-xs font-medium text-stone-600 transition-colors hover:border-stone-900/20 hover:bg-black/5 hover:text-stone-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-stone-300 dark:hover:border-white/20 dark:hover:bg-emerald-500/15 dark:hover:text-stone-100"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-stone-900/10 bg-black/2 px-2.5 py-1 text-xs font-medium text-stone-600 transition-colors hover:border-stone-900/20 hover:bg-black/5 hover:text-stone-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-stone-300 dark:hover:border-white/20 dark:hover:bg-emerald-500/15 dark:hover:text-stone-100"
                   >
                     <span className="text-emerald-700">{activeModel.icon}</span>
                     {activeModel.label}
@@ -1400,18 +1400,18 @@ export function ChatInputBar({
                   onClick={handleSend}
                   disabled={phase === "idle" && (recording || !canSend)}
                   aria-label={phase === "thinking" ? "Stop generating" : "Send message"}
-                  className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-[color,background-color,border-color,transform,opacity] duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none ${
+                  className={`relative inline-flex h-8 w-8 items-center justify-center rounded-full transition-[color,background-color,border-color,transform,opacity] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-600 dark:focus-visible:outline-emerald-400 disabled:pointer-events-none ${
                     phase === "thinking"
                       ? "bg-emerald-700 text-white dark:bg-emerald-700"
                       : canSend && !recording
-                        ? "bg-gradient-to-br from-emerald-700 via-emerald-500 to-emerald-600 text-white shadow-[0_4px_18px_-4px_rgba(5,150,105,0.65)]"
+                        ? "bg-linear-to-br from-emerald-700 via-emerald-500 to-emerald-600 text-white shadow-[0_4px_18px_-4px_rgba(5,150,105,0.65)]"
                         : "bg-black/5 text-stone-500 dark:bg-white/10 dark:text-stone-500"
                   }`}
                 >
                   {phase === "thinking" && (
                     <motion.span
                       aria-hidden
-                      className="absolute inset-[-4px] rounded-full border border-emerald-400/60"
+                      className="absolute -inset-1 rounded-full border border-emerald-400/60"
                       animate={shouldReduceMotion ? undefined : { scale: [1, 1.35], opacity: [0.6, 0] }}
                       transition={{ duration: 1.1, repeat: Infinity, ease: "easeOut" }}
                     />

@@ -77,6 +77,7 @@ import {
 import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { errorMessage, type RunStatus, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
+import { formatTokens, formatTokensExact } from "@/lib/usage";
 import { cn } from "@/lib/utils";
 import { CurrentWorkspace, takePendingWorktree, useTurnChanges, useWorkspace } from "@/lib/workspaces";
 
@@ -789,8 +790,6 @@ function ChatMessage({
   );
 }
 
-const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-const exact = new Intl.NumberFormat();
 
 /** The model family's logo, falling back to the provider's. */
 function messageLogo(message: SushUIMessage, catalog: ProviderModels[]) {
@@ -826,17 +825,17 @@ function MessageStats({ model, logo, inputTokens, outputTokens, cost }: MessageS
                 <span className="flex cursor-default items-center gap-1.5 tabular-nums">
                   <span className="flex items-center gap-0.5">
                     <ArrowUpIcon className="size-3 opacity-60" />
-                    {inputTokens === undefined ? "?" : compact.format(inputTokens)}
+                    {inputTokens === undefined ? "?" : formatTokens(inputTokens)}
                   </span>
                   <span className="flex items-center gap-0.5">
                     <ArrowDownIcon className="size-3 opacity-60" />
-                    {compact.format(outputTokens)}
+                    {formatTokens(outputTokens)}
                   </span>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
                 <p className="tabular-nums">
-                  {inputTokens === undefined ? "?" : exact.format(inputTokens)} input · {exact.format(outputTokens)} output tokens
+                  {inputTokens === undefined ? "?" : formatTokensExact(inputTokens)} input · {formatTokensExact(outputTokens)} output tokens
                 </p>
               </TooltipContent>
             </Tooltip>

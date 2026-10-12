@@ -1,8 +1,20 @@
 # Cowork Start Screen — Design Notes
 
-Last updated: 2026-10-12
+Last updated: 2026-10-13
 
 ## What changed
+
+### 2026-10-13 (contrast)
+- `HeatMap` empty-cell outlines go from 14% to 50% stroke opacity (3.6:1 light, 5:1 dark) and use `vector-effect: non-scaling-stroke` so they stay 1px when the SVG scales down (`src/components/ui/HeatMap.tsx`).
+- In `color` mode, filled cells get a 1px edge of `color-mix(in oklab, <color> 70%, var(--foreground))`, measured at 5:1 or more against the card for every built-in accent in both themes.
+- Legend: the "min"/"max" names no longer fade to 50% (was 2:1); they use the row's grey and the values use `text-foreground`. Tooltip secondary text goes from 60% to 70% opacity.
+- Shape picker: the selected shape's icon is solid, unselected ones are outlines (`src/components/usage-heatmap.tsx`).
+
+### 2026-10-13 (cell shape)
+- `UsageHeatmap` has a shape picker in its header: hexagons, circles or squares, as three icon buttons in a `role="radiogroup"` (arrow keys move and select). The choice persists in the `sush.heatmap-shape` store (localStorage, followed across windows) and defaults to hexagons (`src/components/usage-heatmap.tsx`).
+- Month label positions only add the extra half cell for the hex layout, since square and dot grids are exactly `WEEKS * CELL` wide.
+- `HeatMap` is keyed by shape, so switching replays the reveal animation in the new shape.
+- `HeatMap`'s `dot` shape now draws every circle at full cell size; it used to scale the radius with the value (35% for empty cells) (`src/components/ui/HeatMap.tsx`).
 
 ### 2026-10-12 (accent color)
 - Added a `color` prop to `HeatMap` (`src/components/ui/HeatMap.tsx`) that takes any CSS color, `var(--brand)` included, plus `base` (default `var(--muted)`). In that mode each cell's fill is `color-mix(in oklab, <color> N%, <base>)`, set through `style` because SVG presentation attributes do not resolve `var()`. The legend gradient is built from the same painter. Built-in ramps (`variant`, `ramp`) work as before.
@@ -35,6 +47,12 @@ The domain is pinned to start at 0 because HeatMap's default linear scale runs f
 
 Following the accent was the requirement: the rest of the UI is painted from `--brand`, and a fixed teal clashed with any other accent. Doing the mix in CSS rather than reading the variable in JS means no theme hook, no `getComputedStyle`, and no re-render when the accent or theme changes; the browser repaints the cells. Mixing from `--muted` gives the right direction in both themes for free, since `--muted` is light on the light theme and dark on the dark one. The floor of 0.25 keeps a one-reply day from looking the same as the empty-day outline.
 
+Hexagons, circles and squares each suit different tastes and densities, and `HeatMap` already drew all three, so offering the choice cost only a picker and a stored preference. It sits in the heatmap's own header rather than in Settings so its effect is visible right where it is changed.
+
+Sized-by-value dots were meant to carry the reading beyond color, but on this screen most days are empty or quiet, so most of the grid rendered as specks that were hard to see. Full-size circles match the hex and square shapes; the trade-off is that the dot shape now carries value by color alone, like the other two.
+
+The contrast pass came from a failed accessibility check. Quiet days mixed close to `--muted` can't reach 3:1 by fill alone without flattening the ramp, so the edge carries visibility and the fill keeps carrying intensity. Thin strokes measured fine on paper but rendered at about half a pixel once the SVG scaled down, which is why they are non-scaling.
+
 ## What makes it stand out
 
 - No new persistence or Rust command: it derives from `useConversations()` and recomputes in one `useMemo` when threads change, so a reply sent elsewhere shows up the next time the screen opens.
@@ -42,4 +60,5 @@ Following the accent was the requirement: the rest of the UI is painted from `--
 - Cells follow the user's accent color and light/dark mode live, through `color-mix` on CSS variables, with no JS color math or theme subscription.
 - The grid is an SVG `role="grid"` with roving tabindex: arrow keys, Home and End move between days, each cell has an `aria-label` naming the weekday, week and count, and one polite live region announces the focused day.
 - The SVG scales to its container through its viewBox, so the full year fits any transcript width setting without horizontal scrolling; month labels are placed in viewBox percentages so they stay aligned at every width.
+- Cell shape is a remembered, keyboard-operable choice (radio group with roving tabindex), and month labels stay aligned for every shape.
 - The legend is drawn from the same ramp and floor as the cells and labels min and max in replies, so it cannot drift from what the grid shows.

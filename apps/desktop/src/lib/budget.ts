@@ -10,7 +10,7 @@ import { openSettings } from "@/lib/library";
 import { formatUsd, isLocalUrl } from "@/lib/pricing";
 import { createStore, getConversations, subscribeConversations } from "@/lib/store";
 import type { ProviderView } from "@/lib/tauri";
-import { summarizeUsage, totalTokens, type UsageSummary } from "@/lib/usage";
+import { formatTokens, summarizeUsage, totalTokens, type UsageSummary } from "@/lib/usage";
 
 export type BudgetPeriod = "day" | "week" | "month";
 export type BudgetUnit = "usd" | "tokens";
@@ -108,18 +108,32 @@ export function budgetStatus(b: Budget, localProviders: Set<string>, now = Date.
   };
 }
 
-const tokens = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-
 export function formatAmount(amount: number, unit: BudgetUnit) {
-  return unit === "usd" ? (amount === 0 ? "$0" : formatUsd(amount)) : `${tokens.format(amount)} tokens`;
+  return unit === "usd" ? (amount === 0 ? "$0" : formatUsd(amount)) : `${formatTokens(amount)} tokens`;
 }
 
-/** "20", "$20", "2.5M", "500k" → a number; undefined if it isn't one. */
-export function parseLimit(text: string): number | undefined {
-  const m = text.trim().replace(/[$,\s]/g, "").match(/^(\d*\.?\d+)([km])?$/i);
-  if (!m) return undefined;
-  const n = Number(m[1]) * (m[2]?.toLowerCase() === "m" ? 1e6 : m[2] ? 1e3 : 1);
-  return n > 0 ? n : undefined;
+const SUFFIX: Record<string, number> = { k: 1e3, m: 1e6, b: 1e9, t: 1e12 };
+/** Only there to keep the number exact; any real budget is far below it. */
+const MAX_LIMIT: Record<BudgetUnit, number> = { usd: 1e9, tokens: 1e15 };
+const MAX_LABEL: Record<BudgetUnit, string> = { usd: "$1B", tokens: "1,000T tokens" };
+
+export type ParsedLimit = { value: number; error?: undefined } | { value?: undefined; error: string };
+
+/** "20", "$20", "10,000,000", "500k", "2.5M", "5B" → a number, or why it isn't one. */
+export function parseLimit(text: string, unit: BudgetUnit): ParsedLimit {
+  const clean = text.trim().replace(/[$,\s]/g, "");
+  const example = unit === "usd" ? "20" : "10M";
+  if (!clean) return { error: `Enter a limit, like ${example}.` };
+  const m = clean.match(/^(\d*\.?\d+)([a-z]*)$/i);
+  if (!m) return { error: `Try a number, like ${example}.` };
+  const scale = m[2] ? SUFFIX[m[2].toLowerCase()] : 1;
+  if (scale === undefined) {
+    return { error: unit === "usd" ? `Try a plain amount, like ${example}.` : `Use K, M or B instead of "${m[2]}", like ${example}.` };
+  }
+  const value = Number(m[1]) * scale;
+  if (!(value > 0)) return { error: "Set a limit above 0." };
+  if (value > MAX_LIMIT[unit]) return { error: `Try ${MAX_LABEL[unit]} or less.` };
+  return { value };
 }
 
 // --- enforcement and alerts -------------------------------------------------------

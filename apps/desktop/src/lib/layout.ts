@@ -1,5 +1,6 @@
-// Widths the user dragged the sidebar and the Cowork side panel to. The
-// transcript column's width is an appearance preference (lib/appearance.ts).
+// Widths the user dragged the sidebar and the Cowork side panel to, and which
+// sidebar destinations they hid under "More". The transcript column's width is
+// an appearance preference (lib/appearance.ts).
 
 import { useSyncExternalStore } from "react";
 
@@ -10,13 +11,15 @@ export interface Layout {
   sidebar: number;
   /** The Cowork side panel in px, or null for its default share of the window. */
   panel: number | null;
+  /** Sidebar destinations (`NAV` ids in app-sidebar.tsx) moved under "More". */
+  hiddenNav: string[];
 }
 
 export const SIDEBAR = { min: 208, max: 480, default: 256 } as const;
 /** The side panel never squeezes the chat narrower than `chatMin`. */
 export const PANEL = { min: 320, max: 1400, chatMin: 360 } as const;
 
-const DEFAULTS: Layout = { sidebar: SIDEBAR.default, panel: null };
+const DEFAULTS: Layout = { sidebar: SIDEBAR.default, panel: null, hiddenNav: [] };
 
 const layout = createStore<Layout>("sush.layout", DEFAULTS);
 layout.set((l) => ({ ...DEFAULTS, ...l }));

@@ -50,9 +50,9 @@ Three parts:
   - `lib/sessions.ts`: starts, answers (`respond`) and stops runs, builds each run's `RunConfig` (including `/skill` and `@connector` expansions), and mirrors every thread's messages from the run frames. `ChatView` reads a thread with `useThread`; there is no `useChat`.
 - **`apps/server`**: Bun + Hono + better-auth (SQLite, migrated on startup). Email/password accounts. The webview is cross-origin, so auth uses the bearer plugin (`set-auth-token` header → localStorage → `Authorization: Bearer`, see `src/lib/auth.ts`) instead of cookies. In release builds it is compiled with `bun build --compile` into `src-tauri/binaries/sush-auth-<target-triple>` and shipped as a Tauri sidecar.
 
-`apps/chat-ui.ts` is a standalone component file outside every workspace package; nothing imports it.
+`apps/chat-ui.tsx` is a standalone component file outside every workspace package; nothing imports it.
 
-Project skills in `.claude/skills/` cover the common multi-file workflows: `check`, `ship`, `run-app`, `add-tauri-command`, `add-agent-tool`, `add-provider`, `release`.
+Project skills in `.claude/skills/` cover the common multi-file workflows: `check`, `ship`, `run-app`, `add-tauri-command`, `add-agent-tool`, `add-provider`, `release`, `build-dmg`.
 
 ## Gotchas
 

@@ -63,7 +63,7 @@ function Cursor({ shouldReduceMotion }: { shouldReduceMotion: boolean | null }) 
   return (
     <motion.span
       aria-hidden
-      className="ml-0.5 inline-block h-3.5 w-[7px] translate-y-0.5 bg-brand"
+      className="ml-0.5 inline-block h-3.5 w-1.75 translate-y-0.5 bg-brand"
       animate={shouldReduceMotion ? undefined : { opacity: [1, 0, 1] }}
       transition={{ duration: 1, repeat: Infinity, ease: steps(2) }}
     />
@@ -94,7 +94,7 @@ export function TerminalFrame({
         className,
       )}
     >
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-stone-200 bg-stone-50 pr-2 pl-4 dark:border-white/10 dark:bg-white/[0.02]">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-stone-200 bg-stone-50 pr-2 pl-4 dark:border-white/10 dark:bg-white/2">
         <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-brand/15 text-brand">
           <TerminalIcon />
         </span>
@@ -113,7 +113,7 @@ export function TerminalHeaderButton({ className, ...props }: ComponentProps<"bu
     <button
       type="button"
       className={cn(
-        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/10 dark:hover:text-stone-200 [&_svg]:size-3.5",
+        "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:pointer-events-none disabled:opacity-40 dark:hover:bg-white/10 dark:hover:text-stone-200 [&_svg]:size-3.5",
         className,
       )}
       {...props}
@@ -194,7 +194,7 @@ export function TerminalInput({
           <span className="relative">
             <motion.span
               className={cn(
-                "absolute top-0.5 left-0 h-3.5 w-[7px]",
+                "absolute top-0.5 left-0 h-3.5 w-1.75",
                 focused ? "bg-brand/80" : "border border-brand/70",
               )}
               animate={focused && !shouldReduceMotion ? { opacity: [1, 0, 1] } : { opacity: 1 }}
@@ -298,7 +298,7 @@ function TerminalRun({
 
   return (
     <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-[0_25px_60px_-25px_rgba(0,0,0,0.15)] dark:border-white/10 dark:bg-stone-900 dark:shadow-[0_25px_60px_-25px_rgba(0,0,0,0.6)]">
-      <div className="flex items-center gap-2 border-b border-stone-200 bg-stone-50 px-4 py-2.5 dark:border-white/10 dark:bg-white/[0.02]">
+      <div className="flex items-center gap-2 border-b border-stone-200 bg-stone-50 px-4 py-2.5 dark:border-white/10 dark:bg-white/2">
         <span className="flex h-5 w-5 items-center justify-center rounded bg-brand/15 text-brand">
           <TerminalIcon />
         </span>
@@ -308,7 +308,7 @@ function TerminalRun({
             type="button"
             onClick={onReplay}
             aria-label="Replay commands"
-            className="ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200"
+            className="ml-auto inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:hover:bg-white/10 dark:hover:text-stone-200"
           >
             <ReplayIcon />
           </button>

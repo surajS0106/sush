@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   LightbulbIcon as PhLightbulb,
@@ -30,6 +30,74 @@ function UndoIcon() {
   return <PhArrowClockwise size={13} aria-hidden />;
 }
 
+/**
+ * Lets a mouse scroll a horizontal strip whose scrollbar is hidden: drag it, or
+ * turn the wheel. Trackpads and touch already scroll it natively.
+ */
+function useMouseScroll() {
+  const drag = useRef<{ x: number; left: number; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
+
+  // React registers wheel listeners as passive, so attach this one by hand to preventDefault.
+  const ref = useCallback((el: HTMLDivElement | null) => {
+    if (!el) return;
+    el.addEventListener(
+      "wheel",
+      (e) => {
+        if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+        const before = el.scrollLeft;
+        el.scrollLeft += e.deltaY;
+        // At either end, let the wheel scroll the page instead.
+        if (el.scrollLeft !== before) e.preventDefault();
+      },
+      { passive: false },
+    );
+  }, []);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    drag.current = { x: e.clientX, left: e.currentTarget.scrollLeft, moved: false };
+  };
+
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const d = drag.current;
+    if (!d) return;
+    const dx = e.clientX - d.x;
+    if (!d.moved) {
+      if (Math.abs(dx) < 4) return;
+      d.moved = true;
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    e.currentTarget.scrollLeft = d.left - dx;
+  };
+
+  const onPointerEnd = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (drag.current?.moved) {
+      suppressClick.current = true;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    drag.current = null;
+  };
+
+  // A drag that ends over a chip shouldn't also pick it.
+  const onClickCapture = (e: MouseEvent) => {
+    if (!suppressClick.current) return;
+    suppressClick.current = false;
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  return {
+    ref,
+    onPointerDown,
+    onPointerMove,
+    onPointerUp: onPointerEnd,
+    onPointerCancel: onPointerEnd,
+    onClickCapture,
+    onDragStart: (e: DragEvent) => e.preventDefault(),
+  };
+}
+
 export function Suggestion({
   suggestionSets,
   onSelect,
@@ -46,6 +114,7 @@ export function Suggestion({
   const [selected, setSelected] = useState<string | null>(null);
   const shouldReduceMotion = useReducedMotion();
   const suggestions = suggestionSets[setIndex] ?? [];
+  const mouseScroll = useMouseScroll();
 
   const handleSelect = (text: string) => {
     setSelected(text);
@@ -62,7 +131,7 @@ export function Suggestion({
             onClick={() => setSetIndex((i) => (i + 1) % suggestionSets.length)}
             aria-label="Show different suggestions"
             title="Show different suggestions"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:hover:bg-brand/15 dark:hover:text-stone-300"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:hover:bg-brand/15 dark:hover:text-stone-300"
           >
             <ShuffleIcon />
           </button>
@@ -85,7 +154,7 @@ export function Suggestion({
             <button
               type="button"
               onClick={() => setSelected(null)}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium text-stone-500 transition-colors hover:bg-black/5 hover:text-stone-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:text-stone-400 dark:hover:bg-white/10 dark:hover:text-stone-200"
             >
               <UndoIcon />
               Start over
@@ -101,7 +170,8 @@ export function Suggestion({
             className="relative"
           >
             <div
-              className="flex gap-2 overflow-x-auto pb-1 pl-0.5 pr-6 pt-0.5 scrollbar-hide"
+              {...mouseScroll}
+              className="flex gap-2 overflow-x-auto pb-1 pl-0.5 pr-6 pt-0.5 select-none scrollbar-hide"
               style={{
                 WebkitMaskImage: "linear-gradient(to right, black 0, black calc(100% - 28px), transparent 100%)",
                 maskImage: "linear-gradient(to right, black 0, black calc(100% - 28px), transparent 100%)",
@@ -116,7 +186,7 @@ export function Suggestion({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.3, delay: i * 0.06, ease: [0.16, 1, 0.3, 1] }}
                   whileTap={{ scale: 0.96 }}
-                  className="group inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-stone-200/70 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 shadow-sm transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-brand focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:border-white/10 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-brand/30 dark:hover:bg-brand/5 dark:hover:text-brand"
+                  className="group inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-stone-200/70 bg-white px-3.5 py-2 text-sm font-medium text-stone-700 shadow-sm transition-colors hover:border-brand/40 hover:bg-brand/5 hover:text-brand focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand dark:focus-visible:outline-brand dark:border-white/10 dark:bg-stone-900 dark:text-stone-300 dark:hover:border-brand/30 dark:hover:bg-brand/5 dark:hover:text-brand"
                 >
                   <span className="text-brand dark:text-brand">
                     <LightbulbMark />

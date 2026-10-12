@@ -28,11 +28,8 @@ import { modelLogo, providerLogo } from "@/lib/logos";
 import { formatUsd, isLocalUrl, priceFor } from "@/lib/pricing";
 import { useConversations } from "@/lib/store";
 import type { ProviderView } from "@/lib/tauri";
-import { rangeStart, summarizeUsage, totalTokens, type ModelUsage, type Tally, type UsageRange } from "@/lib/usage";
+import { formatTokens, formatTokensExact, rangeStart, summarizeUsage, totalTokens, type ModelUsage, type Tally, type UsageRange } from "@/lib/usage";
 import { cn } from "@/lib/utils";
-
-const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-const exact = new Intl.NumberFormat();
 
 /** Bar colors for the biggest models, in order; the rest share "Other". */
 const COLORS = ["bg-brand", "bg-amber-400", "bg-emerald-500", "bg-sky-500", "bg-violet-500"];
@@ -126,7 +123,7 @@ export function UsageSection({ providers }: { providers: ProviderView[] }) {
           <div className="flex items-baseline justify-between gap-4">
             <p className="text-sm font-medium">AI usage</p>
             <p className="text-sm text-muted-foreground tabular-nums">
-              {compact.format(all)} tokens · {spend(usage.total)}
+              {formatTokens(all)} tokens · {spend(usage.total)}
               {usage.total.unpricedTokens > 0 && usage.total.usd > 0 && "+"}
             </p>
           </div>
@@ -209,7 +206,7 @@ function UsageBar({ segments, total }: { segments: Segment[]; total: number }) {
               />
             </TooltipTrigger>
             <TooltipContent>
-              {s.label} · {compact.format(s.tokens)} tokens ({Math.round((s.tokens / total) * 100)}%)
+              {s.label} · {formatTokens(s.tokens)} tokens ({Math.round((s.tokens / total) * 100)}%)
             </TooltipContent>
           </Tooltip>
         ))}
@@ -239,7 +236,7 @@ function Row({
         {icon}
       </span>
       <p className={cn("min-w-0 flex-1 truncate text-sm", mono && "font-mono text-[13px] tracking-tight")}>{label}</p>
-      <p className="shrink-0 text-sm text-muted-foreground tabular-nums">{compact.format(totalTokens(tally))} tokens</p>
+      <p className="shrink-0 text-sm text-muted-foreground tabular-nums">{formatTokens(totalTokens(tally))} tokens</p>
       <p className="w-20 shrink-0 text-right text-sm tabular-nums">{spend(tally, local)}</p>
       <HoverCard openDelay={150} closeDelay={100}>
         <HoverCardTrigger asChild>
@@ -271,9 +268,9 @@ function Stat({ label, value }: { label: string; value: string }) {
 function TokenStats({ tally }: { tally: Tally }) {
   return (
     <>
-      <Stat label="Input tokens" value={exact.format(tally.inputTokens)} />
-      <Stat label="Output tokens" value={exact.format(tally.outputTokens)} />
-      <Stat label="Replies" value={exact.format(tally.replies)} />
+      <Stat label="Input tokens" value={formatTokensExact(tally.inputTokens)} />
+      <Stat label="Output tokens" value={formatTokensExact(tally.outputTokens)} />
+      <Stat label="Replies" value={formatTokensExact(tally.replies)} />
     </>
   );
 }
@@ -283,7 +280,7 @@ function ModelDetails({ usage }: { usage: ModelUsage }) {
   return (
     <dl>
       <TokenStats tally={usage} />
-      <Stat label="Chats" value={exact.format(usage.chats)} />
+      <Stat label="Chats" value={formatTokensExact(usage.chats)} />
       <Stat
         label="Price per 1M tokens"
         value={usage.local ? "Free (local)" : price ? `$${price.input} in · $${price.output} out` : "Unknown"}
@@ -296,8 +293,8 @@ function KindDetails({ tally, sessions, noun }: { tally: Tally; sessions: number
   return (
     <dl>
       <TokenStats tally={tally} />
-      <Stat label={`${noun[0].toUpperCase()}${noun.slice(1)}s`} value={exact.format(sessions)} />
-      {tally.unpricedTokens > 0 && <Stat label="Unpriced tokens" value={exact.format(tally.unpricedTokens)} />}
+      <Stat label={`${noun[0].toUpperCase()}${noun.slice(1)}s`} value={formatTokensExact(sessions)} />
+      {tally.unpricedTokens > 0 && <Stat label="Unpriced tokens" value={formatTokensExact(tally.unpricedTokens)} />}
     </dl>
   );
 }
@@ -370,7 +367,7 @@ function BudgetMeter({ budget, status }: { budget: Budget; status: BudgetStatus 
       </div>
       {unpriced > 0 && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Leaves out {compact.format(unpriced)} tokens from models without a known price.
+          Leaves out {formatTokens(unpriced)} tokens from models without a known price.
         </p>
       )}
     </Card>
@@ -435,7 +432,7 @@ function BudgetSettings({ budget }: { budget: Budget }) {
             title="Limit"
             description={budget.unit === "usd" ? "Estimated spend, at list prices." : "Input and output tokens, all models."}
           >
-            <div className="flex items-center gap-2">
+            <LimitInput budget={budget}>
               <Segmented
                 label="Budget unit"
                 value={budget.unit}
@@ -445,8 +442,7 @@ function BudgetSettings({ budget }: { budget: Budget }) {
                   { value: "tokens", label: "Tokens" },
                 ]}
               />
-              <LimitInput budget={budget} />
-            </div>
+            </LimitInput>
           </Setting>
           <Setting title="Resets">
             <Segmented
@@ -486,39 +482,77 @@ function BudgetSettings({ budget }: { budget: Budget }) {
   );
 }
 
-/** Saves on blur or Enter; takes "20", "$20", "2.5M" or "500k". */
-function LimitInput({ budget }: { budget: Budget }) {
-  const shown = budget.unit === "usd" ? String(budget.limit) : compact.format(budget.limit);
+const LIMIT_ERROR_ID = "usage-budget-limit-error";
+
+/**
+ * Saves on blur or Enter; takes "20", "$20", "500k", "2.5M" or "5B". Text it
+ * can't read stays in the field with the reason under it. `children` (the
+ * unit toggle) sits to its left.
+ */
+function LimitInput({ budget, children }: { budget: Budget; children: ReactNode }) {
+  const shown = budget.unit === "usd" ? String(budget.limit) : tokenLimitText(budget.limit);
   const [draft, setDraft] = useState(shown);
-  useEffect(() => setDraft(shown), [shown]);
+  const [error, setError] = useState<string>();
+  useEffect(() => {
+    setDraft(shown);
+    setError(undefined);
+  }, [shown]);
 
   const commit = () => {
-    const limit = parseLimit(draft);
-    if (limit === undefined || limit === budget.limit) return setDraft(shown);
-    setBudget({ limit: budget.unit === "usd" ? Math.round(limit * 100) / 100 : Math.round(limit) });
+    if (draft === shown) return setError(undefined);
+    const parsed = parseLimit(draft, budget.unit);
+    if (parsed.error !== undefined) return setError(parsed.error);
+    setError(undefined);
+    const limit = budget.unit === "usd" ? Math.round(parsed.value * 100) / 100 : Math.round(parsed.value);
+    if (limit === budget.limit) return setDraft(shown);
+    setBudget({ limit });
   };
 
   return (
-    <div className="relative">
-      {budget.unit === "usd" && (
-        <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center gap-2">
+        {children}
+        <div className="relative">
+          {budget.unit === "usd" && (
+            <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+          )}
+          <Input
+            id={LIMIT_INPUT_ID}
+            aria-label={budget.unit === "usd" ? "Limit in dollars" : "Limit in tokens"}
+            aria-invalid={error !== undefined}
+            aria-describedby={error !== undefined ? LIMIT_ERROR_ID : undefined}
+            inputMode="decimal"
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setError(undefined);
+            }}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setDraft(shown);
+                setError(undefined);
+              }
+            }}
+            onFocus={(e) => e.currentTarget.select()}
+            className={cn("h-8 w-24 tabular-nums", budget.unit === "usd" && "pl-6")}
+          />
+        </div>
+      </div>
+      {error !== undefined && (
+        <p id={LIMIT_ERROR_ID} role="alert" className="max-w-72 text-right text-xs text-destructive">
+          {error}
+        </p>
       )}
-      <Input
-        id={LIMIT_INPUT_ID}
-        aria-label={budget.unit === "usd" ? "Limit in dollars" : "Limit in tokens"}
-        inputMode="decimal"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
-          if (e.key === "Escape") setDraft(shown);
-        }}
-        onFocus={(e) => e.currentTarget.select()}
-        className={cn("h-8 w-24 tabular-nums", budget.unit === "usd" && "pl-6")}
-      />
     </div>
   );
+}
+
+/** "10M" when that reads back as the exact limit, else "1,234,567", so the field always round-trips. */
+function tokenLimitText(limit: number) {
+  const short = formatTokens(limit);
+  return parseLimit(short, "tokens").value === limit ? short : formatTokensExact(limit);
 }
 
 function ThresholdPicker({ value, onChange }: { value: number[]; onChange: (thresholds: number[]) => void }) {

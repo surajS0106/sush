@@ -421,17 +421,23 @@ export function HeatMap({
   const shapeFor = (t: number, isEmpty: boolean, key: string) => {
     // Fill goes through style, not the attribute: SVG presentation
     // attributes do not resolve var(), which a `color` ramp relies on.
+    // Outlines hold 3:1 against the card (WCAG 1.4.11) and stay 1px however
+    // far the SVG is scaled down. A `color` ramp's quiet end sits close to
+    // the card, so filled cells also get an edge mixed toward the text colour,
+    // which keeps every day with data visible for any accent.
+    const edge = { strokeWidth: 1, vectorEffect: "non-scaling-stroke" as const };
     const emptyProps = isEmpty
-      ? { fill: "none", stroke: "currentColor", strokeWidth: 1, strokeOpacity: 0.14 }
-      : { style: { fill: paint(shade(t)) } };
+      ? { fill: "none", stroke: "currentColor", strokeOpacity: 0.5, ...edge }
+      : color
+        ? { style: { fill: paint(shade(t)), stroke: `color-mix(in oklab, ${color} 70%, var(--foreground))` }, ...edge }
+        : { style: { fill: paint(shade(t)) } };
     if (shape === "hex") {
       return <polygon key={key} points={hexPoints(layout.unit)} {...emptyProps} />;
     }
     if (shape === "dot") {
-      // Radius carries the value as well as the hue, so the reading does
-      // not depend on colour vision alone.
-      const r = isEmpty ? layout.unit * 0.35 : layout.unit * (0.34 + 0.66 * (t < 0 ? 0 : t > 1 ? 1 : t));
-      return <circle key={key} r={round2(r)} {...emptyProps} />;
+      // Full-size like the hexes and squares: sizing dots by value left
+      // empty days and quiet days as specks too small to see.
+      return <circle key={key} r={round2(layout.unit)} {...emptyProps} />;
     }
     const s = layout.unit * 2;
     const rx = Math.max(2, Math.round((s * 0.24) / 2) * 2);
@@ -585,10 +591,10 @@ export function HeatMap({
                 <div
                   className={`${below ? "mt-4" : "mb-4"} whitespace-nowrap rounded-lg bg-stone-900 px-2 py-1 text-[11px] font-medium text-white shadow-[0_1px_2px_-1px_rgba(0,0,0,0.06),0_4px_12px_-4px_rgba(0,0,0,0.08)] dark:shadow-none dark:bg-white dark:text-stone-900`}
                 >
-                  <span className="opacity-60">
+                  <span className="opacity-70">
                     {yLabels?.[active.row] ?? `Row ${active.row + 1}`}, {xLabels?.[active.col] ?? `Col ${active.col + 1}`}
                   </span>{" "}
-                  {active.value === null ? <span className="opacity-60">{emptyLabel}</span> : format(active.value)}
+                  {active.value === null ? <span className="opacity-70">{emptyLabel}</span> : format(active.value)}
                 </div>
               </div>
             );
@@ -624,8 +630,9 @@ export function HeatMap({
                 ] as const)
             ).map(([name, t]) => (
               <span key={name} className={t === 1 ? "text-right" : t === 0 ? "" : "text-center"}>
-                <span className="opacity-50">{name} </span>
-                {format(scaleFn.tick(t))}
+                {/* The name in the row's grey (4.5:1), the value in the text
+                    colour: fading the name instead dropped it to 2:1. */}
+                {name} <span className="text-foreground">{format(scaleFn.tick(t))}</span>
               </span>
             ))}
           </div>
