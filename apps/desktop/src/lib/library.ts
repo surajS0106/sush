@@ -332,6 +332,7 @@ export type SettingsSection =
   | "providers"
   | "usage"
   | "speech"
+  | "images"
   | "memory"
   | "design"
   | "skills"

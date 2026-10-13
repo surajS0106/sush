@@ -26,6 +26,7 @@ import { toast } from "sonner";
 
 import { ConnectorsSection } from "@/components/connectors-section";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
+import { ImagesSection } from "@/components/images-section";
 import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
@@ -70,6 +71,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
       { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
+      { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
       { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
       { id: "design", label: "Design systems", icon: PaletteIcon, keywords: "brand style guidelines" },
     ],
@@ -159,6 +161,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "providers" && <ProvidersSection providers={providers} onChanged={onProvidersChanged} />}
           {state?.section === "usage" && <UsageSection providers={providers} />}
           {state?.section === "speech" && <SpeechSection providers={providers} />}
+          {state?.section === "images" && <ImagesSection providers={providers} />}
           {state?.section === "memory" && <MemorySection />}
           {state?.section === "design" && <DesignSection />}
           {state?.section === "skills" && <SkillsSection />}

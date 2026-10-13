@@ -7,6 +7,7 @@ mod connectors;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
+mod images;
 mod library;
 mod reports;
 mod runs;
@@ -128,6 +129,7 @@ pub fn run() {
             connector_auth::connector_cancel_authorize,
             connector_auth::connector_save_secrets,
             speech::transcribe,
+            images::image_generate,
             whisper::whisper_model_status,
             whisper::whisper_model_download,
             whisper::transcribe_local,

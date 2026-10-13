@@ -5,10 +5,12 @@ import type { DynamicToolUIPart } from "ai";
 import {
   ArrowRightIcon,
   BrainIcon,
+  DownloadIcon,
   FileIcon,
   FilePenIcon,
   FolderIcon,
   GlobeIcon,
+  ImageIcon,
   KeyboardIcon,
   MessagesSquareIcon,
   MousePointerClickIcon,
@@ -20,6 +22,9 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+
+import { Image } from "@/components/ai-elements/image";
 
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
 import {
@@ -34,6 +39,7 @@ import {
 import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   CHATS_SEARCH,
   findConnectorTool,
@@ -48,10 +54,11 @@ import { parseAutomationSave } from "@/lib/automation-save";
 import { createAutomation, describeSchedule, formatWhen, nextRunOf } from "@/lib/automations";
 import { connectorIcon } from "@/lib/connector-catalog";
 import { parseCommits, parsePullRequest } from "@/lib/github";
+import { saveImage, type ImageInput, type ImageOutput } from "@/lib/images";
 import { allowTool } from "@/lib/library";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
-import type { SandboxStatus } from "@/lib/tauri";
+import { errorMessage, type SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
@@ -83,6 +90,8 @@ export function ToolPart(props: ToolPartProps) {
       return <WorkspacePart {...props} />;
     case "browser":
       return <BrowserPart {...props} />;
+    case "image":
+      return <ImagePart part={props.part} />;
     default:
       return <ConnectorPart {...props} />;
   }
@@ -122,6 +131,59 @@ function AskUserPart({ part, canAnswer, onResult }: ToolPartProps) {
         />
       );
   }
+}
+
+// --- images ------------------------------------------------------------------------
+
+const ASPECT_CLASS = { square: "aspect-square", landscape: "aspect-[3/2]", portrait: "aspect-[2/3] max-w-64" };
+
+function ImagePart({ part }: { part: DynamicToolUIPart }) {
+  const input = (part.input ?? {}) as ImageInput;
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    return (
+      <div className="flex max-w-md flex-col gap-2">
+        <Skeleton className={cn("w-full rounded-md", ASPECT_CLASS[input.aspect ?? "square"] ?? ASPECT_CLASS.square)} />
+        <LoadingState label="Generating image" />
+      </div>
+    );
+  }
+  if (part.state === "output-error") {
+    return (
+      <ToolResultRow
+        error
+        detail={part.errorText}
+        label={
+          <>
+            <ImageIcon className="size-4 shrink-0" />
+            <span className="line-clamp-1 text-left">Couldn't generate the image</span>
+          </>
+        }
+      />
+    );
+  }
+  const output = part.output as ImageOutput;
+  const save = () =>
+    saveImage(output).then(
+      (saved) => saved && toast.success("Image saved"),
+      (e) => toast.error(`Couldn't save the image: ${errorMessage(e)}`),
+    );
+  return (
+    <figure className="group/image relative max-w-md">
+      <Image src={output.url} mediaType={output.mediaType} alt={output.prompt} className="border" />
+      <button
+        type="button"
+        onClick={save}
+        aria-label="Save image"
+        title="Save image"
+        className="absolute top-2 right-2 rounded-md bg-background/80 p-1.5 text-muted-foreground opacity-0 shadow-sm backdrop-blur transition-opacity group-hover/image:opacity-100 hover:text-foreground focus-visible:opacity-100"
+      >
+        <DownloadIcon className="size-4" />
+      </button>
+      <figcaption className="mt-1.5 line-clamp-2 text-xs text-muted-foreground" title={output.revisedPrompt ?? output.prompt}>
+        {output.revisedPrompt ?? output.prompt}
+      </figcaption>
+    </figure>
+  );
 }
 
 // --- memory -----------------------------------------------------------------------

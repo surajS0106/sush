@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod browser;
 pub mod error;
+pub mod imagegen;
 pub mod mcp;
 pub mod memory;
 pub mod message;
@@ -18,5 +19,6 @@ pub mod workspace;
 
 pub use error::ProviderError;
 pub use message::{ChatEvent, ChatRequest, FinishReason, Message, Part, Role, ToolSpec, WebSource};
+pub use imagegen::{generate_image, Aspect, GeneratedImage, ImageApi};
 pub use transcribe::{transcribe, TranscribeApi};
 pub use provider::{build_provider, AuthKind, EventStream, ModelInfo, Provider, ProviderConfig, WireFormat};

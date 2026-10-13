@@ -387,6 +387,17 @@ export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
 /** How a provider transcribes: OpenAI-style `/audio/transcriptions`, or Ollama chat with an audio-capable model. */
 export type TranscribeApi = "transcriptions" | "ollama-chat";
 
+/** How a provider makes images: OpenAI-style `/images/generations`, or chat completions asking for image output (OpenRouter). */
+export type ImageApi = "images" | "chat-modalities";
+export type ImageAspect = "square" | "landscape" | "portrait";
+
+export interface GeneratedImage {
+  /** The blob URL the image is served on. */
+  url: string;
+  mediaType: string;
+  revisedPrompt: string | null;
+}
+
 export const api = {
   listPresets: () => invoke<ProviderConfig[]>("list_presets"),
   listProviders: () => invoke<ProviderView[]>("list_providers"),
@@ -504,6 +515,8 @@ export const api = {
     invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),
   transcribe: (providerId: string, model: string, api: TranscribeApi, audioBase64Wav: string) =>
     invoke<string>("transcribe", { providerId, model, api, audioBase64Wav }),
+  imageGenerate: (providerId: string, model: string, api: ImageApi, prompt: string, aspect: ImageAspect | null) =>
+    invoke<GeneratedImage>("image_generate", { providerId, model, api, prompt, aspect }),
   whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),

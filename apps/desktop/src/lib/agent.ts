@@ -13,6 +13,7 @@
 //   automation_save saves an automation, after the user approves (automations.ts)
 //   artifact_write  runs immediately: the chat shows it as a versioned artifact (artifacts.ts)
 //   slides_write    runs immediately: the deck opens in the slides panel (slides.ts)
+//   image_generate  runs immediately with the image model from Settings → Images (images.ts)
 //   <connector>__*  sent to an MCP connector, after the user approves
 
 import { useSyncExternalStore } from "react";
@@ -20,6 +21,7 @@ import { useSyncExternalStore } from "react";
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
+import { IMAGE_GENERATE, imagesEnabled, IMAGES_OFF, imageTool, runImageGenerate } from "@/lib/images";
 import { activeConnectors, activeDesignSystem, isToolAllowed, library, type Connector } from "@/lib/library";
 import {
   deleteMemory,
@@ -194,6 +196,9 @@ export function buildContext({
     );
   }
 
+  const images = imagesEnabled();
+  if (!images) sections.push(IMAGES_OFF);
+
   const connectors = connectorTools();
   if (connectors.length > 0) {
     sections.push(
@@ -210,6 +215,7 @@ export function buildContext({
     automationSaveTool,
     artifactTool,
     slidesTool,
+    ...(images ? [imageTool] : []),
     ...(memory ? memoryTools : []),
     ...(referenceChats ? chatTools : []),
     ...connectors.map((t) => t.spec),
@@ -230,6 +236,7 @@ export type ToolKind =
   | "skill-save"
   | "automation-save"
   | "artifact"
+  | "image"
   | "workspace"
   | "browser"
   | "connector"
@@ -261,6 +268,7 @@ export function toolKind(name: string): ToolKind {
   if (name === SKILL_SAVE) return "skill-save";
   if (name === AUTOMATION_SAVE) return "automation-save";
   if (name === ARTIFACT_WRITE || name === SLIDES_WRITE) return "artifact";
+  if (name === IMAGE_GENERATE) return "image";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
 }
@@ -282,7 +290,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
   if (isToolAllowed(t.connector.id, t.tool)) return true;
@@ -313,7 +321,7 @@ export function runTools(specs: ToolSpec[]): RunTool[] {
   });
 }
 
-/** Run a memory, chats, skill or artifact tool. Never throws; failures become error results the model can read. */
+/** Run a memory, chats, skill, artifact or image tool. Never throws; failures become error results the model can read. */
 export async function runTool(name: string, input: unknown): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
@@ -357,6 +365,7 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
       const n = (args.slides as unknown[]).length;
       return { output: `Showed "${args.title}" (${n} ${n === 1 ? "slide" : "slides"}) to the user in the slides panel.` };
     }
+    if (name === IMAGE_GENERATE) return runImageGenerate(args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {
     return { errorText: e instanceof Error ? e.message : String(e) };

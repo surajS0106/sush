@@ -191,7 +191,7 @@ async fn download_image(state: &AppState, url: &str) -> AppResult<String> {
 }
 
 /// An image's media type from its first bytes, so a server's wrong `Content-Type` doesn't matter.
-fn sniff_image(b: &[u8]) -> Option<&'static str> {
+pub(crate) fn sniff_image(b: &[u8]) -> Option<&'static str> {
     match b {
         [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
         [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
