@@ -1,7 +1,8 @@
 // Remote MCP servers offered under Customize → Connectors → Discover. Each was
 // checked to speak MCP over HTTP; "oauth" ones support dynamic client
 // registration or have a client Sush ships, so adding one just opens the
-// browser to sign in.
+// browser to sign in. Servers that live on the user's own host (Databricks)
+// have a `setup`: the editor asks for the host and which server, and builds the URL.
 
 import type { Connector } from "@/lib/library";
 
@@ -25,6 +26,81 @@ export interface CatalogEntry {
   color?: string;
   /** For `token` auth: where to create one, and what it needs. */
   tokenHelp?: { url: string; hint: string };
+  /** The URL depends on the user's account; `url` is then only an example. */
+  setup?: ConnectorSetup;
+}
+
+/** How to build a server URL from the user's host and the server they pick. */
+export interface ConnectorSetup {
+  host: { label: string; placeholder: string; hint: string };
+  servers: SetupServer[];
+  /** Servers that need it enabled first, e.g. a preview the admin turns on. */
+  note?: string;
+}
+
+export interface SetupServer {
+  id: string;
+  label: string;
+  description: string;
+  /** Appended to `https://<host>`; `{key}` is filled from the field with that key. */
+  path: string;
+  fields: { key: string; label: string; placeholder: string }[];
+}
+
+export type SetupValues = { host: string; server: string } & Record<string, string>;
+
+/** `adb-123.azuredatabricks.net` from whatever was pasted: a bare host, or a URL from the browser. */
+export function normalizeHost(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  try {
+    const { protocol, hostname } = new URL(/^[a-z]+:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return protocol === "https:" && hostname.includes(".") ? hostname.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The server URL for these values, or null while something is missing. */
+export function setupUrl(setup: ConnectorSetup, values: SetupValues): string | null {
+  const host = normalizeHost(values.host);
+  const server = setup.servers.find((s) => s.id === values.server);
+  if (!host || !server) return null;
+  let missing = false;
+  const path = server.path.replace(/\{(\w+)\}/g, (_, key: string) => {
+    const value = values[key]?.trim();
+    if (!value) missing = true;
+    return encodeURIComponent(value ?? "");
+  });
+  return missing ? null : `https://${host}${path}`;
+}
+
+/** The values a saved URL was built from, so editing shows the form filled in. */
+export function setupValues(setup: ConnectorSetup, url: string): SetupValues | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  for (const server of setup.servers) {
+    const keys: string[] = [];
+    const pattern = server.path
+      .split(/(\{\w+\})/)
+      .map((piece) => {
+        const key = piece.match(/^\{(\w+)\}$/)?.[1];
+        if (!key) return piece.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        keys.push(key);
+        return "([^/]+)";
+      })
+      .join("");
+    const m = parsed.pathname.match(new RegExp(`^${pattern}/?$`));
+    if (!m) continue;
+    const values: SetupValues = { host: parsed.hostname, server: server.id };
+    keys.forEach((key, i) => (values[key] = decodeURIComponent(m[i + 1])));
+    return values;
+  }
+  return null;
 }
 
 const icons = import.meta.glob<string>("../assets/connectors/*.svg", {
@@ -251,6 +327,67 @@ export const CATALOG: CatalogEntry[] = [
     url: "https://mcp.prisma.io/mcp",
     auth: "oauth",
     category: "Developer tools",
+  },
+  {
+    id: "databricks",
+    name: "Databricks",
+    description: "Query your lakehouse with SQL, Genie spaces, Unity Catalog functions and AI Search",
+    publisher: "Databricks",
+    url: "https://<workspace-host>/api/2.0/mcp/sql",
+    // Databricks has no dynamic client registration: a personal access token, or an
+    // OAuth app the user creates (its client ID goes under Advanced settings).
+    auth: "token",
+    category: "Developer tools",
+    color: "#FF3621",
+    tokenHelp: {
+      url: "https://docs.databricks.com/aws/en/dev-tools/auth/pat",
+      hint: "A personal access token from Settings → Developer → Access tokens in your workspace. Or leave it empty and sign in with your own OAuth app under Advanced settings.",
+    },
+    setup: {
+      host: {
+        label: "Workspace URL",
+        placeholder: "adb-1234567890123456.7.azuredatabricks.net",
+        hint: "The address you open Databricks at.",
+      },
+      note: "A workspace admin needs to turn on Managed MCP Servers under Previews in the workspace.",
+      servers: [
+        {
+          id: "sql",
+          label: "Databricks SQL",
+          description: "Run SQL on your SQL warehouses",
+          path: "/api/2.0/mcp/sql",
+          fields: [],
+        },
+        {
+          id: "genie",
+          label: "Genie space",
+          description: "Ask questions of a Genie space in plain language",
+          path: "/api/2.0/mcp/genie/{space}",
+          fields: [{ key: "space", label: "Genie space ID", placeholder: "01ef…" }],
+        },
+        {
+          id: "functions",
+          label: "Unity Catalog functions",
+          description: "Call the functions in a schema as tools",
+          path: "/api/2.0/mcp/functions/{catalog}/{schema}",
+          fields: [
+            { key: "catalog", label: "Catalog", placeholder: "main" },
+            { key: "schema", label: "Schema", placeholder: "default" },
+          ],
+        },
+        {
+          id: "ai-search",
+          label: "AI Search",
+          description: "Search a vector index",
+          path: "/api/2.0/mcp/ai-search/{catalog}/{schema}/{index}",
+          fields: [
+            { key: "catalog", label: "Catalog", placeholder: "main" },
+            { key: "schema", label: "Schema", placeholder: "default" },
+            { key: "index", label: "Index", placeholder: "docs_index" },
+          ],
+        },
+      ],
+    },
   },
   {
     id: "posthog",
