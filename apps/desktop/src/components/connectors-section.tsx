@@ -33,10 +33,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { CATALOG, CATEGORIES, catalogEntry, connectorIcon, type CatalogEntry } from "@/lib/connector-catalog";
+import {
+  CATALOG,
+  CATEGORIES,
+  catalogEntry,
+  connectorIcon,
+  normalizeHost,
+  setupUrl,
+  setupValues,
+  type CatalogEntry,
+  type ConnectorSetup,
+  type SetupValues,
+} from "@/lib/connector-catalog";
 import {
   cancelSignIn,
   connect,
@@ -119,8 +131,14 @@ type RemoteEdit = {
   token: string;
   enabled: boolean;
   catalogId?: string;
+  /** For a catalog entry with a `setup`: the form the URL is built from. */
+  setup?: SetupValues;
+  /** The URL it was saved with; credentials are bound to it, so a new URL needs them again. */
+  savedUrl?: string;
 };
 type Edit = LocalEdit | RemoteEdit;
+
+const blankSetup = (setup: ConnectorSetup): SetupValues => ({ host: "", server: setup.servers[0].id });
 
 const lines = (s: string) =>
   s
@@ -130,6 +148,7 @@ const lines = (s: string) =>
 
 function toEdit(c: Connector): Edit {
   if (c.server.type === "http") {
+    const setup = catalogEntry(c.catalogId)?.setup;
     return {
       kind: "remote",
       id: c.id,
@@ -140,6 +159,8 @@ function toEdit(c: Connector): Edit {
       token: "",
       enabled: c.enabled,
       catalogId: c.catalogId,
+      setup: setup ? (setupValues(setup, c.server.url) ?? blankSetup(setup)) : undefined,
+      savedUrl: c.server.url,
     };
   }
   return {
@@ -227,18 +248,25 @@ function RemoteEditor({
   onDone: () => void;
 }) {
   const entry = catalogEntry(edit.catalogId);
-  const tokenOnly = entry?.auth === "token";
+  const setup = entry?.setup && edit.setup ? entry.setup : undefined;
+  const url = setup ? (setupUrl(setup, edit.setup!) ?? "") : edit.url;
+  const tokenOnly = entry?.auth === "token" && !setup;
   const [advanced, setAdvanced] = useState(!!(edit.clientId || (!entry && edit.id)));
   const [saving, setSaving] = useState(false);
-  const canSave = !!edit.name.trim() && validUrl(edit.url) && (!tokenOnly || !!edit.id || !!edit.token.trim());
+  // Credentials are bound to the URL, so a new one needs a token (or, with a setup, a client to sign in with).
+  const hasSaved = !!edit.id && url === edit.savedUrl;
+  const credentialed = hasSaved || !!edit.token.trim() || (!!setup && !!edit.clientId.trim());
+  const canSave = !!edit.name.trim() && validUrl(url) && (!(tokenOnly || setup) || credentialed);
 
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await saveEdit(edit);
+      const saved = await saveEdit({ ...edit, url });
       onDone();
       // A fresh token replaces whatever the running session was using.
       if (edit.token) void connect(saved);
+      // No token: sign in through the browser with the user's own OAuth app.
+      else if (setup && edit.clientId.trim() && !hasSaved) void signIn(saved);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -266,15 +294,20 @@ function RemoteEditor({
           Connect to a remote MCP server by its URL. Sush signs in through your browser when the server asks for it.
         </p>
       )}
+      {(!entry || setup) && (
+        <Field label="Name" hint={setup ? "Shown in your list; mention it in a chat with @ and this name." : undefined}>
+          <Input
+            value={edit.name}
+            onChange={(e) => onChange({ ...edit, name: e.target.value })}
+            placeholder="My server"
+          />
+        </Field>
+      )}
+      {setup && edit.setup && (
+        <SetupFields setup={setup} values={edit.setup} onChange={(values) => onChange({ ...edit, setup: values })} />
+      )}
       {!entry && (
         <>
-          <Field label="Name">
-            <Input
-              value={edit.name}
-              onChange={(e) => onChange({ ...edit, name: e.target.value })}
-              placeholder="My server"
-            />
-          </Field>
           <Field label="Server URL">
             <Input
               value={edit.url}
@@ -286,15 +319,15 @@ function RemoteEditor({
           </Field>
         </>
       )}
-      {tokenOnly && entry?.tokenHelp && (
+      {(tokenOnly || setup) && entry?.tokenHelp && (
         <Field label="Access token" hint={entry.tokenHelp.hint}>
           <Input
             type="password"
             value={edit.token}
             onChange={(e) => onChange({ ...edit, token: e.target.value })}
-            placeholder={edit.id ? "Saved — paste a new one to replace it" : "Paste your token"}
+            placeholder={hasSaved ? "Saved — paste a new one to replace it" : "Paste your token"}
             className="font-mono"
-            autoFocus
+            autoFocus={tokenOnly}
           />
           <Button variant="link" size="sm" className="h-auto px-0" onClick={() => void openUrl(entry.tokenHelp!.url)}>
             Create a token <ExternalLinkIcon />
@@ -308,10 +341,17 @@ function RemoteEditor({
             settings
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-4">
-            <p className="text-xs text-muted-foreground">
-              Leave these empty for servers that support automatic sign-in. For a server that needs its own OAuth app,
-              register <code className="text-foreground">{CUSTOM_CLIENT_REDIRECT}</code> as the app’s redirect URL.
-            </p>
+            {setup ? (
+              <p className="text-xs text-muted-foreground">
+                Instead of a token, sign in through your browser with an OAuth app you create for {entry!.name}. Register{" "}
+                <code className="text-foreground">{CUSTOM_CLIENT_REDIRECT}</code> as the app’s redirect URL.
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Leave these empty for servers that support automatic sign-in. For a server that needs its own OAuth app,
+                register <code className="text-foreground">{CUSTOM_CLIENT_REDIRECT}</code> as the app’s redirect URL.
+              </p>
+            )}
             <Field label="OAuth client ID">
               <Input
                 value={edit.clientId}
@@ -328,22 +368,82 @@ function RemoteEditor({
                 className="font-mono"
               />
             </Field>
-            <Field
-              label="Access token"
-              hint="Instead of signing in: sent as a bearer token. Stored in your system’s credential manager."
-            >
-              <Input
-                type="password"
-                value={edit.token}
-                onChange={(e) => onChange({ ...edit, token: e.target.value })}
-                placeholder={edit.id ? "Unchanged" : ""}
-                className="font-mono"
-              />
-            </Field>
+            {!setup && (
+              <Field
+                label="Access token"
+                hint="Instead of signing in: sent as a bearer token. Stored in your system’s credential manager."
+              >
+                <Input
+                  type="password"
+                  value={edit.token}
+                  onChange={(e) => onChange({ ...edit, token: e.target.value })}
+                  placeholder={edit.id ? "Unchanged" : ""}
+                  className="font-mono"
+                />
+              </Field>
+            )}
           </CollapsibleContent>
         </Collapsible>
       )}
     </Editor>
+  );
+}
+
+/** The host and server a `setup` entry's URL is built from, plus the server's own fields. */
+function SetupFields({
+  setup,
+  values,
+  onChange,
+}: {
+  setup: ConnectorSetup;
+  values: SetupValues;
+  onChange: (values: SetupValues) => void;
+}) {
+  const server = setup.servers.find((s) => s.id === values.server) ?? setup.servers[0];
+  const url = setupUrl(setup, values);
+  return (
+    <>
+      <Field label={setup.host.label} hint={setup.host.hint}>
+        <Input
+          value={values.host}
+          onChange={(e) => onChange({ ...values, host: e.target.value })}
+          placeholder={setup.host.placeholder}
+          className="font-mono"
+          aria-invalid={!!values.host.trim() && !normalizeHost(values.host)}
+          autoFocus
+        />
+      </Field>
+      <Field label="Server" hint={server.description}>
+        <Select value={server.id} onValueChange={(id) => onChange({ ...values, server: id })}>
+          <SelectTrigger className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {setup.servers.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Field>
+      {server.fields.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {server.fields.map((f) => (
+            <Field key={f.key} label={f.label}>
+              <Input
+                value={values[f.key] ?? ""}
+                onChange={(e) => onChange({ ...values, [f.key]: e.target.value })}
+                placeholder={f.placeholder}
+                className="font-mono"
+              />
+            </Field>
+          ))}
+        </div>
+      )}
+      {url && <p className="truncate font-mono text-xs text-muted-foreground" title={url}>{url}</p>}
+      {setup.note && <p className="text-xs text-muted-foreground">{setup.note}</p>}
+    </>
   );
 }
 
@@ -564,7 +664,8 @@ function Discover({ query, onAdd }: { query: string; onAdd: (e: CatalogEntry) =>
                 <CatalogCard
                   key={e.id}
                   entry={e}
-                  added={connectors.some((c) => c.catalogId === e.id)}
+                  // One per server and workspace, so a `setup` entry can be added again.
+                  added={!e.setup && connectors.some((c) => c.catalogId === e.id)}
                   onAdd={() => onAdd(e)}
                 />
               ))}
@@ -598,6 +699,10 @@ export function ConnectorsSection() {
     return <LocalEditor edit={editing} onChange={setEditing} onDone={() => setEditing(null)} />;
 
   const add = (entry: CatalogEntry) => {
+    if (entry.setup) {
+      setEditing({ ...newRemote(), name: entry.name, catalogId: entry.id, setup: blankSetup(entry.setup) });
+      return;
+    }
     if (entry.auth === "token") {
       setEditing({
         ...newRemote(),
