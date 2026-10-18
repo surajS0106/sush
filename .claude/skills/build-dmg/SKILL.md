@@ -8,16 +8,22 @@ disable-model-invocation: true
 
 Builds an unsigned release DMG on this Mac. This is not a release: nothing is tagged or pushed (that's `/release`, which has CI build every platform).
 
+## Project location
+
+The Sush repo lives at `~/Downloads/sush-pack/sush` (`$HOME/Downloads/sush-pack/sush`), next to its sibling projects in `~/Downloads/sush-pack/`. Every command and path below is relative to that folder; `cd` there first, whatever the current directory is.
+
 ## 1. Preconditions
 
 - Running on macOS (`uname`). If not, stop and say so.
-- Mention uncommitted changes (`git status --short`) if there are any. They are included in the build.
+- The project folder exists (`test -d "$HOME/Downloads/sush-pack/sush"`). If not, stop and say so.
+- Mention uncommitted changes (`git -C "$HOME/Downloads/sush-pack/sush" status --short`) if there are any. They are included in the build.
 
 ## 2. Build
 
-Run from the repo root, in the background (the first build compiles whisper.cpp and takes several minutes). Capture the real exit code; don't pipe the build into `tail`, which hides it.
+Run from `~/Downloads/sush-pack/sush`, in the background (the first build compiles whisper.cpp and takes several minutes). Capture the real exit code; don't pipe the build into `tail`, which hides it.
 
 ```sh
+cd "$HOME/Downloads/sush-pack/sush"
 bun install
 bun run build:mac > "$TMPDIR/sush-build.log" 2>&1
 echo "EXIT $?"
@@ -43,7 +49,7 @@ Quote the first real error from the log (`grep -n "error" "$TMPDIR/sush-build.lo
 
 ## 4. Report
 
-Give the DMG path (`target/release/bundle/dmg/Sush_<version>_<arch>.dmg`) and size, and note:
+Give the full DMG path (`~/Downloads/sush-pack/sush/target/release/bundle/dmg/Sush_<version>_<arch>.dmg`) and size, and note:
 
 - It runs only on this Mac's architecture (aarch64 = Apple Silicon only).
 - It is unsigned. On another Mac, open it with right-click → Open, or run `xattr -cr /Applications/Sush.app` after copying it in.
