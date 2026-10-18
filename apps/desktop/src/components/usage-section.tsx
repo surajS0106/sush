@@ -25,27 +25,28 @@ import {
   type BudgetUnit,
 } from "@/lib/budget";
 import { modelLogo, providerLogo } from "@/lib/logos";
-import { formatUsd, isLocalUrl, priceFor } from "@/lib/pricing";
+import { isLocalUrl, priceFor } from "@/lib/pricing";
 import { useConversations } from "@/lib/store";
 import type { ProviderView } from "@/lib/tauri";
-import { formatTokens, formatTokensExact, rangeStart, summarizeUsage, totalTokens, type ModelUsage, type Tally, type UsageRange } from "@/lib/usage";
+import {
+  formatSpend,
+  formatTokens,
+  formatTokensExact,
+  MODEL_COLORS,
+  OTHER_MODEL_COLOR,
+  rangeStart,
+  summarizeUsage,
+  totalTokens,
+  type ModelUsage,
+  type Tally,
+  type UsageRange,
+} from "@/lib/usage";
 import { cn } from "@/lib/utils";
-
-/** Bar colors for the biggest models, in order; the rest share "Other". */
-const COLORS = ["bg-brand", "bg-amber-400", "bg-emerald-500", "bg-sky-500", "bg-violet-500"];
-const OTHER_COLOR = "bg-muted-foreground/40";
 
 interface Segment {
   label: string;
   tokens: number;
   color: string;
-}
-
-/** "$4.21", "Free", or "—" when nothing in the tally has a known price. */
-function spend(t: Tally, local = false) {
-  if (local) return "Free";
-  if (t.unpricedTokens > 0 && t.usd === 0) return "—";
-  return formatUsd(t.usd);
 }
 
 export function UsageSection({ providers }: { providers: ProviderView[] }) {
@@ -65,11 +66,11 @@ export function UsageSection({ providers }: { providers: ProviderView[] }) {
     return modelLogo(m.model) || (provider && providerLogo(provider)) || undefined;
   };
 
-  const top = usage.models.slice(0, COLORS.length);
-  const rest = usage.models.slice(COLORS.length);
+  const top = usage.models.slice(0, MODEL_COLORS.length);
+  const rest = usage.models.slice(MODEL_COLORS.length);
   const segments: Segment[] = [
-    ...top.map((m, i) => ({ label: m.model, tokens: totalTokens(m), color: COLORS[i] })),
-    ...(rest.length > 0 ? [{ label: "Other", tokens: rest.reduce((n, m) => n + totalTokens(m), 0), color: OTHER_COLOR }] : []),
+    ...top.map((m, i) => ({ label: m.model, tokens: totalTokens(m), color: MODEL_COLORS[i] })),
+    ...(rest.length > 0 ? [{ label: "Other", tokens: rest.reduce((n, m) => n + totalTokens(m), 0), color: OTHER_MODEL_COLOR }] : []),
   ];
   const all = totalTokens(usage.total);
 
@@ -123,7 +124,7 @@ export function UsageSection({ providers }: { providers: ProviderView[] }) {
           <div className="flex items-baseline justify-between gap-4">
             <p className="text-sm font-medium">AI usage</p>
             <p className="text-sm text-muted-foreground tabular-nums">
-              {formatTokens(all)} tokens · {spend(usage.total)}
+              {formatTokens(all)} tokens · {formatSpend(usage.total)}
               {usage.total.unpricedTokens > 0 && usage.total.usd > 0 && "+"}
             </p>
           </div>
@@ -237,7 +238,7 @@ function Row({
       </span>
       <p className={cn("min-w-0 flex-1 truncate text-sm", mono && "font-mono text-[13px] tracking-tight")}>{label}</p>
       <p className="shrink-0 text-sm text-muted-foreground tabular-nums">{formatTokens(totalTokens(tally))} tokens</p>
-      <p className="w-20 shrink-0 text-right text-sm tabular-nums">{spend(tally, local)}</p>
+      <p className="w-20 shrink-0 text-right text-sm tabular-nums">{formatSpend(tally, local)}</p>
       <HoverCard openDelay={150} closeDelay={100}>
         <HoverCardTrigger asChild>
           <button

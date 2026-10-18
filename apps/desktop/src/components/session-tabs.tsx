@@ -12,7 +12,7 @@ import {
   type MotionValue,
   type PanInfo,
 } from "motion/react";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
@@ -44,6 +44,19 @@ const GIVE = 6;
 /** The floating preview of a torn-off tab: the tab itself, at its own width. */
 const PREVIEW_WIDTH = 208;
 
+/**
+ * Each open session's React key. A session that replaces the active tab takes
+ * over that tab's key, so the tab stays put and only its contents change,
+ * instead of one tab shrinking away while another grows in its place.
+ */
+const tabKeys = new Map<string, string>();
+let nextTabKey = 0;
+function tabKey(id: string) {
+  let key = tabKeys.get(id);
+  if (!key) tabKeys.set(id, (key = `tab-${++nextTabKey}`));
+  return key;
+}
+
 /** The session that was open last time (for a window opened from a dragged-out tab, that tab), if it still exists. */
 export function lastActiveTab(): string | null {
   const { active } = tabs.get();
@@ -52,8 +65,8 @@ export function lastActiveTab(): string | null {
 
 /**
  * Keeps the open tabs in step with the open session. A session opened from
- * anywhere (sidebar, history, a mode switch) replaces the active tab, as
- * following a link does in a browser, unless `asNewTab` was called first.
+ * anywhere (history, a mode switch) replaces the active tab, as following a
+ * link does in a browser, unless `openInNewTab` was called first (the sidebar does).
  */
 export function useTabs(activeId: string | null, ids: string[], setActiveId: (id: string | null) => void) {
   const state = useSyncExternalStore(tabs.subscribe, tabs.get);
@@ -61,23 +74,28 @@ export function useTabs(activeId: string | null, ids: string[], setActiveId: (id
   const prev = useRef(activeId);
   const newTab = useRef(false);
 
-  useEffect(() => {
+  // Before paint, so the strip never shows a frame where the new session has no tab yet.
+  useLayoutEffect(() => {
     const from = prev.current;
     prev.current = activeId;
     const asNew = newTab.current;
     newTab.current = false;
     if (!activeId) return;
     const live = new Set(getConversations().map((c) => c.id));
-    tabs.set(({ open }) => {
-      const list = open.filter((id) => live.has(id));
-      if (list.includes(activeId)) return { open: list, active: activeId };
-      const at = from ? list.indexOf(from) : -1;
-      if (at < 0) return { open: [...list, activeId], active: activeId };
+    const list = tabs.get().open.filter((id) => live.has(id));
+    const at = from && !list.includes(activeId) ? list.indexOf(from) : -1;
+    if (list.includes(activeId)) tabs.set({ open: list, active: activeId });
+    else if (at < 0) tabs.set({ open: [...list, activeId], active: activeId });
+    else {
       const next = [...list];
       if (asNew) next.splice(at + 1, 0, activeId);
-      else next[at] = activeId;
-      return { open: next, active: activeId };
-    });
+      else {
+        next[at] = activeId;
+        tabKeys.set(activeId, tabKey(from!));
+        tabKeys.delete(from!);
+      }
+      tabs.set({ open: next, active: activeId });
+    }
   }, [activeId]);
 
   /** Open `id` in a tab of its own, next to the active one. */
@@ -186,7 +204,7 @@ export function SessionTabs({
               const c = byId.get(id);
               return c ? (
                 <SessionTab
-                  key={id}
+                  key={tabKey(id)}
                   conversation={c}
                   active={id === activeId}
                   arrived={id === landing.arrived}
@@ -329,9 +347,12 @@ function distanceOut({ x, y }: { x: number; y: number }, strip: HTMLElement | nu
 
 const SNAP = { type: "spring", stiffness: 560, damping: 40 } as const;
 const SETTLE = { type: "spring", stiffness: 420, damping: 34 } as const;
-/** The tab's own size, matching `w-52 pl-2.5 pr-1`. */
-const OPEN_TAB = { width: 208, opacity: 1, paddingLeft: 10, paddingRight: 4 };
-const HIDDEN_TAB = { width: 0, opacity: 0, paddingLeft: 0, paddingRight: 0 };
+/**
+ * The tab's own size, matching `w-52 pl-2.5 pr-1`. The minimum width (for when the strip is
+ * crowded) grows and shrinks with it, or a new tab would snap open to it before growing.
+ */
+const OPEN_TAB = { width: 208, minWidth: 96, opacity: 1, paddingLeft: 10, paddingRight: 4 };
+const HIDDEN_TAB = { width: 0, minWidth: 0, opacity: 0, paddingLeft: 0, paddingRight: 0 };
 
 /**
  * One tab. Drag along the strip to reorder. Pull it down and it gives a little,
@@ -521,13 +542,13 @@ function SessionTab({
         }}
         className={cn(
           "group/tab relative flex h-8 shrink cursor-default items-center gap-2 overflow-hidden rounded-md text-sm transition-colors",
-          tornOff ? "min-w-0" : "min-w-24",
           active ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
           dragging && "z-10 bg-muted shadow-md",
         )}
       >
         <TabFace conversation={c} title={renaming ? <TabTitleInput conversation={c} /> : undefined} />
-        {menu}
+        {/* Inactive tabs keep the menu's room, so switching tabs changes only their styling. */}
+        {menu ?? <span className="size-5 shrink-0" aria-hidden />}
         <button
           type="button"
           aria-label="Close tab"

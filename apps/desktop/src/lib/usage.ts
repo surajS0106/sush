@@ -1,8 +1,8 @@
-// AI usage for Settings → Usage, tallied from the token counts each reply
+// AI usage for Settings → Usage and the Cowork start screen, tallied from the token counts each reply
 // carries in its metadata. Only chats on this computer count, so deleting a
 // chat removes its usage too.
 
-import { costUsd } from "@/lib/pricing";
+import { costUsd, formatUsd } from "@/lib/pricing";
 import type { Conversation } from "@/lib/store";
 
 export type UsageRange = "7d" | "30d" | "all";
@@ -47,7 +47,18 @@ export const formatTokens = (n: number) => compactTokens.format(n);
 /** 1_234_567 → "1,234,567". */
 export const formatTokensExact = (n: number) => exactTokens.format(n);
 
-const emptyTally = (): Tally => ({ inputTokens: 0, outputTokens: 0, replies: 0, usd: 0, unpricedTokens: 0 });
+/** "$4.21", "Free", or "—" when nothing in the tally has a known price. */
+export function formatSpend(t: Tally, local = false) {
+  if (local) return "Free";
+  if (t.unpricedTokens > 0 && t.usd === 0) return "—";
+  return formatUsd(t.usd);
+}
+
+/** Colours for the biggest models, in order; the rest share `OTHER_MODEL_COLOR`. */
+export const MODEL_COLORS = ["bg-brand", "bg-amber-400", "bg-emerald-500", "bg-sky-500", "bg-violet-500"];
+export const OTHER_MODEL_COLOR = "bg-muted-foreground/40";
+
+export const emptyTally = (): Tally => ({ inputTokens: 0, outputTokens: 0, replies: 0, usd: 0, unpricedTokens: 0 });
 
 function add(t: Tally, input: number, output: number, usd: number | undefined) {
   t.inputTokens += input;
@@ -109,25 +120,67 @@ export function summarizeUsage(conversations: Conversation[], localProviders: Se
   };
 }
 
-/** Local calendar day of a timestamp, as "YYYY-MM-DD", for `dailyReplies`. */
+/** Local calendar day of a timestamp, as "YYYY-MM-DD", for `activity`. */
 export function dayKey(ms: number) {
   const d = new Date(ms);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+export interface DayUsage {
+  replies: number;
+  /** Tokens (input + output) per model. */
+  tokens: Map<string, number>;
+  /** Estimated spend for the day's priced replies. */
+  usd: number;
+}
+
+export interface Activity {
+  /** Keyed by `dayKey`. */
+  days: Map<string, DayUsage>;
+  /** Prompts and replies. */
+  messages: number;
+  /** Replies per local hour of the day, 0–23. */
+  hours: number[];
+}
+
 /**
- * Replies per local day, across chats and Cowork, for the activity heatmap.
- * Like `summarizeUsage`, older replies without a start time count on their
- * chat's last activity.
+ * Replies, tokens and spend per local day since `since` (ms), across chats and
+ * Cowork, for the start screen's activity card. Like `summarizeUsage`, replies
+ * without a start time count on their chat's last activity; a prompt counts
+ * when the reply to it started.
  */
-export function dailyReplies(conversations: Conversation[]): Map<string, number> {
-  const days = new Map<string, number>();
+export function activity(conversations: Conversation[], localProviders: Set<string>, since: number): Activity {
+  const days = new Map<string, DayUsage>();
+  const hours = new Array<number>(24).fill(0);
+  let messages = 0;
+
   for (const c of conversations) {
-    for (const m of c.messages) {
+    // Walk backwards so each prompt can take the time of the reply after it.
+    let next = c.updatedAt;
+    for (let i = c.messages.length - 1; i >= 0; i--) {
+      const m = c.messages[i];
+      const meta = m.metadata;
+      const at = meta?.createdAt ?? next;
+      next = at;
+      if (at < since) continue;
+      if (m.role === "user") messages += 1;
       if (m.role !== "assistant") continue;
-      const key = dayKey(m.metadata?.createdAt ?? c.updatedAt);
-      days.set(key, (days.get(key) ?? 0) + 1);
+      messages += 1;
+
+      const key = dayKey(at);
+      let day = days.get(key);
+      if (!day) {
+        day = { replies: 0, tokens: new Map(), usd: 0 };
+        days.set(key, day);
+      }
+      day.replies += 1;
+      hours[new Date(at).getHours()] += 1;
+      if (meta?.outputTokens === undefined) continue;
+      const input = meta.inputTokens ?? 0;
+      const name = meta.model ?? "Unknown model";
+      day.tokens.set(name, (day.tokens.get(name) ?? 0) + input + meta.outputTokens);
+      day.usd += costUsd(meta.model, input, meta.outputTokens, localProviders.has(meta.providerId ?? "")) ?? 0;
     }
   }
-  return days;
+  return { days, messages, hours };
 }

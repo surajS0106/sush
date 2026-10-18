@@ -53,12 +53,23 @@ export async function changePassword(currentPassword: string, newPassword: strin
   check(await authClient.changePassword({ currentPassword, newPassword, revokeOtherSessions: true }));
 }
 
+/** Forget the token and refresh the session, which takes the app back to sign-in. */
+async function clearSession() {
+  writeToken(null);
+  await authClient.getSession();
+}
+
 export async function signOut() {
   try {
     await authClient.signOut();
   } finally {
     // Drop the local token even if the server is unreachable.
-    writeToken(null);
-    await authClient.getSession();
+    await clearSession();
   }
+}
+
+/** Deletes the account and its sessions on the server. Local chats, memory and workspaces are left alone. */
+export async function deleteAccount(password: string) {
+  check(await authClient.deleteUser({ password }));
+  await clearSession();
 }

@@ -240,7 +240,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
                   <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
                   <span>{`What should we work on${workspace ? ` in ${workspace.name}` : ""}?`}</span>
                 </h1>
-                <UsageHeatmap className="mt-8 w-full" />
+                <UsageHeatmap localProviders={localProviders} className="mt-8 w-full" />
               </>
             ) : (
               connect

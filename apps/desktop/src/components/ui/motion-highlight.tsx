@@ -147,7 +147,8 @@ export function FollowHighlight({ selector, className }: { selector: string; cla
 /**
  * A `relative` wrapper whose hovered item (closest match of `itemSelector`) gets a gliding highlight. Scrolling
  * hides it until the pointer moves again: rows sliding under a still pointer fire `pointerover` one after
- * another, and the highlight would chase them through the list.
+ * another, and the highlight would chase them through the list. The gap between rows briefly has no item under
+ * the pointer; hiding there would turn every move into a fade-out and fade-in, so it waits for the next row.
  */
 export function HoverHighlight({
   itemSelector = "[data-hover-item]",
@@ -162,23 +163,34 @@ export function HoverHighlight({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const scrolling = useRef(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [target, setTarget] = useState<HTMLElement | null>(null);
+
+  const hide = () => {
+    clearTimeout(hideTimer.current);
+    setTarget(null);
+  };
 
   useEffect(() => {
     // `scroll` doesn't bubble, so catch it on the way down from whichever ancestor scrolls.
     const onScroll = (e: Event) => {
       if (e.target instanceof Node && ref.current && e.target.contains(ref.current)) {
         scrolling.current = true;
-        setTarget(null);
+        hide();
       }
     };
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
-    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll, { capture: true });
+      clearTimeout(hideTimer.current);
+    };
   }, []);
 
   const track = (e: PointerEvent<HTMLDivElement>) => {
     const item = (e.target as Element).closest<HTMLElement>(itemSelector);
-    setTarget(item && e.currentTarget.contains(item) ? item : null);
+    clearTimeout(hideTimer.current);
+    if (item && e.currentTarget.contains(item)) setTarget(item);
+    else hideTimer.current = setTimeout(() => setTarget(null), HIDE_DELAY);
   };
 
   return (
@@ -196,7 +208,7 @@ export function HoverHighlight({
       }}
       onPointerLeave={() => {
         scrolling.current = false;
-        setTarget(null);
+        hide();
       }}
     >
       <MotionHighlight target={target} className={highlightClassName} />

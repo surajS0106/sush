@@ -4,6 +4,7 @@
 
 pub mod agent;
 pub mod browser;
+pub mod clis;
 pub mod error;
 pub mod imagegen;
 pub mod mcp;

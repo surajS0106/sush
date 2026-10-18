@@ -405,7 +405,11 @@ function EditSidebarDialog({ open, onOpenChange }: { open: boolean; onOpenChange
     setLayout({ hiddenNav: show ? hiddenNav.filter((h) => h !== id) : [...hiddenNav, id] });
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent
+        className="sm:max-w-sm"
+        // Don't open with a focus ring on the first checkbox; Tab still reaches it.
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle>Edit sidebar</DialogTitle>
           <DialogDescription>Choose which items appear in your sidebar.</DialogDescription>

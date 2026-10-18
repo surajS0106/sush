@@ -1,8 +1,15 @@
 # Cowork Start Screen — Design Notes
 
-Last updated: 2026-10-13
+Last updated: 2026-10-14
 
 ## What changed
+
+### 2026-10-14 (model usage and cost, issue #24)
+- The heatmap card gains Overview / Models tabs (`role="tablist"`) and an All / 30d / 7d range filter, both remembered (`sush.usage-view`, `sush.usage-range`). Ranges are calendar days ending today; the shape picker shows only on Overview (`src/components/usage-heatmap.tsx`).
+- Overview: eight tiles above the grid (sessions, messages, total tokens, estimated cost, active days, peak hour, streak, favorite model) and a comparison line under it ("~40× the tokens in Moby-Dick"). The streak moves from the footer into a tile. Grid days before the range draw as empty.
+- Models: tokens per day stacked by model in an HTML bar chart with a nice-step y axis and about five date labels. Ranges over 62 days go by week, then by month. Hovering a bar lists each model's tokens and the bucket's cost. A legend under it gives each model's input/output tokens, cost ("Free" for local) and share.
+- `src/lib/usage.ts`: `activity()` replaces `dailyReplies` and tallies replies, tokens per model and spend per day, messages (a prompt takes the time of the reply after it) and replies per hour. `formatSpend`, `emptyTally`, `MODEL_COLORS` and `OTHER_MODEL_COLOR` move here from Settings > Usage, which now imports them (`src/components/usage-section.tsx`).
+- `ChatView` passes its `localProviders` set so local models count as free (`src/components/chat-view.tsx`).
 
 ### 2026-10-13 (contrast)
 - `HeatMap` empty-cell outlines go from 14% to 50% stroke opacity (3.6:1 light, 5:1 dark) and use `vector-effect: non-scaling-stroke` so they stay 1px when the SVG scales down (`src/components/ui/HeatMap.tsx`).
@@ -53,6 +60,8 @@ Sized-by-value dots were meant to carry the reading beyond color, but on this sc
 
 The contrast pass came from a failed accessibility check. Quiet days mixed close to `--muted` can't reach 3:1 by fill alone without flattening the ramp, so the edge carries visibility and the fill keeps carrying intensity. Thin strokes measured fine on paper but rendered at about half a pixel once the SVG scaled down, which is why they are non-scaling.
 
+The model view answers "what is this costing me" where the work starts, instead of only in Settings. It reuses `summarizeUsage`, the price table and the top-five model colors, so a model is the same color and the same dollar figure on both screens; the trade-off is that the card inherits the Usage page's limits (deleted chats drop out, unknown models show "—"). The chart is plain flexbox rather than SVG so segments take Tailwind color classes and the existing tooltip, and buckets widen past 62 bars so "All" stays legible however long the history.
+
 ## What makes it stand out
 
 - No new persistence or Rust command: it derives from `useConversations()` and recomputes in one `useMemo` when threads change, so a reply sent elsewhere shows up the next time the screen opens.
@@ -62,3 +71,5 @@ The contrast pass came from a failed accessibility check. Quiet days mixed close
 - The SVG scales to its container through its viewBox, so the full year fits any transcript width setting without horizontal scrolling; month labels are placed in viewBox percentages so they stay aligned at every width.
 - Cell shape is a remembered, keyboard-operable choice (radio group with roving tabindex), and month labels stay aligned for every shape.
 - The legend is drawn from the same ramp and floor as the cells and labels min and max in replies, so it cannot drift from what the grid shows.
+- One range filter drives the tiles, the grid and the chart from the same tally, and model colors and spend come from shared helpers, so the card and Settings > Usage cannot disagree.
+- The bar chart picks day, week or month buckets from the span, uses 1/2/2.5/5 × 10ⁿ axis steps, and the whole column is the hover target so slivers are easy to inspect.

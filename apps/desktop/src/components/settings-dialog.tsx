@@ -20,6 +20,7 @@ import {
   ShapesIcon,
   Trash2Icon,
 } from "lucide-react";
+import { motion } from "motion/react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
@@ -44,10 +45,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { HoverHighlight } from "@/components/ui/motion-highlight";
+import { HoverHighlight, MotionHighlight } from "@/components/ui/motion-highlight";
 import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
-import { changePassword, signOut, updateProfile, useSession } from "@/lib/auth";
+import { changePassword, deleteAccount, signOut, updateProfile, useSession } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import type { ProviderView } from "@/lib/tauri";
@@ -66,7 +67,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Settings",
     items: [
       { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation" },
-      { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out" },
+      { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out delete account" },
       { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
       { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
@@ -94,11 +95,20 @@ interface SettingsDialogProps {
 export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialogProps) {
   const state = useSettings();
   const [query, setQuery] = useState("");
+  /** The active section's nav button, which the active highlight glides to. */
+  const [activeItem, setActiveItem] = useState<HTMLButtonElement | null>(null);
+  /** Bumped when filtering moves the nav items, so the highlight re-measures. */
+  const [revision, setRevision] = useState(0);
   const q = query.trim().toLowerCase();
   const groups = NAV.map(({ group, items }) => ({
     group,
     items: q ? items.filter((i) => `${i.label} ${i.keywords}`.toLowerCase().includes(q)) : items,
   })).filter((g) => g.items.length > 0);
+
+  // Opened at a section from elsewhere (e.g. Plugins), the nav shows it.
+  useEffect(() => {
+    activeItem?.scrollIntoView({ block: "nearest" });
+  }, [activeItem]);
 
   return (
     <Dialog
@@ -120,41 +130,60 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">App preferences, account, providers and customizations.</DialogDescription>
-        <nav className="flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r bg-sidebar p-3">
-          <div className="relative">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
-              aria-label="Search settings"
-              className="h-9 w-full rounded-lg border bg-background/50 pr-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-            />
+        <nav className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
+          {/* The search stays put; only the list below it scrolls. */}
+          <div className="shrink-0 p-3 pb-1">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setRevision((r) => r + 1);
+                }}
+                placeholder="Search"
+                aria-label="Search settings"
+                className="h-9 w-full rounded-lg border bg-background/50 pr-2.5 pl-8 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+              />
+            </div>
           </div>
-          <HoverHighlight className="flex flex-col gap-4" highlightClassName="rounded-lg bg-sidebar-accent">
-            {groups.map(({ group, items }) => (
-              <div key={group} className="flex flex-col gap-0.5">
-                <p className="px-2.5 pb-1 text-xs text-muted-foreground">{group}</p>
-                {items.map(({ id, label, icon: Icon }) => (
-                  <button
-                    key={id}
-                    type="button"
-                    data-hover-item
-                    onClick={() => openSettings({ section: id })}
-                    className={cn(
-                      "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-sidebar-foreground/80 hover:text-sidebar-foreground",
-                      state?.section === id && "bg-sidebar-accent font-medium text-sidebar-foreground",
-                    )}
-                  >
-                    <Icon className="size-4" /> {label}
-                  </button>
-                ))}
-              </div>
-            ))}
-            {groups.length === 0 && <p className="px-2.5 text-sm text-muted-foreground">No matching settings</p>}
-          </HoverHighlight>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+            <HoverHighlight className="flex flex-col gap-4" highlightClassName="rounded-lg bg-sidebar-accent">
+              <MotionHighlight target={activeItem} revision={revision} className="rounded-lg bg-sidebar-accent" />
+              {groups.map(({ group, items }) => (
+                <div key={group} className="flex flex-col gap-0.5">
+                  <p className="px-2.5 pb-1 text-xs text-muted-foreground">{group}</p>
+                  {items.map(({ id, label, icon: Icon }) => (
+                    <button
+                      key={id}
+                      ref={state?.section === id ? setActiveItem : undefined}
+                      type="button"
+                      data-hover-item
+                      aria-current={state?.section === id ? "page" : undefined}
+                      onClick={() => openSettings({ section: id })}
+                      className={cn(
+                        "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-sidebar-foreground/80 transition-colors hover:text-sidebar-foreground",
+                        state?.section === id && "font-medium text-sidebar-foreground",
+                      )}
+                    >
+                      <Icon className="size-4" /> {label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+              {groups.length === 0 && <p className="px-2.5 text-sm text-muted-foreground">No matching settings</p>}
+            </HoverHighlight>
+          </div>
         </nav>
-        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+        {/* Keyed by section: each one starts at the top and fades in instead of inheriting the last one's scroll.
+            Starts below the close button so its scrollbar doesn't run underneath it. */}
+        <motion.div
+          key={state?.section}
+          className="mt-10 min-h-0 min-w-0 flex-1 overflow-y-auto"
+          initial={{ opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18, ease: "easeOut" }}
+        >
           {state?.section === "general" && <GeneralSection />}
           {state?.section === "account" && <AccountSection />}
           {state?.section === "sushi" && <SushiSection />}
@@ -167,7 +196,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "skills" && <SkillsSection />}
           {state?.section === "connectors" && <ConnectorsSection />}
           {state?.section === "plugins" && <PluginsSection />}
-        </div>
+        </motion.div>
       </DialogContent>
     </Dialog>
   );
@@ -393,6 +422,7 @@ function AccountSection() {
   const user = session?.user;
   const [pickerOpen, setPickerOpen] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const setImage = async (image: string | null, done: string) => {
@@ -484,6 +514,11 @@ function AccountSection() {
             <LogOutIcon /> Sign out
           </Button>
         </Setting>
+        <Setting title="Delete account" description="Permanently delete your Sush account. This can't be undone.">
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
+            <Trash2Icon /> Delete account
+          </Button>
+        </Setting>
       </Group>
       <AvatarPicker
         open={pickerOpen}
@@ -495,6 +530,7 @@ function AccountSection() {
         }}
       />
       <PasswordDialog open={passwordOpen} onOpenChange={setPasswordOpen} />
+      <DeleteAccountDialog open={deleteOpen} onOpenChange={setDeleteOpen} />
     </Page>
   );
 }
@@ -645,6 +681,64 @@ function PasswordDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
           {error && <p className="text-sm text-destructive">{error}</p>}
           <Button type="submit" disabled={saving} className="mt-1">
             {saving ? "Saving…" : "Change password"}
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeleteAccountDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setDeleting(true);
+    try {
+      // Clears the session, so the app drops back to the sign-in screen.
+      await deleteAccount(password);
+      toast.success("Your account was deleted.");
+    } catch (err) {
+      setError(errorMessage(err));
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (deleting) return;
+        onOpenChange(o);
+        if (!o) {
+          setPassword("");
+          setError("");
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-sm">
+        <DialogTitle>Delete account?</DialogTitle>
+        <DialogDescription>
+          Your Sush account is deleted and you're signed out everywhere. Your chats, memory and workspaces are stored on this
+          computer, not on our server, so they stay here.
+        </DialogDescription>
+        <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-3 pt-1">
+          <Input
+            type="password"
+            placeholder="Password"
+            aria-label="Password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            autoFocus
+            className="h-9"
+          />
+          {error && <p className="text-sm text-destructive">{error}</p>}
+          <Button type="submit" variant="destructive" disabled={deleting || !password} className="mt-1">
+            {deleting ? "Deleting…" : "Delete account"}
           </Button>
         </form>
       </DialogContent>

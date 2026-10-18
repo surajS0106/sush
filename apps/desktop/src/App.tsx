@@ -180,7 +180,8 @@ export default function App() {
           <AppSidebar
             conversations={conversations}
             activeId={activeId}
-            onSelect={setActiveId}
+            // A session picked in the sidebar opens in a tab of its own (or its tab, if it has one).
+            onSelect={tabs.openInNewTab}
             onNew={startNew}
             onNewCowork={startCowork}
             onNewInProject={startInProject}

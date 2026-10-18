@@ -364,131 +364,134 @@ function AutomationDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[calc(100svh-4rem)] overflow-y-auto sm:max-w-lg">
+      <DialogContent className="flex max-h-[calc(100svh-4rem)] flex-col sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{existing ? "Edit automation" : "New automation"}</DialogTitle>
           <DialogDescription>Each run starts a new session with this prompt.</DialogDescription>
         </DialogHeader>
 
-        <form
-          id="automation-form"
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (valid) save();
-          }}
-        >
-          <div className="grid gap-2">
-            <Label htmlFor="automation-name">Name</Label>
-            <Input id="automation-name" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Daily briefing" />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="automation-prompt">Prompt</Label>
-            <Textarea
-              id="automation-prompt"
-              value={draft.prompt}
-              onChange={(e) => set({ prompt: e.target.value })}
-              placeholder="What should Sush do each time? Include every detail; each run starts fresh."
-              className="min-h-32"
-            />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
+        {/* Only the body scrolls, so the scrollbar starts below the close button. */}
+        <div className="-mx-4 -my-1 grid min-h-0 gap-4 overflow-y-auto px-4 py-1">
+          <form
+            id="automation-form"
+            className="grid gap-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (valid) save();
+            }}
+          >
             <div className="grid gap-2">
-              <Label>Repeats</Label>
-              <Select value={frequency} onValueChange={(v) => setSchedule({ frequency: v as Frequency })}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FREQUENCIES.map((f) => (
-                    <SelectItem key={f.value} value={f.value}>
-                      {f.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Label htmlFor="automation-name">Name</Label>
+              <Input id="automation-name" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Daily briefing" />
             </div>
-            {frequency === "weekly" && (
+            <div className="grid gap-2">
+              <Label htmlFor="automation-prompt">Prompt</Label>
+              <Textarea
+                id="automation-prompt"
+                value={draft.prompt}
+                onChange={(e) => set({ prompt: e.target.value })}
+                placeholder="What should Sush do each time? Include every detail; each run starts fresh."
+                className="min-h-32"
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label>On</Label>
-                <Select value={String(draft.schedule.day)} onValueChange={(v) => setSchedule({ day: Number(v) })}>
+                <Label>Repeats</Label>
+                <Select value={frequency} onValueChange={(v) => setSchedule({ frequency: v as Frequency })}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {WEEKDAYS.map((d, i) => (
-                      <SelectItem key={d} value={String(i)}>
-                        {d}
+                    {FREQUENCIES.map((f) => (
+                      <SelectItem key={f.value} value={f.value}>
+                        {f.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-            )}
-            {(frequency === "daily" || frequency === "weekdays" || frequency === "weekly") && (
+              {frequency === "weekly" && (
+                <div className="grid gap-2">
+                  <Label>On</Label>
+                  <Select value={String(draft.schedule.day)} onValueChange={(v) => setSchedule({ day: Number(v) })}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {WEEKDAYS.map((d, i) => (
+                        <SelectItem key={d} value={String(i)}>
+                          {d}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {(frequency === "daily" || frequency === "weekdays" || frequency === "weekly") && (
+                <div className="grid gap-2">
+                  <Label htmlFor="automation-time">At</Label>
+                  <Input
+                    id="automation-time"
+                    type="time"
+                    value={draft.schedule.time}
+                    onChange={(e) => e.target.value && setSchedule({ time: e.target.value })}
+                  />
+                </div>
+              )}
               <div className="grid gap-2">
-                <Label htmlFor="automation-time">At</Label>
-                <Input
-                  id="automation-time"
-                  type="time"
-                  value={draft.schedule.time}
-                  onChange={(e) => e.target.value && setSchedule({ time: e.target.value })}
-                />
-              </div>
-            )}
-            <div className="grid gap-2">
-              <Label>Runs in</Label>
-              <Select value={draft.workspaceId ?? CHAT} onValueChange={(v) => set({ workspaceId: v === CHAT ? undefined : v })}>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={CHAT}>
-                    <MessagesSquareIcon /> Chat
-                  </SelectItem>
-                  {workspaces.map((w) => (
-                    <SelectItem key={w.id} value={w.id}>
-                      <FolderIcon /> {w.name}
+                <Label>Runs in</Label>
+                <Select value={draft.workspaceId ?? CHAT} onValueChange={(v) => set({ workspaceId: v === CHAT ? undefined : v })}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={CHAT}>
+                      <MessagesSquareIcon /> Chat
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    {workspaces.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        <FolderIcon /> {w.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-          </div>
 
-          {frequency !== "manual" && (
-            <label className="flex items-center justify-between gap-4 rounded-lg border p-3">
-              <span>
-                <span className="block font-medium">On schedule</span>
-                <span className="text-xs text-muted-foreground">
-                  {draft.enabled ? describeSchedule(draft.schedule) : "Paused. Run it yourself from its menu."}
+            {frequency !== "manual" && (
+              <label className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                <span>
+                  <span className="block font-medium">On schedule</span>
+                  <span className="text-xs text-muted-foreground">
+                    {draft.enabled ? describeSchedule(draft.schedule) : "Paused. Run it yourself from its menu."}
+                  </span>
                 </span>
-              </span>
-              <Switch checked={draft.enabled} onCheckedChange={(enabled) => set({ enabled })} />
-            </label>
-          )}
-        </form>
+                <Switch checked={draft.enabled} onCheckedChange={(enabled) => set({ enabled })} />
+              </label>
+            )}
+          </form>
 
-        {existing && (
-          <section aria-labelledby="automation-runs" className="grid gap-1">
-            <h3 id="automation-runs" className="text-xs font-medium text-muted-foreground">
-              Recent runs
-            </h3>
-            {runs.length === 0 && <p className="text-sm text-muted-foreground">No runs yet.</p>}
-            {runs.map((r) => (
-              <button
-                key={r.threadId}
-                type="button"
-                onClick={() => onOpenSession(r.threadId)}
-                className="-mx-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
-              >
-                <span className="min-w-0 flex-1 truncate">{conversations.find((c) => c.id === r.threadId)?.title ?? existing.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatWhen(new Date(r.at))}</span>
-              </button>
-            ))}
-          </section>
-        )}
+          {existing && (
+            <section aria-labelledby="automation-runs" className="grid gap-1">
+              <h3 id="automation-runs" className="text-xs font-medium text-muted-foreground">
+                Recent runs
+              </h3>
+              {runs.length === 0 && <p className="text-sm text-muted-foreground">No runs yet.</p>}
+              {runs.map((r) => (
+                <button
+                  key={r.threadId}
+                  type="button"
+                  onClick={() => onOpenSession(r.threadId)}
+                  className="-mx-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                >
+                  <span className="min-w-0 flex-1 truncate">{conversations.find((c) => c.id === r.threadId)?.title ?? existing.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{formatWhen(new Date(r.at))}</span>
+                </button>
+              ))}
+            </section>
+          )}
+        </div>
 
         <DialogFooter className="sm:justify-between">
           {existing ? (
