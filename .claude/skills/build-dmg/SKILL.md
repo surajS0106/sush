@@ -38,7 +38,7 @@ tail -10 "$TMPDIR/sush-build.log"
 - `VITE_AUTH_URL` points the UI at the sidecar's port, which the release CSP allows.
 - `--bundles dmg` builds only the DMG.
 
-`tauri.macos-icon.conf.json` (the macOS 26 adaptive icon) is left out because it needs full Xcode's `actool`. If `xcrun --find actool` succeeds, run `apps/desktop/src-tauri/icons/build-mac-icon.sh` first and append `-- --config src-tauri/tauri.macos-icon.conf.json` (or run the steps by hand).
+`build:mac` always adds `--config src-tauri/tauri.macos-icon.conf.json`, which bundles the committed `icons/Assets.car` (the macOS 26 light/dark icon) and swaps in `Info.icon.plist` (`CFBundleIconName` plus the microphone string). Xcode is not needed: `Assets.car` is compiled by Xcode's `actool` on GitHub's macOS runners (`.github/workflows/mac-icon.yml`) and committed whenever `icons/AppIcon.icon` changes. If you changed the icon locally and haven't pushed yet, the DMG still carries the previous `Assets.car`; say so in the report. If the build fails because `icons/Assets.car` is missing, run the Mac icon workflow (`gh workflow run mac-icon.yml`) and pull.
 
 ## 3. If it fails
 

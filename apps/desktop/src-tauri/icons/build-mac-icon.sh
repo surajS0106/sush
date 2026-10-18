@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Compile AppIcon.icon (light + dark artwork) into icons/Assets.car, which
 # macOS 26 reads through CFBundleIconName to swap the icon with the system
-# appearance. Needs full Xcode (actool); release.yml runs it on the macOS
-# runners and bundles the result with tauri.macos-icon.conf.json.
+# appearance. Needs full Xcode (actool), so it runs on GitHub's macOS runners:
+# mac-icon.yml commits the result whenever AppIcon.icon changes, and release.yml
+# rebuilds it. Local builds bundle the committed file via tauri.macos-icon.conf.json.
 set -euo pipefail
 cd "$(dirname "$0")"
 partial="$(mktemp -d)/partial.plist"

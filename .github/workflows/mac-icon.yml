@@ -1,0 +1,40 @@
+name: Mac icon
+
+# Compiles icons/AppIcon.icon into icons/Assets.car with Xcode's actool and
+# commits it, so local builds bundle the macOS 26 light/dark icon without
+# Xcode installed (actool only ships with full Xcode). Runs only when the icon
+# changes, so it costs about a minute of macOS time per icon change.
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/desktop/src-tauri/icons/AppIcon.icon/**
+      - apps/desktop/src-tauri/icons/build-mac-icon.sh
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-icon
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: apps/desktop/src-tauri/icons/build-mac-icon.sh
+
+      # Pushes made with GITHUB_TOKEN don't trigger other workflows, so this can't loop.
+      - name: Commit Assets.car if it changed
+        run: |
+          git add apps/desktop/src-tauri/icons/Assets.car
+          if git diff --cached --quiet; then echo "Assets.car is already up to date"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: rebuild Assets.car from AppIcon.icon"
+          git pull --rebase
+          git push
