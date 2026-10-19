@@ -57,6 +57,8 @@ jobs:
         run: |
           ext=""
           if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          # binaries/ is gitignored, and bun on Windows won't create the output folder.
+          mkdir -p ../desktop/src-tauri/binaries
           bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
             --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
 
