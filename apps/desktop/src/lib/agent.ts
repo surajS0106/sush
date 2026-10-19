@@ -253,7 +253,13 @@ export const WORKSPACE_TOOLS = new Set([
   "fs_move",
   "fs_delete",
   "shell_run",
+  "branch_status",
+  "git_commit",
+  "git_merge",
 ]);
+
+/** The Cowork tool whose latest call shows as the live pull request card (`components/branch-card.tsx`). */
+export const BRANCH_STATUS = "branch_status";
 
 /** Cowork's built-in browser. Rust offers and runs them (`sush_core::browser`). */
 export const BROWSER_TOOLS = new Set(["browser_navigate", "browser_read", "browser_click", "browser_type"]);

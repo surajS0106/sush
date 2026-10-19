@@ -146,6 +146,9 @@ pub enum Inbox {
     /// Add the steering messages now: end the current step or tool calls
     /// early. Does nothing when none are waiting.
     Interrupt,
+    /// The host's approval rules changed (e.g. the user let edits run without
+    /// asking): calls waiting for the user that no longer need to, start.
+    Recheck,
 }
 
 /// What the run needs from the app.
@@ -182,6 +185,7 @@ pub async fn run(
         answers: VecDeque::new(),
         steers: Vec::new(),
         interrupt: false,
+        recheck: false,
     };
     let resolve_first = match action {
         RunAction::Send { mut message, replace } => {
@@ -248,6 +252,8 @@ struct Runner<'a> {
     steers: Vec<Value>,
     /// The user asked for `steers` to join now.
     interrupt: bool,
+    /// The approval rules changed; waiting calls are looked at again.
+    recheck: bool,
 }
 
 impl Runner<'_> {
@@ -322,6 +328,10 @@ impl Runner<'_> {
             }
             Inbox::Interrupt => {
                 self.interrupt = true;
+                None
+            }
+            Inbox::Recheck => {
+                self.recheck = true;
                 None
             }
         };
@@ -536,6 +546,19 @@ impl Runner<'_> {
                     ToolResponse::Error { error_text } => self.set_result(index, &call, Err(error_text)),
                 }
             }
+            if std::mem::take(&mut self.recheck) {
+                let allowed: Vec<String> = waiting
+                    .iter()
+                    .filter(|(_, (_, call))| self.tool(&call.name).is_some_and(|t| host.approval(call, t) == Approval::Auto))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in allowed {
+                    let (index, call) = waiting.remove(&id).expect("listed above");
+                    let exec = self.tool(&call.name).expect("checked above").exec.clone();
+                    in_flight.insert(call.id.clone(), (index, call.clone()));
+                    running.push(start(index, call, exec, interrupt.child_token()));
+                }
+            }
             // A stop wins over anything that finished at the same moment.
             if self.cancel.is_cancelled() {
                 for (_, (index, call)) in in_flight.drain() {
@@ -616,6 +639,8 @@ mod tests {
         /// Messages to deliver to the run while the given step (1-based) streams.
         during: Mutex<HashMap<usize, Vec<Inbox>>>,
         tx: Mutex<Option<mpsc::UnboundedSender<Inbox>>>,
+        /// Every call runs without asking, as after the user allows them all.
+        allow_all: std::sync::atomic::AtomicBool,
     }
 
     impl FakeHost {
@@ -629,6 +654,7 @@ mod tests {
                 hang_tools: false,
                 during: Mutex::default(),
                 tx: Mutex::default(),
+                allow_all: Default::default(),
             })
         }
 
@@ -672,6 +698,13 @@ mod tests {
         }
         async fn save(&self, _: &[Value]) {
             *self.saves.lock().unwrap() += 1;
+        }
+        fn approval(&self, _: &ToolCall, tool: &RunTool) -> Approval {
+            if self.allow_all.load(std::sync::atomic::Ordering::SeqCst) {
+                Approval::Auto
+            } else {
+                tool.approval
+            }
         }
     }
 
@@ -735,6 +768,28 @@ mod tests {
         while !host.statuses().contains(&RunStatus::Awaiting) {
             tokio::task::yield_now().await;
         }
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        let messages = runner.await.unwrap();
+
+        assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
+        assert_eq!(ui::parts(&messages[1])[3]["text"], "thanks");
+    }
+
+    #[tokio::test]
+    async fn a_recheck_starts_calls_the_new_rules_allow() {
+        let host = FakeHost::new(vec![vec![call("ask_tool")], vec![text("thanks")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &cancel).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        host.allow_all.store(true, std::sync::atomic::Ordering::SeqCst);
+        tx.send(Inbox::Recheck).unwrap();
+        // An approval that arrives too late is ignored, not run twice.
         tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
         let messages = runner.await.unwrap();
 

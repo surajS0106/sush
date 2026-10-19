@@ -35,7 +35,7 @@ use sush_core::provider::EventStream;
 use sush_core::reports::{self, Report, ReportStatus, Role};
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::sandbox::SandboxStatus;
-use sush_core::workspace::{tools as ws_tools, Access, Workspace, WorkspaceFs};
+use sush_core::workspace::{git, tools as ws_tools, Access, Workspace, WorkspaceFs};
 use sush_core::ChatRequest;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
@@ -103,8 +103,9 @@ struct ReportRun {
     role: Role,
 }
 
-/// A Cowork run's folder. The workspace settings refresh when the user
-/// answers mid-run (e.g. "Allow all edits"); the folder itself can't change.
+/// A Cowork run's folder. The workspace settings refresh as soon as the user
+/// changes them (`Runs::workspace_changed`) and when they answer mid-run; the
+/// folder itself can't change.
 struct Cowork {
     workspace: Mutex<Workspace>,
     fs: Arc<WorkspaceFs>,
@@ -120,6 +121,28 @@ struct LiveState {
 }
 
 impl Runs {
+    /// The user changed a workspace's settings: live runs in it follow at once,
+    /// and calls they hold for approval that no longer need it start. A
+    /// report's run stays read-only whatever the folder allows.
+    pub fn workspace_changed(&self, workspace: &Workspace) {
+        for live in self.live.lock().unwrap().values() {
+            let Some(cowork) = &live.cowork else { continue };
+            {
+                let mut current = cowork.workspace.lock().unwrap();
+                if current.id != workspace.id {
+                    continue;
+                }
+                current.approval = workspace.approval;
+                if live.report.is_none() {
+                    current.access = workspace.access;
+                }
+            }
+            if !live.cancel.is_cancelled() {
+                let _ = live.inbox.send(Inbox::Recheck);
+            }
+        }
+    }
+
     /// Send a frame to every window (a page may be reloading; it resubscribes),
     /// except a tool request, which only the leader runs, so it runs once.
     fn send(&self, frame: RunFrame) {
@@ -549,16 +572,18 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
             sandbox.detail = format!("The sandbox couldn't be set up for this folder, so every command asks first: {e}");
         }
     }
+    let root = workspace.root.clone();
+    let git = blocking(move || Ok(git::info(Path::new(&root)))).await?;
     let section = format!("{}
 
-{}", ws_tools::system_section(&workspace, &fs, &sandbox), browser_tools::system_section());
+{}", ws_tools::system_section(&workspace, &fs, &sandbox, git.as_ref()), browser_tools::system_section());
     config.system = Some(match config.system.take() {
         Some(system) => format!("{system}\n\n---\n\n{section}"),
         None => section,
     });
     // Approval is decided per call by `Host::approval`; this is only the fallback.
     config.tools.extend(
-        ws_tools::specs(workspace.access).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+        ws_tools::specs(workspace.access, git.is_some()).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
     );
     config.tools.extend(
         browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask }),
@@ -580,10 +605,10 @@ fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspa
     config.system = Some(format!(
         "{}\n\n---\n\n{}",
         reports::system_prompt(report, role, &workspace.name),
-        ws_tools::system_section(&workspace, &fs, &sandbox)
+        ws_tools::system_section(&workspace, &fs, &sandbox, None)
     ));
     config.tools.extend(
-        ws_tools::specs(Access::ReadOnly).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+        ws_tools::specs(Access::ReadOnly, false).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
     );
     config.tools.extend(
         reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto }),

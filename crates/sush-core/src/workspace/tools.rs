@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use super::git::{self, GitInfo};
 use super::sandbox::{Sandbox, SandboxStatus};
 use super::{shell, Access, EditApproval, Workspace, WorkspaceFs, DEFAULT_READ_LINES};
 use crate::agent::run::Approval;
@@ -22,17 +23,23 @@ pub const FS_EDIT: &str = "fs_edit";
 pub const FS_MOVE: &str = "fs_move";
 pub const FS_DELETE: &str = "fs_delete";
 pub const SHELL_RUN: &str = "shell_run";
+pub const BRANCH_STATUS: &str = "branch_status";
+pub const GIT_COMMIT: &str = "git_commit";
+pub const GIT_MERGE: &str = "git_merge";
 
 const READS: [&str; 4] = [FS_LIST, FS_GLOB, FS_READ, FS_SEARCH];
 const WRITES: [&str; 4] = [FS_WRITE, FS_EDIT, FS_MOVE, FS_DELETE];
+/// They write to .git, which the file tools and the sandbox can't.
+const GIT_WRITES: [&str; 2] = [GIT_COMMIT, GIT_MERGE];
 
 pub fn is_workspace_tool(name: &str) -> bool {
-    READS.contains(&name) || WRITES.contains(&name) || name == SHELL_RUN
+    READS.contains(&name) || WRITES.contains(&name) || GIT_WRITES.contains(&name) || name == SHELL_RUN || name == BRANCH_STATUS
 }
 
-/// Whether a call may have changed files (shell commands might have).
+/// Whether a call may have changed files (shell commands might have), or the
+/// branch (commits and merges), so the file tree and the branch card refresh.
 pub fn changes_files(name: &str) -> bool {
-    WRITES.contains(&name) || name == SHELL_RUN
+    WRITES.contains(&name) || GIT_WRITES.contains(&name) || name == SHELL_RUN
 }
 
 /// Called with a file's path and its bytes before a change (None if it doesn't exist yet).
@@ -42,8 +49,9 @@ fn spec(name: &str, description: &str, schema: Value) -> ToolSpec {
     ToolSpec { name: name.into(), description: description.into(), input_schema: schema }
 }
 
-/// Tools for a workspace: reading always, changes and shell only when writable.
-pub fn specs(access: Access) -> Vec<ToolSpec> {
+/// Tools for a workspace: reading always, changes and shell only when
+/// writable; in a git repository, the branch card, and commits and merges.
+pub fn specs(access: Access, git: bool) -> Vec<ToolSpec> {
     let path = json!({ "type": "string", "description": "Path relative to the workspace folder" });
     let mut out = vec![
         spec(FS_LIST, "List a folder in the workspace (one level). Use \"\" for the workspace root.",
@@ -92,6 +100,41 @@ pub fn specs(access: Access) -> Vec<ToolSpec> {
                 }, "required": ["command"] })),
         ]);
     }
+    if git {
+        out.push(spec(BRANCH_STATUS,
+            "Show the user this branch as a pull request card: its commits against the branch it merges into, whether it merges cleanly (and the conflicting lines if not), uncommitted changes, checks, and the pull request's state. The latest call's card stays live in the chat; call again whenever what you pass changes. Returns the branch's status.",
+            json!({ "type": "object", "properties": {
+                "base": { "type": "string", "description": "The branch it merges into, e.g. main or origin/main (default: the repository's main branch)" },
+                "title": { "type": "string", "description": "The pull request's title, or what the branch does" },
+                "pr": { "type": "object", "description": "The pull request on the host, once there is one", "properties": {
+                    "number": { "type": "integer" },
+                    "url": { "type": "string" },
+                    "state": { "type": "string", "enum": ["open", "draft", "merged", "closed"] },
+                }, "required": ["state"] },
+                "checks": { "type": "array", "description": "Tests, lint, type checks, previews: what you ran or the host reports", "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Short, e.g. Tests" },
+                        "status": { "type": "string", "enum": ["pending", "running", "passed", "failed", "skipped"] },
+                        "summary": { "type": "string", "description": "A few words, e.g. 42 passed" },
+                        "detail": { "type": "string", "description": "One line shown on hover, e.g. vitest · 42 passed, 0 failed · 38s" },
+                    },
+                    "required": ["name", "status"],
+                } },
+            } })));
+        if access == Access::WorkspaceWrite {
+            out.extend([
+                spec(GIT_COMMIT, "Stage every change in the folder (honouring .gitignore) and commit it. Also finishes a merge once its conflicts are resolved. The folder's git hooks don't run.",
+                    json!({ "type": "object", "properties": { "message": { "type": "string" } }, "required": ["message"] })),
+                spec(GIT_MERGE, "Merge another branch into this one, e.g. the base branch when the pull request has conflicts. On conflicts the files keep conflict markers: resolve them with fs_edit, then git_commit. abort: true undoes a merge in progress. into: true does the reverse, fast-forwarding `branch` (a local branch) to this one to land the work locally when there's no pull request to merge on a host; the user approves that.",
+                    json!({ "type": "object", "properties": {
+                        "branch": { "type": "string" },
+                        "abort": { "type": "boolean" },
+                        "into": { "type": "boolean" },
+                    } })),
+            ]);
+        }
+    }
     out
 }
 
@@ -111,7 +154,11 @@ pub fn approval(ws: &Workspace, name: &str, input: &Value, sandbox: Option<&Sand
         let escalated = flag(input, "network") || flag(input, "unsandboxed");
         return if contained && !escalated && ws.approval == EditApproval::AutoEdits { Approval::Auto } else { Approval::Ask };
     }
-    if WRITES.contains(&name) {
+    if name == GIT_MERGE && flag(input, "into") {
+        // It moves another branch, often the user's own checkout.
+        return Approval::Ask;
+    }
+    if WRITES.contains(&name) || GIT_WRITES.contains(&name) {
         return if ws.approval == EditApproval::AutoEdits { Approval::Auto } else { Approval::Ask };
     }
     let secret = name == FS_READ && input.get("path").and_then(Value::as_str).is_some_and(super::looks_secret);
@@ -140,8 +187,15 @@ pub async fn execute(
     checkpoint: Checkpoint,
     sandbox: &Sandbox,
 ) -> Result<Value, String> {
-    if (WRITES.contains(&name) || name == SHELL_RUN) && ws.access != Access::WorkspaceWrite {
+    if (WRITES.contains(&name) || GIT_WRITES.contains(&name) || name == SHELL_RUN) && ws.access != Access::WorkspaceWrite {
         return Err("This workspace is read-only.".into());
+    }
+    if name == BRANCH_STATUS || GIT_WRITES.contains(&name) {
+        let name = name.to_string();
+        return tokio::task::spawn_blocking(move || git_tool(&fs, &name, &input, &checkpoint))
+            .await
+            .map_err(|e| format!("The tool failed: {e}"))?
+            .map(Value::String);
     }
     if name == SHELL_RUN {
         let command = str_arg(&input, "command")?.to_string();
@@ -240,8 +294,34 @@ fn file_tool(fs: &WorkspaceFs, name: &str, input: &Value, checkpoint: &Checkpoin
     }
 }
 
-/// The system prompt section for a Cowork run.
-pub fn system_section(ws: &Workspace, fs: &WorkspaceFs, sandbox: &SandboxStatus) -> String {
+fn git_tool(fs: &WorkspaceFs, name: &str, input: &Value, checkpoint: &Checkpoint) -> Result<String, String> {
+    let root = fs.root();
+    // Files a merge changes are kept for undo like any edit; ones the file
+    // tools can't reach (outside the folder) aren't.
+    let mut keep = |path: &str| match fs.rel(path) {
+        Ok(rel) => checkpoint(&rel, fs.bytes(&rel)?),
+        Err(_) => Ok(()),
+    };
+    match name {
+        BRANCH_STATUS => {
+            let current = git::info(root).ok_or("This folder isn't in a git repository.")?.branch;
+            let base = match input.get("base").and_then(Value::as_str).filter(|b| !b.trim().is_empty()) {
+                Some(b) => b.trim().to_string(),
+                None => git::default_base(root, current.as_deref()).ok_or("Couldn't tell which branch this one merges into; pass base.")?,
+            };
+            Ok(git::branch_status(root, &base)?.summary())
+        }
+        GIT_COMMIT => git::commit(root, str_arg(input, "message")?),
+        GIT_MERGE if flag(input, "abort") => git::merge_abort(root, &mut keep),
+        GIT_MERGE if flag(input, "into") => git::land(root, str_arg(input, "branch")?),
+        GIT_MERGE => git::merge(root, str_arg(input, "branch")?, &mut keep),
+        other => Err(format!("Unknown git tool {other}.")),
+    }
+}
+
+/// The system prompt section for a Cowork run. `git` is the folder's git
+/// state when it's in a repository.
+pub fn system_section(ws: &Workspace, fs: &WorkspaceFs, sandbox: &SandboxStatus, git: Option<&GitInfo>) -> String {
     let mut s = format!(
         "You're working in the user's folder \"{}\" ({}). Use the fs_* tools to explore it; paths are relative to that folder. ",
         ws.name, ws.root
@@ -264,6 +344,22 @@ pub fn system_section(ws: &Workspace, fs: &WorkspaceFs, sandbox: &SandboxStatus)
         } else {
             "Commands run in a sandbox that lets them change files only in this folder, and the user approves each one. If a command must write outside the folder, set unsandboxed: true and say why in justification. "
         });
+    }
+    if let Some(git) = git {
+        let on = git.branch.as_deref().map(|b| format!(", on branch {b}")).unwrap_or_default();
+        s.push_str(&format!("The folder is a git repository{on}. "));
+        if ws.access == Access::WorkspaceWrite {
+            s.push_str(
+                "Commit and merge with git_commit and git_merge, not shell_run: commands can't write to .git. \
+                 When the user asks for a pull request, or to commit, merge or check a branch, call branch_status to show it to them as a card, \
+                 and call it again as things change: after committing, after opening the pull request (pass pr), around checks you run \
+                 (pass checks, marking one running before you start it), after resolving conflicts, and after merging (pr.state merged). \
+                 Opening or merging a pull request on a host like GitHub uses that host's connector tools if one is connected; \
+                 pushing the branch needs shell_run with network and unsandboxed. Without a host, git_merge with into: true lands the branch on its base. ",
+            );
+        } else {
+            s.push_str("branch_status shows the user the branch against its base as a pull request card. ");
+        }
     }
     s.push_str(
         "Read a file before editing it, and prefer small fs_edit changes over rewriting files. .git and .sush are read-only. \
@@ -306,9 +402,12 @@ mod tests {
 
     #[test]
     fn read_only_workspaces_offer_no_changes() {
-        let names = |a| specs(a).into_iter().map(|s| s.name).collect::<Vec<_>>();
-        assert_eq!(names(Access::ReadOnly), [FS_LIST, FS_GLOB, FS_READ, FS_SEARCH]);
-        assert!(names(Access::WorkspaceWrite).contains(&SHELL_RUN.to_string()));
+        let names = |a, git| specs(a, git).into_iter().map(|s| s.name).collect::<Vec<_>>();
+        assert_eq!(names(Access::ReadOnly, false), [FS_LIST, FS_GLOB, FS_READ, FS_SEARCH]);
+        assert_eq!(names(Access::ReadOnly, true), [FS_LIST, FS_GLOB, FS_READ, FS_SEARCH, BRANCH_STATUS]);
+        assert!(names(Access::WorkspaceWrite, false).contains(&SHELL_RUN.to_string()));
+        assert!(!names(Access::WorkspaceWrite, false).contains(&GIT_COMMIT.to_string()));
+        assert!(names(Access::WorkspaceWrite, true).contains(&GIT_MERGE.to_string()));
     }
 
     #[test]
@@ -320,6 +419,11 @@ mod tests {
         assert_eq!(approval(&auto, FS_EDIT, &edit, None), Approval::Auto);
         assert_eq!(approval(&auto, FS_READ, &json!({ "path": "src/.env" }), None), Approval::Ask);
         assert_eq!(approval(&auto, FS_READ, &json!({ "path": "src/main.rs" }), None), Approval::Auto);
+        // Commits and merges go like edits; landing on another branch always asks.
+        assert_eq!(approval(&ask, GIT_COMMIT, &json!({ "message": "m" }), None), Approval::Ask);
+        assert_eq!(approval(&auto, GIT_MERGE, &json!({ "branch": "main" }), None), Approval::Auto);
+        assert_eq!(approval(&auto, GIT_MERGE, &json!({ "branch": "main", "into": true }), None), Approval::Ask);
+        assert_eq!(approval(&ask, BRANCH_STATUS, &json!({}), None), Approval::Auto);
 
         let ls = json!({ "command": "ls" });
         let sealed = SandboxStatus { mechanism: "test".into(), available: true, network_blocked: true, detail: String::new() };
@@ -373,7 +477,7 @@ mod tests {
         let (_d, fs, ws) = workspace(Access::WorkspaceWrite, EditApproval::Ask);
         fs.write("AGENTS.md", b"Run `make test` before finishing.").unwrap();
         let none = SandboxStatus { mechanism: "test".into(), available: false, network_blocked: false, detail: String::new() };
-        let s = system_section(&ws, &fs, &none);
+        let s = system_section(&ws, &fs, &none, None);
         assert!(s.contains("Run `make test`"));
         assert!(s.contains("approves each change"));
     }

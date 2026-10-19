@@ -159,12 +159,8 @@ export function Composer({
           onSubmit={submit}
           multiple
           globalDrop
-          className="[&_[data-slot=input-group]]:rounded-2xl [&_[data-slot=input-group]]:bg-background [&_[data-slot=input-group]]:shadow-[0_25px_60px_-25px_color-mix(in_oklch,var(--brand)_35%,transparent)] dark:[&_[data-slot=input-group]]:bg-card dark:[&_[data-slot=input-group]]:shadow-[0_25px_60px_-20px_rgb(0_0_0/0.7)]"
+          className="composer-shell"
         >
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-px bg-linear-to-r from-transparent via-white/60 to-transparent dark:via-white/25"
-          />
           {attachments.files.length > 0 && (
             <InputGroupAddon align="block-start" className="flex-wrap gap-2 px-4 pt-3.5">
               <AnimatePresence initial={false}>
@@ -254,7 +250,7 @@ export function Composer({
               )}
             </div>
           </PromptInputBody>
-          <PromptInputFooter className="mt-2 border-t border-foreground/5 bg-foreground/[0.015] px-3 py-2.5 dark:border-white/10 dark:bg-white/[0.02]">
+          <PromptInputFooter className="px-2.5 pt-1 pb-2.5">
             <ComposerMenu
               target={target}
               messages={messages}
@@ -264,9 +260,10 @@ export function Composer({
             />
             <div className="flex items-center gap-1.5">
               <PermissionModePicker />
-              <div className="[&_button]:h-7 [&_button]:rounded-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.02] [&_button]:px-2.5 [&_button]:text-xs [&_button]:font-medium dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5">
+              <div className="composer-pill [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
                 <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
               </div>
+              <span aria-hidden className="mx-0.5 h-4 w-px bg-foreground/10 dark:bg-white/10" />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -314,7 +311,7 @@ export function Composer({
                   className={
                     busy || canSend
                       ? "rounded-full bg-linear-to-br from-brand via-brand/85 to-brand text-brand-foreground shadow-[0_4px_18px_-4px_color-mix(in_oklch,var(--brand)_65%,transparent)] hover:bg-brand/90"
-                      : "rounded-full bg-foreground/5 text-muted-foreground disabled:opacity-100 dark:bg-white/10"
+                      : "rounded-full bg-foreground/[0.06] text-muted-foreground/70 disabled:opacity-100 dark:bg-white/10"
                   }
                 >
                   <AnimatePresence mode="wait" initial={false}>

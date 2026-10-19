@@ -187,6 +187,99 @@ export interface GitInfo {
   worktree: boolean;
 }
 
+/** The workspace's branch against the branch it merges into (`sush_core::workspace::git::BranchStatus`). */
+export interface BranchStatus {
+  branch: string | null;
+  base: string;
+  /** The commit HEAD points at. */
+  head: string;
+  /** The user's git name, so their commits can read "You". */
+  you: string | null;
+  ahead: number;
+  behind: number;
+  /** Everything the branch changes since it left the base, uncommitted work included. */
+  files: number;
+  additions: number;
+  deletions: number;
+  uncommitted: number;
+  /** A merge in progress, with the files still conflicted. */
+  merging: { unresolved: string[] } | null;
+  /** What merging the base in would conflict on; null when that can't be told. */
+  conflicts: BranchConflict[] | null;
+  /** Both sides' commits since they split, newest first, then the commit they split from. */
+  commits: GraphCommit[];
+  more: boolean;
+}
+
+export interface BranchConflict {
+  path: string;
+  /** Who last changed the file on the base. */
+  by: string | null;
+  hunks: { line: number; ours: string[]; theirs: string[] }[];
+}
+
+export interface GraphCommit {
+  sha: string;
+  parents: string[];
+  author: string;
+  /** Seconds since the epoch. */
+  time: number;
+  /** Local branches pointing at it. */
+  refs: string[];
+  subject: string;
+  /** The base has it. */
+  onBase: boolean;
+}
+
+/** The repository's history for the graph panel (`sush_core::workspace::git::GitLog`). */
+export interface GitLog {
+  branch: string | null;
+  /** null before the first commit. */
+  head: string | null;
+  you: string | null;
+  uncommitted: number;
+  commits: LogCommit[];
+  more: boolean;
+}
+
+export interface LogCommit {
+  sha: string;
+  parents: string[];
+  author: string;
+  /** Seconds since the epoch. */
+  time: number;
+  refs: GitRef[];
+  subject: string;
+}
+
+export interface GitRef {
+  /** `main`, `origin/main`, `v2.1.0`. */
+  name: string;
+  kind: "branch" | "remote" | "tag";
+  /** HEAD points at this branch. */
+  head: boolean;
+}
+
+/** A commit opened in the graph. */
+export interface CommitDetail {
+  sha: string;
+  author: string;
+  email: string;
+  time: number;
+  message: string;
+  files: CommitFile[];
+}
+
+export interface CommitFile {
+  /** Relative to the repository's top folder. */
+  path: string;
+  /** Relative to the workspace folder, when the file is inside it. */
+  local: string | null;
+  /** null for a binary file. */
+  additions: number | null;
+  deletions: number | null;
+}
+
 /** A file a turn changed (`workspaces.rs`); `null` content means the file didn't exist. */
 export interface FileDiff {
   path: string;
@@ -447,6 +540,12 @@ export const api = {
   turnChanges: (threadId: string) => invoke<TurnChanges[]>("turn_changes", { threadId }),
   workspaceGit: (id: string) => invoke<GitInfo | null>("workspace_git", { id }),
   workspaceGitSwitch: (id: string, branch: string) => invoke<void>("workspace_git_switch", { id, branch }),
+  /** Up to `limit` commits, every branch when `all`, for the graph panel. */
+  workspaceGitLog: (id: string, limit: number, all: boolean) => invoke<GitLog>("workspace_git_log", { id, limit, all }),
+  workspaceGitCommit: (id: string, sha: string) => invoke<CommitDetail>("workspace_git_commit", { id, sha }),
+  /** The branch against `base` (default: the repository's main branch), for the pull request card. */
+  workspaceBranchStatus: (id: string, base?: string) =>
+    invoke<BranchStatus>("workspace_branch_status", { id, base: base ?? null }),
   /** A new worktree on a fresh branch from `base`, added as a workspace. */
   worktreeCreate: (id: string, base: string) => invoke<Workspace>("worktree_create", { id, base }),
   turnDiff: (threadId: string, turnId: string) => invoke<FileDiff[]>("turn_diff", { threadId, turnId }),

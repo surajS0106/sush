@@ -16,7 +16,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { api, errorMessage, type TerminalCompletion, type TerminalInfo, type Workspace } from "@/lib/tauri";
 import { commonPrefix, completion, folderOf, quotePath, wordAt, type Word } from "@/lib/terminal-complete";
 import { cn } from "@/lib/utils";
-import { togglePanel } from "@/lib/workspaces";
+import { notifyWorkspaceChanged, togglePanel } from "@/lib/workspaces";
 
 type Entry =
   | { id: number; kind: "command"; cwd: string; text: string }
@@ -94,6 +94,8 @@ export function TerminalPane({ workspace, className }: { workspace: Workspace; c
         if (disposed) return;
         if (event.kind === "output") append(event.error ? "err" : "out", clean(event.text));
         else if (event.kind === "prompt") {
+          // A command just finished and may have changed files or git (the tree and graph re-read).
+          notifyWorkspaceChanged(workspace.id);
           lastCwd.current = event.cwd;
           setCwd(event.cwd);
           setStarted(true);

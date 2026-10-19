@@ -1,6 +1,6 @@
 // The composer's permission mode: whether connector tools wait for approval.
 
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, HandIcon, ZapIcon } from "lucide-react";
 
 import {
   DropdownMenu,
@@ -27,12 +27,13 @@ export function PermissionModePicker() {
           type="button"
           aria-label={`Permission mode: ${current.label}`}
           className={cn(
-            "flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium transition-colors",
+            "flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium shadow-xs transition-colors",
             mode === "auto"
-              ? "bg-brand/12 text-brand hover:bg-brand/18"
-              : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground dark:hover:bg-white/10",
+              ? "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
+              : "border-foreground/10 bg-foreground/[0.03] text-foreground hover:bg-foreground/[0.06] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
           )}
         >
+          {mode === "auto" ? <ZapIcon className="size-3.5 fill-current" /> : <HandIcon className="size-3.5" />}
           {current.label}
           <ChevronDownIcon className="size-3.5 opacity-60" />
         </button>

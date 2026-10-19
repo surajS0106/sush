@@ -29,6 +29,7 @@ import {
   FolderIcon,
   FolderOpenIcon,
   FolderTreeIcon,
+  GitGraphIcon,
   GlobeIcon,
   RefreshCwIcon,
   RotateCwIcon,
@@ -43,6 +44,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { CodeEditor } from "@/components/code-editor";
+import { GitGraphPane } from "@/components/git-graph-pane";
 import { TerminalPane } from "@/components/terminal-pane";
 import { Button } from "@/components/ui/button";
 import {
@@ -80,6 +82,7 @@ import {
   updateWorkspace,
   type PanelState,
   useFilesVersion,
+  useGitInfo,
   useOpenFiles,
   usePanels,
   useSandboxStatus,
@@ -173,9 +176,10 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-/** Header buttons that show or hide the browser, the terminal and the files. */
-export function PanelToggles() {
+/** Header buttons that show or hide the browser, the terminal, the git graph (in a repo) and the files. */
+export function PanelToggles({ workspaceId }: { workspaceId: string }) {
   const panels = usePanels();
+  const git = useGitInfo(workspaceId);
   const toggle = (which: keyof PanelState, label: string, Icon: typeof FileIcon) => (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -197,6 +201,7 @@ export function PanelToggles() {
     <div className="flex items-center gap-0.5">
       {toggle("browser", "Browser", GlobeIcon)}
       {toggle("terminal", "Terminal", SquareTerminalIcon)}
+      {(git || panels.graph) && toggle("graph", "Git graph", GitGraphIcon)}
       {toggle("files", "Files", FolderTreeIcon)}
     </div>
   );
@@ -228,8 +233,8 @@ export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
   const termHeight = useSyncExternalStore(terminalHeight.subscribe, terminalHeight.get);
   const ref = useRef<HTMLElement>(null);
   const termRef = useRef<HTMLDivElement>(null);
-  if (!panels.files && !panels.terminal && !panels.browser) return null;
-  const split = panels.terminal && (panels.files || panels.browser);
+  if (!panels.files && !panels.terminal && !panels.browser && !panels.graph) return null;
+  const split = panels.terminal && (panels.files || panels.browser || panels.graph);
 
   const dragSplit = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
@@ -279,6 +284,7 @@ export function CoworkPanel({ workspace, changed }: CoworkPanelProps) {
       />
       {panels.files && <FilesPane workspace={workspace} changed={changed} />}
       {panels.browser && <BrowserPane />}
+      {panels.graph && <GitGraphPane key={workspace.id} workspace={workspace} className="flex-1" />}
       {split && (
         <div
           role="separator"

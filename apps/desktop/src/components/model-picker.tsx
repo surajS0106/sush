@@ -1,5 +1,6 @@
-import { BoxIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
-import { Fragment, useState } from "react";
+import { BoxIcon, ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { Fragment, useEffect, useRef, useState } from "react";
 
 import {
   ModelSelector,
@@ -41,6 +42,10 @@ export function Logo({ src, className }: { src?: string; className?: string }) {
   );
 }
 
+/** The cmdk value of a model's row (cmdk trims values, so this does too). */
+const itemValue = (providerName: string, id: string, displayName?: string | null) =>
+  `${providerName} ${id} ${displayName ?? ""}`.trim();
+
 export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -53,7 +58,25 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
       if (!next.delete(id)) next.add(id);
       return next;
     });
-  const current = catalog.find((c) => c.provider.id === value?.providerId)?.provider;
+  const currentEntry = catalog.find((c) => c.provider.id === value?.providerId);
+  const current = currentEntry?.provider;
+  const currentModel = currentEntry?.models.find((m) => m.id === value?.model);
+  const label = currentModel?.displayName ?? value?.model;
+  const currentValue = current && value ? itemValue(current.name, value.model, currentModel?.displayName) : "";
+  const currentLogo = value ? (modelLogo(value.model) ?? (current && providerLogo(current))) : undefined;
+  const reduceMotion = useReducedMotion();
+
+  // The highlighted row: the current model when the list opens, then wherever the keyboard or search moves it.
+  const [active, setActive] = useState("");
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    setActive(currentValue);
+    const id = requestAnimationFrame(() =>
+      listRef.current?.querySelector("[data-current=true]")?.scrollIntoView({ block: "center" }),
+    );
+    return () => cancelAnimationFrame(id);
+  }, [open]);
 
   return (
     <ModelSelector
@@ -65,23 +88,63 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
     >
       <ModelSelectorTrigger asChild>
         <PromptInputButton
-          className="max-w-56 gap-1.5 rounded-full text-foreground/90 hover:text-foreground"
+          aria-label={value ? `Model: ${label}${current ? ` (${current.name})` : ""}. Change model` : "Select model"}
+          className={cn(
+            "relative max-w-64 gap-1.5 overflow-visible rounded-full text-foreground/90 hover:text-foreground",
+            !value && "text-amber-600 dark:text-amber-500",
+          )}
           tooltip={current && value ? `${current.name} / ${value.model}` : undefined}
         >
-          {value ? (
-            <>
-              <Logo className="size-3.5" src={modelLogo(value.model) ?? (current && providerLogo(current))} />
-              <span className="truncate">{value.model}</span>
-            </>
-          ) : (
-            <span>Select model</span>
-          )}
-          <ChevronDownIcon className="size-3.5 opacity-60" />
+          {/* A brief ring whenever the model changes, so a switch (picked, or another session's model) is noticed. */}
+          <AnimatePresence initial={false}>
+            {!reduceMotion && value && (
+              <motion.span
+                key={`${value.providerId}/${value.model}`}
+                aria-hidden
+                className="pointer-events-none absolute -inset-0.5 rounded-full border-2 border-brand"
+                initial={{ opacity: 0.8, scale: 1 }}
+                animate={{ opacity: 0, scale: 1.12 }}
+                transition={{ duration: 0.9, ease: "easeOut" }}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.span
+              key={value ? `${value.providerId}/${value.model}` : "none"}
+              initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={{ duration: 0.18 }}
+              className="flex min-w-0 items-center gap-1.5"
+            >
+              {value ? (
+                <>
+                  <Logo className="size-3.5" src={currentLogo} />
+                  <span className="truncate">{label}</span>
+                  {current && (
+                    <span className="hidden truncate font-normal text-muted-foreground sm:inline">· {current.name}</span>
+                  )}
+                </>
+              ) : (
+                <span>Select model</span>
+              )}
+            </motion.span>
+          </AnimatePresence>
+          <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
         </PromptInputButton>
       </ModelSelectorTrigger>
-      <ModelSelectorContent title="Select a model">
+      <ModelSelectorContent title="Select a model" commandProps={{ value: active, onValueChange: setActive }}>
         <ModelSelectorInput placeholder="Search models…" value={search} onValueChange={setSearch} />
+        {value && (
+          <div className="flex items-center gap-2 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+            <span>Using</span>
+            <Logo className="size-3.5 text-foreground/80" src={currentLogo} />
+            <span className="truncate font-medium text-foreground">{label}</span>
+            {current && <span className="truncate">· {current.name}</span>}
+          </div>
+        )}
         <ModelSelectorList
+          ref={listRef}
           data-lenis-prevent
           className="max-h-[min(28rem,60vh)] scrollbar-thin! scrollbar-gutter-stable"
         >
@@ -121,7 +184,10 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
                     return (
                       <ModelSelectorItem
                         key={m.id}
-                        value={`${provider.name} ${m.id} ${m.displayName ?? ""}`}
+                        value={itemValue(provider.name, m.id, m.displayName)}
+                        data-current={selected}
+                        data-checked={selected}
+                        className={cn(selected && "bg-brand/10 font-medium text-foreground data-selected:bg-brand/15")}
                         onSelect={() => {
                           onChange({ providerId: provider.id, model: m.id });
                           setOpen(false);
@@ -130,7 +196,9 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
                         <Logo className="text-foreground/80" src={modelLogo(m.id) ?? pLogo} />
                         <ModelSelectorName>{m.displayName ?? m.id}</ModelSelectorName>
                         {m.displayName && <span className="truncate text-xs text-muted-foreground">{m.id}</span>}
-                        <CheckIcon className={cn("size-4", !selected && "invisible")} />
+                        {selected && (
+                          <span className="rounded-full bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">Current</span>
+                        )}
                       </ModelSelectorItem>
                     );
                   })}

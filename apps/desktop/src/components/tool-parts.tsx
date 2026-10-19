@@ -9,6 +9,9 @@ import {
   FileIcon,
   FilePenIcon,
   FolderIcon,
+  GitCommitHorizontalIcon,
+  GitMergeIcon,
+  GitPullRequestIcon,
   GlobeIcon,
   ImageIcon,
   KeyboardIcon,
@@ -378,6 +381,12 @@ interface WorkspaceInput {
   network?: boolean;
   unsandboxed?: boolean;
   justification?: string;
+  message?: string;
+  branch?: string;
+  abort?: boolean;
+  into?: boolean;
+  base?: string;
+  title?: string;
 }
 
 /** What a Cowork call does, as a short phrase and an icon. */
@@ -400,12 +409,20 @@ function describeWorkspaceCall(name: string, input: WorkspaceInput): { icon: typ
       return { icon: ArrowRightIcon, done: `Moved ${input.from ?? ""} to ${input.to ?? ""}`, doing: "Moving a file" };
     case "fs_delete":
       return { icon: Trash2Icon, done: `Deleted ${path}`, doing: `Deleting ${path}` };
+    case "git_commit":
+      return { icon: GitCommitHorizontalIcon, done: `Committed “${input.message?.split("\n")[0] ?? ""}”`, doing: "Committing" };
+    case "git_merge":
+      if (input.abort) return { icon: GitMergeIcon, done: "Undid the merge", doing: "Undoing the merge" };
+      if (input.into) return { icon: GitMergeIcon, done: `Merged into ${input.branch ?? ""}`, doing: `Merging into ${input.branch ?? ""}` };
+      return { icon: GitMergeIcon, done: `Merged ${input.branch ?? ""} into the branch`, doing: `Merging ${input.branch ?? ""}` };
+    case "branch_status":
+      return { icon: GitPullRequestIcon, done: "Checked the branch", doing: "Checking the branch" };
     default:
       return { icon: TerminalIcon, done: `Ran ${input.command ?? "a command"}`, doing: "Running a command" };
   }
 }
 
-const EDIT_TOOLS = new Set(["fs_write", "fs_edit", "fs_move", "fs_delete"]);
+const EDIT_TOOLS = new Set(["fs_write", "fs_edit", "fs_move", "fs_delete", "git_commit", "git_merge"]);
 /** Calls about one file, which "Open" shows in the viewer. */
 const FILE_TOOLS = new Set(["fs_read", "fs_write", "fs_edit"]);
 
@@ -466,7 +483,8 @@ function WorkspacePart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
         onApprove();
       };
       const allowAll =
-        workspace && EDIT_TOOLS.has(part.toolName)
+        // Landing on another branch asks every time, so "allow all" wouldn't cover it.
+        workspace && EDIT_TOOLS.has(part.toolName) && !input.into
           ? () => {
               setApproved(true);
               // Later edits in this folder run without asking; this one goes ahead now.
@@ -522,6 +540,17 @@ function workspaceRequest(
       return { title: `Delete ${path}?`, note: "It goes to the trash." };
     case "fs_read":
       return { title: `Read ${path}?`, note: "This file may hold passwords or keys, which would be sent to the model." };
+    case "git_commit":
+      return { title: "Commit every change?", note: "Stages all changes in the folder (not ignored files) and commits them.", children: <CodeBlock text={input.message ?? ""} lines={8} /> };
+    case "git_merge":
+      if (input.abort) return { title: "Undo the merge in progress?", note: "Puts the branch and its files back as they were before the merge." };
+      if (input.into) {
+        return {
+          title: `Merge this branch into ${input.branch ?? ""}?`,
+          note: `Fast-forwards ${input.branch ?? "that branch"} to this branch’s commits. Where it’s checked out, that folder’s files update too.`,
+        };
+      }
+      return { title: `Merge ${input.branch ?? ""} into this branch?`, note: "Any conflicts are left in the files for the model to resolve." };
     default:
       return { title: `Allow ${name}?` };
   }

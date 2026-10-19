@@ -10,7 +10,7 @@ use std::path::Path;
 use serde::Serialize;
 use sush_core::agent::ui::new_id;
 use sush_core::store::TurnChanges;
-use sush_core::workspace::git::{self, GitInfo};
+use sush_core::workspace::git::{self, BranchStatus, CommitDetail, GitInfo, GitLog};
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, EditApproval, Entry, Workspace, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
@@ -75,18 +75,21 @@ pub async fn workspace_add(app: AppHandle, state: State<'_, AppState>) -> AppRes
     Ok(Some(workspace))
 }
 
-/// Change what the agent may do in a workspace. Applies from the next tool call.
+/// Change what the agent may do in a workspace. Applies at once, also to
+/// calls a live run holds for approval.
 #[tauri::command]
 pub async fn workspace_update(state: State<'_, AppState>, id: String, access: Access, approval: EditApproval) -> AppResult<Workspace> {
     let store = state.store.clone();
-    blocking(move || {
+    let workspace = blocking(move || {
         let mut workspace = store.workspace(&id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))?;
         workspace.access = access;
         workspace.approval = approval;
         store.save_workspace(&workspace)?;
         Ok(workspace)
     })
-    .await
+    .await?;
+    state.runs.workspace_changed(&workspace);
+    Ok(workspace)
 }
 
 /// Forget a workspace. Its sessions stay readable but lose file access, and
@@ -197,6 +200,42 @@ pub async fn workspace_find(state: State<'_, AppState>, id: String, query: Strin
 pub async fn workspace_git(state: State<'_, AppState>, id: String) -> AppResult<Option<GitInfo>> {
     let store = state.store.clone();
     blocking(move || Ok(git::info(Path::new(&find(&store, &id)?.root)))).await
+}
+
+/// The workspace's branch against `base` (default: the repository's main
+/// branch), for the pull request card.
+#[tauri::command]
+pub async fn workspace_branch_status(state: State<'_, AppState>, id: String, base: Option<String>) -> AppResult<BranchStatus> {
+    let store = state.store.clone();
+    blocking(move || {
+        let root = find(&store, &id)?.root;
+        let root = Path::new(&root);
+        let base = match base.filter(|b| !b.trim().is_empty()) {
+            Some(b) => b,
+            None => {
+                let current = git::info(root).ok_or_else(|| AppError::Invalid("This folder isn't in a git repository.".into()))?.branch;
+                git::default_base(root, current.as_deref())
+                    .ok_or_else(|| AppError::Invalid("Couldn't tell which branch this one merges into.".into()))?
+            }
+        };
+        git::branch_status(root, &base).map_err(AppError::Invalid)
+    })
+    .await
+}
+
+/// Up to `limit` commits of the workspace's history (every branch when `all`),
+/// for the side panel's graph.
+#[tauri::command]
+pub async fn workspace_git_log(state: State<'_, AppState>, id: String, limit: usize, all: bool) -> AppResult<GitLog> {
+    let store = state.store.clone();
+    blocking(move || git::log(Path::new(&find(&store, &id)?.root), limit.clamp(1, 5000), all).map_err(AppError::Invalid)).await
+}
+
+/// One commit's message and changed files, for a row opened in the graph.
+#[tauri::command]
+pub async fn workspace_git_commit(state: State<'_, AppState>, id: String, sha: String) -> AppResult<CommitDetail> {
+    let store = state.store.clone();
+    blocking(move || git::commit_detail(Path::new(&find(&store, &id)?.root), &sha).map_err(AppError::Invalid)).await
 }
 
 /// Check out another local branch in the workspace folder.

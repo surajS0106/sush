@@ -97,7 +97,7 @@
     --radius: 0.625rem;
     --brand: oklch(0.58 0.105 186);
     --brand-foreground: oklch(1 0 0);
-    --sidebar: oklch(0.982 0.006 190);
+    --sidebar: var(--background);
     --sidebar-foreground: oklch(0.17 0.02 205);
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
@@ -134,7 +134,7 @@
     --chart-5: oklch(0.42 0.06 205);
     --brand: oklch(0.7 0.12 182);
     --brand-foreground: oklch(1 0 0);
-    --sidebar: oklch(0.145 0.006 212);
+    --sidebar: var(--background);
     --sidebar-foreground: oklch(0.975 0.004 190);
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--brand-foreground);
@@ -407,4 +407,50 @@ html[data-resizing] * {
 }
 .dark .code-view pre.shiki span {
   color: var(--shiki-dark) !important;
+}
+
+/* The composer's card: hairline border, layered soft shadow, and a quiet brand-tinted focus ring. */
+.composer-shell [data-slot="input-group"] {
+  border-radius: 1.25rem;
+  border-color: color-mix(in oklch, var(--foreground) 9%, transparent);
+  background: var(--background);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 8px 24px -12px rgb(0 0 0 / 0.12),
+    0 24px 56px -28px color-mix(in oklch, var(--brand) 30%, transparent);
+  transition: border-color 200ms, box-shadow 200ms;
+}
+.composer-shell [data-slot="input-group"]:hover {
+  border-color: color-mix(in oklch, var(--foreground) 14%, transparent);
+}
+.composer-shell [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) {
+  border-color: color-mix(in oklch, var(--brand) 35%, transparent);
+  box-shadow:
+    0 0 0 4px color-mix(in oklch, var(--brand) 9%, transparent),
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 8px 24px -12px rgb(0 0 0 / 0.12),
+    0 24px 56px -28px color-mix(in oklch, var(--brand) 40%, transparent);
+}
+.dark .composer-shell [data-slot="input-group"] {
+  background: var(--card);
+  border-color: rgb(255 255 255 / 0.08);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 24px 60px -20px rgb(0 0 0 / 0.7);
+}
+.dark .composer-shell [data-slot="input-group"]:has([data-slot="input-group-control"]:focus-visible) {
+  border-color: color-mix(in oklch, var(--brand) 40%, transparent);
+  box-shadow:
+    0 0 0 4px color-mix(in oklch, var(--brand) 12%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 0.04),
+    0 24px 60px -20px rgb(0 0 0 / 0.7);
+}
+
+/* Pills in the composer's footer (permission mode, model) share one look. */
+.composer-pill button {
+  height: 1.75rem;
+  border-radius: 9999px;
+  padding-inline: 0.625rem;
+  font-size: 0.75rem;
+  font-weight: 500;
 }

@@ -284,7 +284,7 @@ function AppHeader({
       {workspaceId ? (
         <>
           <WorkspaceChip workspaceId={workspaceId} />
-          <PanelToggles />
+          <PanelToggles workspaceId={workspaceId} />
         </>
       ) : (
         session && <IncognitoToggle active={!!session.incognito} onToggle={onToggleIncognito} />

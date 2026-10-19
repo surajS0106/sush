@@ -25,6 +25,7 @@ import { Message, MessageAction, MessageActions, MessageContent, MessageResponse
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { ActivityGroup, groupParts } from "@/components/activity-group";
+import { BranchCard, BranchChip, latestBranchCall } from "@/components/branch-card";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
 import { Composer } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
@@ -45,7 +46,7 @@ import { Suggestion } from "@/components/ui/Suggestion";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ProviderModels } from "@/hooks/use-providers";
-import type { ToolResult } from "@/lib/agent";
+import { BRANCH_STATUS, type ToolResult } from "@/lib/agent";
 import { setAppearance } from "@/lib/appearance";
 import { ARTIFACT_WRITE, artifactViews, type ArtifactView } from "@/lib/artifacts";
 import { useSession } from "@/lib/auth";
@@ -134,6 +135,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   }, [messages]);
   // Slides: the deck open beside the chat takes the side panel's place.
   const decks = useMemo(() => deckViews(messages), [messages]);
+  // Cowork: the latest branch_status call is the live pull request card.
+  const branchCall = useMemo(() => (workspaceId ? latestBranchCall(messages) : null), [workspaceId, messages]);
   useEffect(() => {
     for (const deck of decks.byId.values()) autoOpenDeck(id, deck);
   }, [id, decks]);
@@ -323,6 +326,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               threadId={id}
               decks={decks}
               workspaceId={workspaceId}
+              branchCall={branchCall?.messageId === message.id ? branchCall.part.toolCallId : undefined}
               fileTurn={(() => {
                 const turnId = turnEnds.get(message.id);
                 return busy || !workspaceId || !turnId || !turnChanges.has(turnId) ? undefined : turnId;
@@ -358,6 +362,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       </Conversation>
 
       <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
+        {workspaceId && branchCall && <BranchChip workspaceId={workspaceId} part={branchCall.part} />}
         <QueuedMessages threadId={id} status={runStatus} />
         {composer}
       </div>
@@ -577,6 +582,8 @@ interface ChatMessageProps {
   workspaceId?: string;
   /** Cowork: the turn whose changed files show under this, its last reply. */
   fileTurn?: string;
+  /** Cowork: the branch_status call in this message that shows the live pull request card. */
+  branchCall?: string;
 }
 
 /**
@@ -595,7 +602,8 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
     a.canAnswer === b.canAnswer &&
     a.threadId === b.threadId &&
     a.workspaceId === b.workspaceId &&
-    a.fileTurn === b.fileTurn;
+    a.fileTurn === b.fileTurn &&
+    a.branchCall === b.branchCall;
   if (!same) return false;
   // Artifact and deck views are built from the whole thread; only their own cards read them.
   const usesViews = b.message.parts.some(
@@ -672,6 +680,7 @@ const ChatMessage = memo(function ChatMessage({
   decks,
   workspaceId,
   fileTurn,
+  branchCall,
 }: ChatMessageProps) {
   const [editing, setEditing] = useState(false);
   // Web pages the reply cites inline, numbered by first citation.
@@ -737,6 +746,9 @@ const ChatMessage = memo(function ChatMessage({
         if (part.toolName === ARTIFACT_WRITE) {
           return <ArtifactPart key={key} part={part} view={artifacts.get(part.toolCallId)} />;
         }
+        if (part.toolName === BRANCH_STATUS && part.toolCallId === branchCall) {
+          return <BranchCard key={key} part={part} threadId={threadId} />;
+        }
         if (part.toolName === SLIDES_WRITE) {
           const view = decks.byCall.get(part.toolCallId);
           return <DeckCard key={key} threadId={threadId} part={part} view={view} latest={view && decks.byId.get(view.id)} />;
@@ -773,7 +785,7 @@ const ChatMessage = memo(function ChatMessage({
   return (
     <SourcesProvider defaultExpanded={false}>
       <Message from={message.role}>
-        {groupParts(message.parts).map((item) =>
+        {groupParts(message.parts, branchCall).map((item) =>
           Array.isArray(item) ? (
             <ActivityGroup key={`${message.id}-g${item[0]}`} parts={item.map((i) => message.parts[i])}>
               {item.map((i) => renderPart(message.parts[i], i))}

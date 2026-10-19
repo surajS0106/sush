@@ -7,9 +7,12 @@ import { createContext, useEffect, useMemo, useState, useSyncExternalStore } fro
 import { createStore } from "@/lib/store";
 import {
   api,
+  errorMessage,
+  type BranchStatus,
   type EditApproval,
   type FileDiff,
   type GitInfo,
+  type GitLog,
   type SandboxStatus,
   type TurnChanges,
   type Workspace,
@@ -149,6 +152,57 @@ export function useGitInfo(workspaceId: string | undefined): GitInfo | null {
   return info;
 }
 
+/**
+ * The workspace's branch against `base`, refreshed as files change and when
+ * `refresh` does. `error` says why there's none (not a repo, on the base itself).
+ */
+export function useBranchStatus(
+  workspaceId: string | undefined,
+  base: string | undefined,
+  refresh?: unknown,
+): { status: BranchStatus | null; error: string | null } {
+  const version = useFilesVersion(workspaceId);
+  const [result, setResult] = useState<{ status: BranchStatus | null; error: string | null }>({ status: null, error: null });
+  useEffect(() => {
+    if (!workspaceId) return setResult({ status: null, error: null });
+    let live = true;
+    api
+      .workspaceBranchStatus(workspaceId, base)
+      .then((status) => live && setResult({ status, error: null }))
+      .catch((e) => live && setResult({ status: null, error: errorMessage(e) }));
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, base, version, refresh]);
+  return result;
+}
+
+/**
+ * Up to `limit` commits of the workspace's history (every branch when `all`),
+ * read again as files change and when `refresh` does.
+ */
+export function useGitLog(
+  workspaceId: string,
+  limit: number,
+  all: boolean,
+  refresh?: unknown,
+): { log: GitLog | null; error: string | null; loading: boolean } {
+  const version = useFilesVersion(workspaceId);
+  const [result, setResult] = useState<{ log: GitLog | null; error: string | null; loading: boolean }>({ log: null, error: null, loading: true });
+  useEffect(() => {
+    let live = true;
+    setResult((r) => ({ ...r, loading: true }));
+    api
+      .workspaceGitLog(workspaceId, limit, all)
+      .then((log) => live && setResult({ log, error: null, loading: false }))
+      .catch((e) => live && setResult({ log: null, error: errorMessage(e), loading: false }));
+    return () => {
+      live = false;
+    };
+  }, [workspaceId, limit, all, version, refresh]);
+  return result;
+}
+
 /** Check out another branch in the workspace folder. */
 export async function switchBranch(workspaceId: string, branch: string) {
   await api.workspaceGitSwitch(workspaceId, branch);
@@ -188,15 +242,25 @@ export interface PanelState {
   files: boolean;
   terminal: boolean;
   browser: boolean;
+  graph: boolean;
 }
 
 /**
  * Which parts of the Cowork side panel are open; remembered across sessions.
  * Per window: a browser pane showing in two would pull the one browser back and forth.
  */
-const panels = createStore<PanelState>("sush.cowork-panels", { files: true, terminal: false, browser: false }, true, false);
+const PANELS: PanelState = { files: true, terminal: false, browser: false, graph: false };
+const panels = createStore<PanelState>("sush.cowork-panels", PANELS, true, false);
 
-export const usePanels = () => useSyncExternalStore(panels.subscribe, panels.get);
+/** Stored before the graph existed, a state lacks it; fill it in so the identity stays stable. */
+let filled: [PanelState, PanelState] | null = null;
+const getPanels = () => {
+  const p = panels.get();
+  if (filled?.[0] !== p) filled = [p, { ...PANELS, ...p }];
+  return filled[1];
+};
+
+export const usePanels = () => useSyncExternalStore(panels.subscribe, getPanels);
 
 export function togglePanel(which: keyof PanelState, open?: boolean) {
   panels.set((p) => ({ ...p, [which]: open ?? !p[which] }));

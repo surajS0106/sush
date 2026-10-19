@@ -30,8 +30,9 @@ function groupable(p: Part) {
 /**
  * Part indices to render, with runs of finished activity as arrays. A run
  * becomes a group when it holds a tool call and at least two visible steps.
+ * The call `keep` names (the live branch card) stays out of every group.
  */
-export function groupParts(parts: Part[]): (number | number[])[] {
+export function groupParts(parts: Part[], keep?: string): (number | number[])[] {
   const out: (number | number[])[] = [];
   let run: number[] = [];
   const flush = () => {
@@ -45,7 +46,7 @@ export function groupParts(parts: Part[]): (number | number[])[] {
     run = [];
   };
   parts.forEach((p, i) => {
-    if (groupable(p)) run.push(i);
+    if (groupable(p) && !(keep && p.type === "dynamic-tool" && p.toolCallId === keep)) run.push(i);
     else {
       flush();
       out.push(i);
@@ -59,7 +60,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} 
 
 /** "Read 3 files, searched twice and ran a command". */
 export function activitySummary(parts: Part[]): { text: string; failed: number } {
-  const count = { read: 0, search: 0, edit: 0, command: 0, memory: 0, chats: 0, skill: 0, browser: 0, other: 0 };
+  const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, browser: 0, other: 0 };
   let failed = 0;
   for (const p of parts) {
     if (p.type !== "dynamic-tool") continue;
@@ -69,6 +70,9 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
     else if (name === "fs_list" || name === "fs_glob" || name === "fs_search") count.search++;
     else if (name === "fs_write" || name === "fs_edit" || name === "fs_move" || name === "fs_delete") count.edit++;
     else if (name === "shell_run") count.command++;
+    else if (name === "git_commit") count.commit++;
+    else if (name === "git_merge") count.merge++;
+    else if (name === "branch_status") count.branch++;
     else {
       const kind = toolKind(name);
       if (kind === "memory") count.memory++;
@@ -83,6 +87,9 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
     count.search && `searched ${count.search === 1 ? "the folder" : `${count.search} times`}`,
     count.edit && `edited ${plural(count.edit, "a file", "files")}`,
     count.command && `ran ${plural(count.command, "a command", "commands")}`,
+    count.commit && `committed ${count.commit === 1 ? "once" : `${count.commit} times`}`,
+    count.merge && "merged",
+    count.branch && "checked the branch",
     count.memory && "updated memory",
     count.chats && "looked through past chats",
     count.skill && `used ${plural(count.skill, "a skill", "skills")}`,
