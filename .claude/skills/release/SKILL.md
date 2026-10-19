@@ -39,5 +39,3 @@ Pushing the tag publishes a public GitHub release (`.github/workflows/release.ym
 git push origin main
 git push origin v<version>
 ```
-
-The workflow needs the `BETTER_AUTH_SECRET` repo secret. Mention it if you can't confirm that it's set (`gh secret list`).

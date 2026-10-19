@@ -13,8 +13,27 @@ use std::time::{Duration, Instant};
 /// Must match VITE_AUTH_URL in the root `build` script and connect-src in tauri.release.conf.json.
 const AUTH_PORT: u16 = 47321;
 
-/// Baked in by build.rs from BETTER_AUTH_SECRET (env or the repo's .env).
-const AUTH_SECRET: &str = env!("SUSH_AUTH_SECRET");
+/// The server's signing secret, generated on first launch and kept in the app
+/// data dir. Each install has its own, so no secret ships inside the binary.
+fn secret(data_dir: &Path) -> std::io::Result<String> {
+    use std::io::Write;
+    let path = data_dir.join("auth-secret");
+    match std::fs::read_to_string(&path) {
+        Ok(secret) if secret.trim().len() >= 32 => return Ok(secret.trim().to_owned()),
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
+    let secret: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(&path)?.write_all(secret.as_bytes())?;
+    Ok(secret)
+}
 
 #[derive(Default)]
 pub struct AuthServer(Mutex<Option<Child>>);
@@ -31,7 +50,7 @@ impl AuthServer {
         let mut cmd = Command::new(exe);
         cmd.env("PORT", AUTH_PORT.to_string())
             .env("BETTER_AUTH_URL", format!("http://localhost:{AUTH_PORT}"))
-            .env("BETTER_AUTH_SECRET", AUTH_SECRET)
+            .env("BETTER_AUTH_SECRET", secret(data_dir)?)
             .env("DATABASE_PATH", data_dir.join("auth.sqlite"))
             .env("NODE_ENV", "production")
             .env("SUSH_PARENT_PID", std::process::id().to_string())

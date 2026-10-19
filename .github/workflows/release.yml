@@ -68,7 +68,6 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
           VITE_AUTH_URL: http://localhost:47321
         with:
           projectPath: apps/desktop

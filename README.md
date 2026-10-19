@@ -2,6 +2,10 @@
 
 A desktop AI harness: chat with any model (OpenAI, Anthropic, Azure Foundry, Bedrock, local models), and later run agent tools.
 
+## Download
+
+Installers for Windows (`.exe` / `.msi`), macOS (`.dmg`) and Linux are attached to each [GitHub release](https://github.com/surajS0106/sush/releases). The builds aren't code-signed yet, so Windows SmartScreen and macOS Gatekeeper will warn on first launch.
+
 ## Layout
 
 - `crates/sush-core`: providers, message model, and streaming. Pure Rust with no Tauri dependency, so it can also back a future CLI/TUI.
@@ -31,7 +35,7 @@ cargo test -p sush-core
 
 | Env var | Default | |
 | --- | --- | --- |
-| `BETTER_AUTH_SECRET` | dev fallback | **Required in production.** Generate with `openssl rand -base64 32`. |
+| `BETTER_AUTH_SECRET` | dev fallback | **Required when hosting the server yourself.** Generate with `openssl rand -base64 32`. The desktop app's bundled server generates its own per install. |
 | `BETTER_AUTH_URL` | `http://localhost:$PORT` | Public URL of the server. |
 | `PORT` | `3000` | |
 | `DATABASE_PATH` | `auth.sqlite` | SQLite file; tables are migrated on startup. |
@@ -43,3 +47,11 @@ The desktop app reads `VITE_AUTH_URL` (default `http://localhost:3000`). If you 
 ```sh
 bun run build        # .msi + setup .exe on Windows, .dmg/.app on macOS
 ```
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+[MIT](LICENSE)

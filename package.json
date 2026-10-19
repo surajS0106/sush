@@ -1,6 +1,7 @@
 {
   "name": "sush",
   "private": true,
+  "license": "MIT",
   "workspaces": ["apps/*"],
   "scripts": {
     "dev": "concurrently -n auth,ollama,app -c blue,magenta,green \"bun run dev:server\" \"bun run dev:ollama\" \"bun run dev:app\"",

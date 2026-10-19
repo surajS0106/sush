@@ -5,7 +5,7 @@ members = ["crates/sush-core", "apps/desktop/src-tauri"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "MIT"
 
 [workspace.dependencies]
 sush-core = { path = "crates/sush-core" }
