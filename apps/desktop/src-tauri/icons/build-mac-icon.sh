@@ -18,4 +18,12 @@ xcrun actool AppIcon.icon \
   --output-format human-readable-text \
   --notices --warnings --errors
 test -f Assets.car
+# actool silently drops an appearance it can't use (it did when icon.json set both image-name and
+# image-name-specializations), leaving a catalog that shows the light icon in dark mode. Fail instead.
+for look in light dark; do
+  if ! assetutil --info Assets.car | grep -q "\"AppIcon_Assets\\\\/$look\""; then
+    echo "error: Assets.car has no $look artwork; check image-name-specializations in AppIcon.icon/icon.json" >&2
+    exit 1
+  fi
+done
 echo "Wrote $(pwd)/Assets.car"

@@ -4,7 +4,6 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "light.png",
           "image-name-specializations" : [
             {
               "value" : "light.png"
