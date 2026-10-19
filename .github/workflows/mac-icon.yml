@@ -10,6 +10,7 @@ on:
     paths:
       - apps/desktop/src-tauri/icons/AppIcon.icon/**
       - apps/desktop/src-tauri/icons/build-mac-icon.sh
+      - apps/desktop/src-tauri/icons/check-mac-icon.sh
   workflow_dispatch:
 
 permissions:
@@ -31,7 +32,7 @@ jobs:
       # Pushes made with GITHUB_TOKEN don't trigger other workflows, so this can't loop.
       - name: Commit Assets.car if it changed
         run: |
-          git add apps/desktop/src-tauri/icons/Assets.car
+          git add apps/desktop/src-tauri/icons/Assets.car apps/desktop/src-tauri/icons/Assets.car.stamp
           if git diff --cached --quiet; then echo "Assets.car is already up to date"; exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898283+github-actions[bot]@users.noreply.github.com"

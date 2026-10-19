@@ -1,8 +1,14 @@
 # Brand identity (app icon and palette): Design Notes
 
-Last updated: 2026-10-11
+Last updated: 2026-10-19
 
 ## What changed
+
+### 2026-10-19 (a DMG shipped the light-only icon)
+- `Assets.car` is no longer gitignored. `.github/workflows/mac-icon.yml` compiles it with `actool` on a GitHub macOS runner and commits it whenever `icons/AppIcon.icon` or its scripts change.
+- New `icons/check-mac-icon.sh`, ported from Yammer. `build-mac-icon.sh` now writes `icons/Assets.car.stamp` (a SHA-256 of `AppIcon.icon`'s files), and `mac-icon.yml` commits it with `Assets.car` and also runs when the check script changes. `tauri.macos-icon.conf.json` runs the check as its `beforeBundleCommand`, so `build:mac` and the release job stop with push/pull instructions when the stamp doesn't match the current `AppIcon.icon`.
+- The first stamp was written locally from the catalog in `a64a268`, the workflow's compile of `47a8cff`. `47a8cff` was the last commit to touch `AppIcon.icon`, and `assetutil --info` lists both `AppIcon_Assets/light` and `AppIcon_Assets/dark` in that catalog.
+- `/build-dmg` (`.claude/skills/build-dmg/SKILL.md`) and `CLAUDE.md` describe the check.
 
 ### 2026-10-11
 - New logo: a teal chevron with a coral pill. Its sources live in `apps/desktop/src-tauri/icons/source/`: `light.png` and `dark.png` are full-bleed artwork for each appearance, and `mark-raw.png` is the transparent mark.
@@ -38,6 +44,8 @@ Last updated: 2026-10-11
 
 **Light and dark icons.** macOS 26 is the first macOS that switches app icons with the system appearance, and it only reads them from a compiled asset catalog. Tauri 2.12 cannot produce that catalog, and `actool` needs full Xcode. The compile therefore runs in CI, where the runners have Xcode, and is wired in through an extra config so local builds keep working without Xcode. The trade-off: local builds and macOS versions before 26 show only the light icon.
 
+**Stale-catalog check.** `47a8cff` fixed `AppIcon.icon` so the catalog would hold the dark artwork, and the workflow committed the recompiled `Assets.car` 30 seconds later. The DMG built 10 minutes after that still bundled the previous catalog, because that commit hadn't been pulled. That catalog held only `AppIcon_Assets/light`, so the installed app showed the light icon under every appearance and icon style. Nothing in the build noticed. The stamp compares content hashes rather than timestamps, because git checkouts reset mtimes. The trade-off: after an icon change, a local DMG can't be built until the change is pushed and the workflow's commit is pulled back.
+
 **Dock icon at runtime.** `tauri dev`, local builds and macOS versions before 26 only carry the light `icon.icns`, so on a dark-mode Mac the Dock showed a white tile. Setting the Dock image at runtime covers those cases. The trade-off: it only affects the Dock while the app is running; Finder and Launchpad keep the bundle icon.
 
 **Windows and Linux.** Win32 `.ico` files cannot follow the system theme; only MSIX packages can, and Tauri does not build those. Windows and Linux get the transparent mark, which reads on both light and dark taskbars.
@@ -50,6 +58,7 @@ Last updated: 2026-10-11
 
 - **One command rebuilds every asset.** `make-icons.py` regenerates all icons and in-app marks from three source images. The common alternative, hand-exporting each size from a design tool, drifts over time.
 - **macOS 26 light and dark icons without leaving Tauri's bundler.** The compiled `Assets.car` is shipped through `bundle.macOS.files`, and `CFBundleIconFile` remains in Info.plist as the fallback for older systems.
+- **A DMG can't ship a stale icon.** The bundle step checks that `Assets.car` was compiled from the current `AppIcon.icon` and stops with the fix if it wasn't, instead of silently shipping the last catalog that happened to be on disk.
 - **Dark-mode Dock icon in every build.** The Dock icon follows the system appearance in dev builds and on older macOS, and the runtime swap stops whenever the system's own switching is available.
 - **Speckles removed automatically.** The connected-component cleanup removes the stray edge pixels in the supplied transparent PNG, so they never reach the 16px `.ico` frames.
 - **The new palette reaches existing users.** The versioned `palette` field migrates only users who still hold the old default, and leaves any explicit non-orange choice alone.
