@@ -311,6 +311,8 @@ interface MascotProps {
   draft: string;
   /** Which character; the one picked in Settings when left out. */
   kind?: string;
+  /** Stays on its spot and awake, e.g. as a node in the sub-agent graph. */
+  still?: boolean;
   className?: string;
 }
 
@@ -339,6 +341,7 @@ function MascotBody({
   busy,
   stage,
   draft,
+  still,
   className,
   character,
   entrance,
@@ -423,7 +426,7 @@ function MascotBody({
     window.addEventListener("pointerdown", wake);
     window.addEventListener("keydown", wake);
     const idle = setInterval(() => {
-      if (!busyRef.current && !sleepingRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
+      if (!still && !busyRef.current && !sleepingRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
     }, 5000);
     return () => {
       cancelAnimationFrame(frame);
@@ -432,7 +435,7 @@ function MascotBody({
       window.removeEventListener("pointerdown", wake);
       window.removeEventListener("keydown", wake);
     };
-  }, [reduceMotion, hopControls]);
+  }, [reduceMotion, hopControls, still]);
 
   // Watch the input while the user is typing.
   useEffect(() => {
@@ -547,7 +550,7 @@ function MascotBody({
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
-    if (reduceMotion || walking || busy || sleeping) return;
+    if (reduceMotion || still || walking || busy || sleeping) return;
     const t = setTimeout(
       () => {
         let target = x !== 0 && Math.random() < 0.6 ? 0 : -Math.round(Math.random() * WANDER);
@@ -558,7 +561,7 @@ function MascotBody({
       9000 + Math.random() * 12000,
     );
     return () => clearTimeout(t);
-  }, [reduceMotion, walking, busy, sleeping, x]);
+  }, [reduceMotion, still, walking, busy, sleeping, x]);
 
   const [walkFrom, setWalkFrom] = useState(0);
   useEffect(() => {

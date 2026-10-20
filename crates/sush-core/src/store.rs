@@ -54,6 +54,10 @@ pub struct ThreadMeta {
     /// Never stored: an incognito chat lives only in memory until it's closed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub incognito: bool,
+    /// Set for a sub-agent's thread (`crate::agent::subagents`): the thread
+    /// whose run started it. Such threads aren't sessions of their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,6 +134,9 @@ const MIGRATIONS: &[&str] = &[r#"
         data TEXT NOT NULL
     );
     CREATE INDEX reports_thread ON reports (thread_id);
+"#, r#"
+    ALTER TABLE threads ADD COLUMN parent_id TEXT;
+    CREATE INDEX threads_parent ON threads (parent_id);
 "#];
 
 pub struct Store {
@@ -152,23 +159,10 @@ impl Store {
     pub fn threads(&self) -> StoreResult<Vec<Thread>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id FROM threads ORDER BY created_at DESC",
+            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id FROM threads ORDER BY created_at DESC",
         )?;
         let metas = stmt
-            .query_map([], |r| {
-                let target: Option<String> = r.get(4)?;
-                Ok(ThreadMeta {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    created_at: r.get(2)?,
-                    updated_at: r.get(3)?,
-                    target: target.and_then(|t| serde_json::from_str(&t).ok()),
-                    pinned: r.get(5)?,
-                    workspace_id: r.get(6)?,
-                    project_id: r.get(7)?,
-                    incognito: false,
-                })
-            })?
+            .query_map([], meta_row)?
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut msgs = conn.prepare("SELECT data FROM messages WHERE thread_id = ?1 ORDER BY seq")?;
@@ -222,6 +216,18 @@ impl Store {
         rows.map(|data| Ok(serde_json::from_str(&data?)?)).collect()
     }
 
+    /// One conversation's metadata, if it's stored.
+    pub fn thread_meta(&self, id: &str) -> StoreResult<Option<ThreadMeta>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id FROM threads WHERE id = ?1",
+                [id],
+                meta_row,
+            )
+            .optional()?)
+    }
+
     /// The workspace a saved thread was created in, if it's a Cowork session.
     pub fn thread_workspace(&self, id: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.lock().unwrap();
@@ -230,9 +236,12 @@ impl Store {
         Ok(found.flatten())
     }
 
+    /// Delete a conversation and its sub-agents' threads.
     pub fn delete_thread(&self, id: &str) -> StoreResult<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
+        tx.execute("DELETE FROM chats_fts WHERE thread_id IN (SELECT id FROM threads WHERE parent_id = ?1)", [id])?;
+        tx.execute("DELETE FROM threads WHERE parent_id = ?1", [id])?;
         tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
         tx.execute("DELETE FROM chats_fts WHERE thread_id = ?1", [id])?;
         tx.commit()?;
@@ -265,7 +274,7 @@ impl Store {
         let mut stmt = conn.prepare(
             "SELECT t.id, t.title, t.updated_at, snippet(chats_fts, 2, '', '', '…', 40)
              FROM chats_fts JOIN threads t ON t.id = chats_fts.thread_id
-             WHERE chats_fts MATCH ?1
+             WHERE chats_fts MATCH ?1 AND t.parent_id IS NULL
              ORDER BY bm25(chats_fts, 0.0, 5.0, 1.0), t.updated_at DESC
              LIMIT ?2",
         )?;
@@ -608,6 +617,23 @@ fn save_report(conn: &Connection, r: &Report) -> StoreResult<()> {
     Ok(())
 }
 
+/// A `threads` row, selected as `id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id`.
+fn meta_row(r: &rusqlite::Row) -> rusqlite::Result<ThreadMeta> {
+    let target: Option<String> = r.get(4)?;
+    Ok(ThreadMeta {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        created_at: r.get(2)?,
+        updated_at: r.get(3)?,
+        target: target.and_then(|t| serde_json::from_str(&t).ok()),
+        pinned: r.get(5)?,
+        workspace_id: r.get(6)?,
+        project_id: r.get(7)?,
+        incognito: false,
+        parent_id: r.get(8)?,
+    })
+}
+
 fn workspace_row(r: &rusqlite::Row) -> rusqlite::Result<Workspace> {
     let access: String = r.get(3)?;
     let approval: String = r.get(4)?;
@@ -632,11 +658,12 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
 fn upsert_meta(conn: &Connection, m: &ThreadMeta) -> StoreResult<()> {
     let target = m.target.as_ref().map(serde_json::to_string).transpose()?;
     conn.execute(
-        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned, workspace_id, project_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        "INSERT INTO threads (id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT (id) DO UPDATE SET title = ?2, updated_at = ?4, target = ?5, pinned = ?6,
-             workspace_id = COALESCE(threads.workspace_id, ?7), project_id = ?8",
-        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned, m.workspace_id, m.project_id],
+             workspace_id = COALESCE(threads.workspace_id, ?7), project_id = ?8,
+             parent_id = COALESCE(threads.parent_id, ?9)",
+        params![m.id, m.title, m.created_at, m.updated_at, target, m.pinned, m.workspace_id, m.project_id, m.parent_id],
     )?;
     Ok(())
 }
@@ -743,6 +770,7 @@ mod tests {
             workspace_id: None,
             project_id: None,
             incognito: false,
+            parent_id: None,
         }
     }
 
@@ -828,6 +856,24 @@ mod tests {
         store.delete_thread("a").unwrap();
         assert!(store.threads().unwrap().is_empty());
         assert!(store.search("secret", 8).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sub_agent_threads_stay_out_of_search_and_go_with_their_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.save_thread(&meta("p", "Parent", 1), Some(vec![text("user", "plan")])).unwrap();
+        let mut child = meta("p:c1", "Child", 2);
+        child.parent_id = Some("p".into());
+        store.save_thread(&child, Some(vec![text("user", "subtask")])).unwrap();
+        // A save from the UI that doesn't know the parent keeps it.
+        store.save_thread(&meta("p:c1", "Child", 2), None).unwrap();
+
+        let loaded = store.threads().unwrap();
+        assert_eq!(loaded.iter().find(|t| t.meta.id == "p:c1").unwrap().meta.parent_id.as_deref(), Some("p"));
+        assert!(store.search("subtask", 8).unwrap().is_empty());
+        store.delete_thread("p").unwrap();
+        assert!(store.threads().unwrap().is_empty());
     }
 
     #[test]

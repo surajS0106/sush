@@ -8,6 +8,9 @@
 // never written: Rust keeps their messages in memory until they're deleted.
 // Preferences stay in localStorage.
 //
+// Sub-agents' threads (`parentId` set) aren't sessions: they're kept apart
+// from the conversations, for the cards of the calls that started them.
+//
 // Every window (`lib/windows.ts`) has its own copy: the UI's changes are
 // broadcast to the others, runs' saves reach them all, and stores kept in
 // localStorage pick up other windows' writes from the `storage` event.
@@ -32,6 +35,8 @@ export interface Conversation {
   projectId?: string;
   /** Kept out of history, memory and search, and gone once closed. */
   incognito?: boolean;
+  /** A sub-agent's thread: the session that started it. */
+  parentId?: string;
   messages: SushUIMessage[];
 }
 
@@ -88,6 +93,12 @@ export function createStore<T>(key: string, initial: T, persist = true, follow =
 }
 
 const conversations = createStore<Conversation[]>("sush.conversations-cache", [], false);
+/** Sub-agents' threads, by id. Their live messages come from the runs (`sessions.ts`). */
+const subagentThreads = new Map<string, Conversation>();
+
+/** A sub-agent's thread as last saved. */
+export const getSubagentThread = (id: string) => subagentThreads.get(id);
+export const subagentThreadIds = () => subagentThreads.keys();
 
 /** A change to the conversations made in another window. */
 type Shared = { type: "upsert"; conversation: Conversation } | { type: "delete"; id: string };
@@ -110,7 +121,7 @@ export const subscribeConversations = (l: () => void) => conversations.subscribe
 
 /** A conversation's metadata as Rust stores it. */
 export function threadMeta(id: string): ThreadMeta | null {
-  const c = conversations.get().find((c) => c.id === id);
+  const c = conversations.get().find((c) => c.id === id) ?? subagentThreads.get(id);
   return c ? meta(c) : null;
 }
 
@@ -121,6 +132,11 @@ export function showMessages(id: string, messages: SushUIMessage[]) {
 
 /** Mirror a save that Rust made (a run writes its thread itself). */
 export function applySaved(saved: ThreadMeta, messages: SushUIMessage[] | undefined) {
+  if (saved.parentId) {
+    const prev = subagentThreads.get(saved.id);
+    subagentThreads.set(saved.id, { ...prev, ...saved, messages: messages ?? prev?.messages ?? [] } as Conversation);
+    return;
+  }
   update(saved.id, (c) => ({ ...c, ...saved, messages: messages ?? c.messages }));
 }
 
@@ -229,6 +245,8 @@ export function forkConversation(id: string): Conversation | null {
 
 /** Delete a chat; for an incognito one this also drops the messages Rust holds for it. */
 export function deleteConversation(id: string) {
+  // Rust deletes its sub-agents' threads along with it.
+  for (const [childId, c] of subagentThreads) if (c.parentId === id) subagentThreads.delete(childId);
   conversations.set((all) => all.filter((c) => c.id !== id));
   share({ type: "delete", id });
   persist(() => api.threadDelete(id));
@@ -285,8 +303,9 @@ export async function initStore() {
     // The old copy stays in localStorage for one release, in case something needs recovering.
     localStorage.setItem(MIGRATED_KEY, String(Date.now()));
   }
-  const threads = await api.threadsLoad();
-  conversations.set(threads as Conversation[]);
+  const threads = (await api.threadsLoad()) as Conversation[];
+  for (const t of threads) if (t.parentId) subagentThreads.set(t.id, t);
+  conversations.set(threads.filter((t) => !t.parentId));
 }
 
 function readLegacy(): StoredThread[] {

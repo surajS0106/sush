@@ -177,9 +177,13 @@ export function useBranchStatus(
   return result;
 }
 
+/** The last history read per workspace and view, shown at once when the graph reopens. */
+const lastLogs = new Map<string, GitLog>();
+
 /**
  * Up to `limit` commits of the workspace's history (every branch when `all`),
- * read again as files change and when `refresh` does.
+ * read again as files change and when `refresh` does. Starts from the last
+ * one read, if any, while the fresh one loads.
  */
 export function useGitLog(
   workspaceId: string,
@@ -188,18 +192,27 @@ export function useGitLog(
   refresh?: unknown,
 ): { log: GitLog | null; error: string | null; loading: boolean } {
   const version = useFilesVersion(workspaceId);
-  const [result, setResult] = useState<{ log: GitLog | null; error: string | null; loading: boolean }>({ log: null, error: null, loading: true });
+  const key = `${workspaceId}:${all}`;
+  const [result, setResult] = useState<{ log: GitLog | null; error: string | null; loading: boolean }>(() => ({
+    log: lastLogs.get(key) ?? null,
+    error: null,
+    loading: true,
+  }));
   useEffect(() => {
     let live = true;
-    setResult((r) => ({ ...r, loading: true }));
+    // Another workspace's history never stands in for this one's.
+    setResult((r) => ({ log: lastLogs.get(key) ?? (r.log && lastLogs.get(`${workspaceId}:${!all}`) === r.log ? r.log : null), error: r.error, loading: true }));
     api
       .workspaceGitLog(workspaceId, limit, all)
-      .then((log) => live && setResult({ log, error: null, loading: false }))
+      .then((log) => {
+        lastLogs.set(key, log);
+        if (live) setResult({ log, error: null, loading: false });
+      })
       .catch((e) => live && setResult({ log: null, error: errorMessage(e), loading: false }));
     return () => {
       live = false;
     };
-  }, [workspaceId, limit, all, version, refresh]);
+  }, [key, workspaceId, limit, all, version, refresh]);
   return result;
 }
 

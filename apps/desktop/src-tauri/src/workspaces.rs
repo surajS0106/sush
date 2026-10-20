@@ -9,7 +9,7 @@ use std::path::Path;
 
 use serde::Serialize;
 use sush_core::agent::ui::new_id;
-use sush_core::store::TurnChanges;
+use sush_core::store::{Store, TurnChanges};
 use sush_core::workspace::git::{self, BranchStatus, CommitDetail, GitInfo, GitLog};
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, EditApproval, Entry, Workspace, WorkspaceFs};
@@ -305,12 +305,12 @@ pub async fn turn_changes(state: State<'_, AppState>, thread_id: String) -> AppR
     blocking(move || Ok(store.turn_changes(&thread_id)?)).await
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct UndoResult {
-    restored: Vec<String>,
+    pub(crate) restored: Vec<String>,
     /// Files that couldn't be put back, with why.
-    failed: Vec<String>,
+    pub(crate) failed: Vec<String>,
 }
 
 /// Text past this size isn't diffed; the card just says the file changed.
@@ -379,24 +379,27 @@ pub async fn undo_turn(
 ) -> AppResult<UndoResult> {
     state.runs.stop(&thread_id).await;
     let store = state.store.clone();
-    blocking(move || {
-        let originals = store.take_originals_since(&thread_id, &turn_id, path.as_deref())?;
-        let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
-        let mut result = UndoResult { restored: Vec::new(), failed: Vec::new() };
-        for o in originals {
-            if !folders.contains_key(&o.workspace_id) {
-                let fs = store.workspace(&o.workspace_id)?.and_then(|w| WorkspaceFs::open(Path::new(&w.root)).ok());
-                folders.insert(o.workspace_id.clone(), fs);
-            }
-            match &folders[&o.workspace_id] {
-                Some(fs) => match fs.restore(&o.path, o.original.as_deref()) {
-                    Ok(()) => result.restored.push(o.path),
-                    Err(e) => result.failed.push(e),
-                },
-                None => result.failed.push(format!("{}: the workspace folder is gone", o.path)),
-            }
+    blocking(move || restore_since(&store, &thread_id, &turn_id, path.as_deref())).await
+}
+
+/// Put every file changed since `turn_id` began (or just `only`) back as it
+/// was before it, and forget those checkpoints. Blocking.
+pub(crate) fn restore_since(store: &Store, thread_id: &str, turn_id: &str, only: Option<&str>) -> AppResult<UndoResult> {
+    let originals = store.take_originals_since(thread_id, turn_id, only)?;
+    let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
+    let mut result = UndoResult { restored: Vec::new(), failed: Vec::new() };
+    for o in originals {
+        if !folders.contains_key(&o.workspace_id) {
+            let fs = store.workspace(&o.workspace_id)?.and_then(|w| WorkspaceFs::open(Path::new(&w.root)).ok());
+            folders.insert(o.workspace_id.clone(), fs);
         }
-        Ok(result)
-    })
-    .await
+        match &folders[&o.workspace_id] {
+            Some(fs) => match fs.restore(&o.path, o.original.as_deref()) {
+                Ok(()) => result.restored.push(o.path),
+                Err(e) => result.failed.push(e),
+            },
+            None => result.failed.push(format!("{}: the workspace folder is gone", o.path)),
+        }
+    }
+    Ok(result)
 }

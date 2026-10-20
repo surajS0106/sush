@@ -144,6 +144,8 @@ export interface StoredThread {
   projectId?: string;
   /** Never written to disk; Rust keeps its messages in memory until it's deleted. */
   incognito?: boolean;
+  /** Set for a sub-agent's thread: the session whose run started it (`sush_core::agent::subagents`). */
+  parentId?: string;
   messages: unknown[];
 }
 
@@ -504,6 +506,9 @@ export const api = {
   runsSubscribe: (onFrame: Channel<RunFrame>) => invoke<LiveRun[]>("runs_subscribe", { onFrame }),
   runStart: (thread: ThreadMeta, action: RunAction, config: RunConfig) => invoke<void>("run_start", { thread, action, config }),
   runCancel: (threadId: string) => invoke<void>("run_cancel", { threadId }),
+  /** Start a background sub-agent for a session, from its agent graph (`runs::agent_spawn`). */
+  agentSpawn: (parent: ThreadMeta, config: RunConfig, callId: string, turnId: string, prompt: string) =>
+    invoke<void>("agent_spawn", { parent, config, callId, turnId, prompt }),
   /** Have the messages steering a run join it now, cutting its current step or tool calls short. */
   runInterrupt: (threadId: string) => invoke<void>("run_interrupt", { threadId }),
   toolResult: (callId: string, result: { output: unknown } | { errorText: string }) => invoke<void>("tool_result", { callId, result }),
@@ -511,6 +516,8 @@ export const api = {
   /** Without `messages`, only the metadata (title, pin, project, model) is updated. */
   threadSave: (thread: ThreadMeta, messages: unknown[] | null) => invoke<void>("thread_save", { thread, messages }),
   threadDelete: (id: string) => invoke<void>("thread_delete", { id }),
+  /** Restore a checkpoint: stop the run, put back the files changed from that turn on, and drop the user message `messageId` and all after it. */
+  threadRewind: (thread: ThreadMeta, messageId: string) => invoke<UndoResult>("thread_rewind", { thread, messageId }),
   threadsImport: (threads: StoredThread[]) => invoke<number>("threads_import", { threads }),
   blobPut: (dataUrl: string) => invoke<string>("blob_put", { dataUrl }),
   /** A stored blob's bytes as a `data:` URL. */

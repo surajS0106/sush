@@ -20,7 +20,7 @@ function groupableTool(p: Part): p is DynamicToolUIPart {
   const kind = toolKind(p.toolName);
   // A generated image stays in view; a failed one can collapse.
   if (kind === "image" && p.state === "output-available") return false;
-  return kind !== "ask-user" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
+  return kind !== "ask-user" && kind !== "agent" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
 }
 
 function groupable(p: Part) {

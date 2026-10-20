@@ -5,8 +5,10 @@
 //! Runs the user's `git`; a folder outside a repo, or no git installed, just
 //! means no git features.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
 
 use serde::Serialize;
 
@@ -359,7 +361,7 @@ fn shortstat(text: &str) -> (usize, usize, usize) {
 /// How many files have uncommitted changes, and which are unmerged, as paths
 /// relative to the workspace folder.
 fn status(root: &Path) -> Result<(usize, Vec<String>), String> {
-    let prefix = git(root, &["rev-parse", "--show-prefix"]).unwrap_or_default();
+    let prefix = prefix_of(root);
     let out = git(root, &["-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z"])?;
     let (mut count, mut unmerged) = (0, Vec::new());
     let mut entries = out.split('\0').filter(|e| !e.is_empty());
@@ -378,6 +380,47 @@ fn status(root: &Path) -> Result<(usize, Vec<String>), String> {
         }
     }
     Ok((count, unmerged))
+}
+
+/// The branch, HEAD and uncommitted count from one `git status`.
+struct BranchState {
+    /// `None` when HEAD is detached.
+    branch: Option<String>,
+    /// `None` before the first commit.
+    head: Option<String>,
+    /// What the branch tracks (`origin/main`), if anything.
+    upstream: Option<String>,
+    uncommitted: usize,
+}
+
+fn branch_status_v2(root: &Path) -> Result<BranchState, String> {
+    let out = run(root, &["-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch", "--no-ahead-behind", "-z"])?;
+    if out.code != 0 {
+        return Err(if out.stderr.contains("not a git repository") || out.stderr.is_empty() {
+            "This folder isn't in a git repository.".into()
+        } else {
+            out.stderr
+        });
+    }
+    let mut state = BranchState { branch: None, head: None, upstream: None, uncommitted: 0 };
+    let mut entries = out.stdout.split('\0').filter(|e| !e.is_empty());
+    while let Some(entry) = entries.next() {
+        if let Some(header) = entry.strip_prefix("# ") {
+            match header.split_once(' ') {
+                Some(("branch.oid", oid)) if oid != "(initial)" => state.head = Some(oid.into()),
+                Some(("branch.head", name)) if name != "(detached)" => state.branch = Some(name.into()),
+                Some(("branch.upstream", up)) if !up.starts_with('-') => state.upstream = Some(up.into()),
+                _ => {}
+            }
+            continue;
+        }
+        state.uncommitted += 1;
+        // A rename or copy (`2 …`) is followed by the path it came from.
+        if entry.starts_with("2 ") {
+            entries.next();
+        }
+    }
+    Ok(state)
 }
 
 /// What merging `base` into HEAD would conflict on, worked out without
@@ -654,23 +697,39 @@ pub enum RefKind {
 
 /// Up to `limit` commits: every local and remote branch and tag when `all`,
 /// else HEAD and the branch it tracks.
+///
+/// Each git process costs tens of milliseconds to start on Windows, so this
+/// runs three: one `status` for the branch, HEAD, upstream and uncommitted
+/// count, and the user's name and the history alongside it.
 pub fn log(root: &Path, limit: usize, all: bool) -> Result<GitLog, String> {
-    let branch = info(root).ok_or("This folder isn't in a git repository.")?.branch;
-    let you = git(root, &["config", "user.name"]).ok().filter(|n| !n.is_empty());
-    let (uncommitted, _) = status(root)?;
-    let Some(head) = head(root) else {
+    let n = (limit + 1).to_string();
+    let history = |upstream: Option<&str>| {
+        let mut args = vec!["log", "--topo-order", "--decorate=full", "-n", n.as_str(), "--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s"];
+        if all {
+            args.extend(["--branches", "--remotes", "--tags"]);
+        } else {
+            args.extend(upstream);
+        }
+        args.extend(["HEAD", "--"]);
+        git(root, &args)
+    };
+    let (state, you, out) = std::thread::scope(|s| {
+        let you = s.spawn(|| git(root, &["config", "user.name"]).ok().filter(|n| !n.is_empty()));
+        // Every branch doesn't depend on the upstream, so it needn't wait for `status`.
+        let early = all.then(|| s.spawn(|| history(None)));
+        let state = branch_status_v2(root);
+        let out = match (early, &state) {
+            (Some(h), _) => h.join().unwrap_or_else(|_| Err("git log failed".into())),
+            (None, Ok(st)) if st.head.is_some() => history(st.upstream.as_deref()),
+            (None, _) => Ok(String::new()),
+        };
+        (state, you.join().ok().flatten(), out)
+    });
+    let BranchState { branch, head, uncommitted, .. } = state?;
+    let Some(head) = head else {
         return Ok(GitLog { branch, head: None, you, uncommitted, commits: Vec::new(), more: false });
     };
-    let upstream = git(root, &["rev-parse", "--verify", "-q", "--symbolic-full-name", "@{upstream}"]).ok().filter(|u| !u.is_empty());
-    let n = (limit + 1).to_string();
-    let mut args = vec!["log", "--topo-order", "--decorate=full", "-n", n.as_str(), "--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s"];
-    if all {
-        args.extend(["--branches", "--remotes", "--tags"]);
-    } else if let Some(u) = &upstream {
-        args.push(u);
-    }
-    args.extend(["HEAD", "--"]);
-    let mut commits: Vec<LogCommit> = git(root, &args)?
+    let mut commits: Vec<LogCommit> = out?
         .lines()
         .filter_map(|line| {
             let f: Vec<&str> = line.splitn(6, '\x1f').collect();
@@ -738,18 +797,49 @@ pub struct CommitFile {
     pub deletions: Option<usize>,
 }
 
-/// A commit's message and changed files (against its first parent). Runs
-/// nothing the folder's config names: `diff-tree` uses no diff drivers.
+/// The folder's path inside its repository (`""` at the top, else ending in
+/// `/`). It can't change for a folder, so it's read from git once.
+fn prefix_of(root: &Path) -> String {
+    static PREFIXES: Mutex<BTreeMap<PathBuf, String>> = Mutex::new(BTreeMap::new());
+    if let Some(p) = PREFIXES.lock().unwrap().get(root) {
+        return p.clone();
+    }
+    let Ok(p) = git(root, &["rev-parse", "--show-prefix"]) else { return String::new() };
+    PREFIXES.lock().unwrap().insert(root.to_path_buf(), p.clone());
+    p
+}
+
+/// A commit's message and changed files (against its first parent), from one
+/// `git show`. Runs nothing the folder's config names: no external diff, no
+/// textconv.
 pub fn commit_detail(root: &Path, sha: &str) -> Result<CommitDetail, String> {
     if !(4..=40).contains(&sha.len()) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!("{sha} isn't a commit."));
     }
-    let meta = git(root, &["log", "-1", "--format=%H%x1f%an%x1f%ae%x1f%at%x1f%B", sha, "--"])?;
+    let out = git(
+        root,
+        &[
+            "show",
+            "--format=%H%x1f%an%x1f%ae%x1f%at%x1f%B%x1e",
+            "--numstat",
+            "-z",
+            "--no-renames",
+            "--no-textconv",
+            "--no-ext-diff",
+            "--no-show-signature",
+            "--no-color",
+            "--diff-merges=first-parent",
+            sha,
+            "--",
+        ],
+    )?;
+    let not_commit = || format!("{sha} isn't a commit.");
+    let (meta, stat) = out.split_once('\x1e').ok_or_else(not_commit)?;
     let f: Vec<&str> = meta.splitn(5, '\x1f').collect();
-    let &[full, author, email, time, message] = f.as_slice() else { return Err(format!("{sha} isn't a commit.")) };
-    let prefix = git(root, &["rev-parse", "--show-prefix"]).unwrap_or_default();
-    let stat = git(root, &["diff-tree", "-r", "--root", "--diff-merges=first-parent", "--no-commit-id", "--no-renames", "--numstat", "-z", full])?;
+    let &[full, author, email, time, message] = f.as_slice() else { return Err(not_commit()) };
+    let prefix = prefix_of(root);
     let files = stat
+        .trim_start_matches(['\0', '\n'])
         .split('\0')
         .filter(|e| !e.is_empty())
         .filter_map(|entry| {

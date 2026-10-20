@@ -34,8 +34,8 @@ pub async fn thread_save(state: State<'_, AppState>, thread: ThreadMeta, message
 
 #[tauri::command]
 pub async fn thread_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    // A run still going would save the thread again.
-    state.runs.stop(&id).await;
+    // A run still going would save the thread again; so would its sub-agents'.
+    state.runs.stop_with_agents(&id).await;
     state.runs.forget(&id);
     let store = state.store.clone();
     blocking(move || Ok(store.delete_thread(&id)?)).await

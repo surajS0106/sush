@@ -20,14 +20,24 @@
 //! is held to reading: its folder is read-only whatever the workspace allows,
 //! it gets no browser and none of the UI's tools, only `sush_core::reports`'
 //! own. Its results reach every window as `report` frames.
+//!
+//! A session's run can start sub-agents (`spawn_agent`,
+//! `sush_core::agent::subagents`): each is a run of its own on a child thread
+//! (`ThreadMeta::parent_id`), started here with the parent's config, which the
+//! call waits for and whose final message is its result. Stopping the parent
+//! stops them. One working in the background (started so, or moved there when
+//! the user wrote meanwhile) brings its report back as a message of its own
+//! when it's done, which joins the parent's run or starts one. A sub-agent's file changes are checkpointed under the parent's
+//! turn, so undoing that turn undoes them too.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sush_core::agent::subagents;
 use sush_core::agent::ui::{self, ToolCall, STOPPED};
 use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
 use sush_core::browser as browser_tools;
@@ -46,6 +56,7 @@ use crate::browser::Browser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::blocking;
+use crate::workspaces::{self, UndoResult};
 use crate::{commands, connectors};
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,6 +96,9 @@ pub struct Runs {
     starting: tokio::sync::Mutex<()>,
     /// Incognito threads' messages: kept here instead of on disk, until the chat is closed.
     incognito: Mutex<HashMap<String, Vec<Value>>>,
+    /// Sub-agents' threads working in the background, whose reports go to their parent as messages.
+    /// Lock order: `detached`, then `live`.
+    detached: Mutex<HashSet<String>>,
 }
 
 struct Live {
@@ -95,6 +109,11 @@ struct Live {
     done: watch::Receiver<bool>,
     cowork: Option<Cowork>,
     report: Option<ReportRun>,
+    /// The config as the UI (or, for a sub-agent, the parent) sent it, before
+    /// `prepare`: what this run's sub-agents start from.
+    ui_config: Mutex<RunConfig>,
+    /// A sub-agent's run: the parent thread and turn its file changes count under.
+    checkpoint_to: Option<(String, String)>,
 }
 
 /// The report a thread works for, as it was when the run started (its scope can't change).
@@ -215,6 +234,17 @@ impl Runs {
         self.incognito.lock().unwrap().remove(thread_id);
     }
 
+    /// Stop a thread's run and its sub-agents', those in the background too.
+    pub async fn stop_with_agents(&self, thread_id: &str) {
+        self.stop(thread_id).await;
+        let prefix = subagents::child_thread_id(thread_id, "");
+        let children: Vec<String> = self.live.lock().unwrap().keys().filter(|id| id.starts_with(&prefix)).cloned().collect();
+        for child in children {
+            self.detached.lock().unwrap().remove(&child);
+            self.stop(&child).await;
+        }
+    }
+
     pub fn is_running(&self, thread_id: &str) -> bool {
         self.live.lock().unwrap().contains_key(thread_id)
     }
@@ -287,14 +317,11 @@ impl RunHost for Host {
                     return Err("This session's workspace folder is no longer available.".into());
                 };
                 let workspace = cowork.workspace.lock().unwrap().clone();
-                // Changes are grouped by the turn (the user message) that made them, for undo.
-                let turn = {
-                    let live = self.live.state.lock().unwrap();
-                    let user = live.messages.iter().rev().find(|m| ui::role(m) == Some("user"));
-                    user.and_then(|m| m.get("id")).and_then(Value::as_str).unwrap_or_default().to_string()
-                };
+                // Changes are grouped by the turn (the user message) that made them, for undo;
+                // a sub-agent's, by its parent's.
+                let (owner, turn) = self.live.checkpoint_to.clone().unwrap_or_else(|| (self.thread_id.clone(), self.turn()));
                 let store = state.store.clone();
-                let (thread_id, workspace_id) = (self.thread_id.clone(), workspace.id.clone());
+                let (thread_id, workspace_id) = (owner.clone(), workspace.id.clone());
                 let checkpoint: ws_tools::Checkpoint = Arc::new(move |path: &str, original: Option<Vec<u8>>| {
                     store
                         .add_checkpoint(&thread_id, &turn, &workspace_id, path, original.as_deref())
@@ -304,7 +331,7 @@ impl RunHost for Host {
                     ws_tools::execute(cowork.fs.clone(), &workspace, &call.name, call.input.clone(), cancel, checkpoint, &state.sandbox)
                         .await;
                 if ws_tools::changes_files(&call.name) {
-                    state.runs.send(RunFrame::FilesChanged { thread_id: self.thread_id.clone(), workspace_id: workspace.id });
+                    state.runs.send(RunFrame::FilesChanged { thread_id: owner, workspace_id: workspace.id });
                 }
                 result
             }
@@ -332,6 +359,7 @@ impl RunHost for Host {
                 state.runs.report_changed(report);
                 Ok(Value::String(said))
             }
+            ToolExec::Agent => self.spawn_agent(call, cancel).await,
         }
     }
 
@@ -346,6 +374,21 @@ impl RunHost for Host {
             }
             _ => tool.approval,
         }
+    }
+
+    fn detach(&self, call: &ToolCall) -> Option<Value> {
+        if !subagents::is_agent_tool(&call.name) {
+            return None;
+        }
+        let runs = &self.app.state::<AppState>().runs;
+        let child_id = subagents::child_thread_id(&self.thread_id, &call.id);
+        let mut detached = runs.detached.lock().unwrap();
+        // One that has just finished hands its report back as the call's result, as usual.
+        if !runs.live.lock().unwrap().contains_key(&child_id) {
+            return None;
+        }
+        detached.insert(child_id);
+        Some(Value::String(subagents::background_result()))
     }
 
     fn emit(&self, event: RunEvent) {
@@ -398,6 +441,163 @@ impl RunHost for Host {
     }
 }
 
+impl Host {
+    /// The id of the user message the run is answering.
+    fn turn(&self) -> String {
+        let live = self.live.state.lock().unwrap();
+        let user = live.messages.iter().rev().find(|m| ui::role(m) == Some("user"));
+        user.and_then(|m| m.get("id")).and_then(Value::as_str).unwrap_or_default().to_string()
+    }
+
+    /// Run a `spawn_agent` call: start the sub-agent's run on its own thread
+    /// and wait for its report. Cancelling the call stops the sub-agent.
+    async fn spawn_agent(&self, call: &ToolCall, cancel: CancellationToken) -> Result<Value, String> {
+        let task = subagents::parse(&call.input)?;
+        let (parent, config) = {
+            let s = self.live.state.lock().unwrap();
+            (s.thread.clone(), self.live.ui_config.lock().unwrap().clone())
+        };
+        if parent.parent_id.is_some() || parent.incognito {
+            return Err("Sub-agents aren't available here.".into());
+        }
+        let workspace_id = self.live.cowork.as_ref().map(|c| c.workspace.lock().unwrap().id.clone());
+        let child = start_agent(&self.app, &self.thread_id, workspace_id, &call.id, &task, config, self.turn()).await?;
+        if task.background {
+            return Ok(Value::String(subagents::background_result()));
+        }
+        let child_id = subagents::child_thread_id(&self.thread_id, &call.id);
+
+        let mut done = child.done.clone();
+        let finished = async move {
+            let _ = done.wait_for(|d| *d).await;
+        };
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                self.app.state::<AppState>().runs.stop(&child_id).await;
+                return Err(STOPPED.into());
+            }
+            _ = finished => {}
+        }
+        let s = child.state.lock().unwrap();
+        let report = subagents::final_text(&s.messages);
+        if child.cancel.is_cancelled() {
+            let so_far = report.map(|r| format!(" What it said before it stopped:\n\n{r}")).unwrap_or_default();
+            return Err(format!("The user stopped this sub-agent before it finished.{so_far}"));
+        }
+        match s.status {
+            RunStatus::Error => Err(format!("The sub-agent failed: {}", s.error.as_deref().unwrap_or("unknown error"))),
+            _ => Ok(Value::String(report.unwrap_or_else(|| subagents::NO_REPORT.into()))),
+        }
+    }
+}
+
+/// Start a sub-agent's run for the parent's call `call_id`, its file changes
+/// counted under the parent's `turn`. One in the background reports back when it's done.
+async fn start_agent(
+    app: &AppHandle,
+    parent_id: &str,
+    workspace_id: Option<String>,
+    call_id: &str,
+    task: &subagents::Task,
+    config: RunConfig,
+    turn: String,
+) -> Result<Arc<Live>, String> {
+    let now = now_ms();
+    let child_id = subagents::child_thread_id(parent_id, call_id);
+    let thread = ThreadMeta {
+        id: child_id.clone(),
+        title: task.description.clone(),
+        created_at: now,
+        updated_at: now,
+        target: None,
+        pinned: false,
+        workspace_id,
+        project_id: None,
+        incognito: false,
+        parent_id: Some(parent_id.to_string()),
+    };
+    let action = RunAction::Send { message: subagents::user_message(&task.prompt), replace: None };
+    let state = app.state::<AppState>();
+    // Marked before it starts, so even a run that ends at once reports back.
+    if task.background {
+        state.runs.detached.lock().unwrap().insert(child_id.clone());
+    }
+    let started = start(app, thread, action, config.clone(), Some((parent_id.to_string(), turn))).await;
+    let child = match started {
+        Ok(Some(child)) => child,
+        failed => {
+            state.runs.detached.lock().unwrap().remove(&child_id);
+            return Err(match failed {
+                Err(e) => format!("Couldn't start the sub-agent: {e}"),
+                _ => "Couldn't start the sub-agent.".into(),
+            });
+        }
+    };
+    report_when_done(app.clone(), parent_id.to_string(), child.clone(), child_id, call_id.to_string(), task.description.clone(), config);
+    Ok(child)
+}
+
+/// Start a sub-agent from a session's agent graph ("Add an agent"). It works
+/// in the background and its report reaches the session as a message.
+#[tauri::command]
+pub async fn agent_spawn(
+    app: AppHandle,
+    parent: ThreadMeta,
+    config: RunConfig,
+    call_id: String,
+    turn_id: String,
+    prompt: String,
+) -> AppResult<()> {
+    if parent.parent_id.is_some() || parent.incognito {
+        return Err(AppError::Invalid("Sub-agents can't be started here.".into()));
+    }
+    let mut task = subagents::parse(&json!({ "prompt": prompt })).map_err(AppError::Invalid)?;
+    task.background = true;
+    let store = app.state::<AppState>().store.clone();
+    let id = parent.id.clone();
+    let workspace_id = blocking(move || Ok(store.thread_workspace(&id)?)).await?.or(parent.workspace_id.clone());
+    start_agent(&app, &parent.id, workspace_id, &call_id, &task, config, turn_id).await.map_err(AppError::Invalid)?;
+    Ok(())
+}
+
+/// Once a sub-agent's run ends, if it was working in the background, send its
+/// report to the parent: into the live run, or starting one. Nothing is sent
+/// for a sub-agent the user stopped.
+fn report_when_done(app: AppHandle, parent_id: String, child: Arc<Live>, child_id: String, call_id: String, description: String, config: RunConfig) {
+    tauri::async_runtime::spawn(async move {
+        let mut done = child.done.clone();
+        let _ = done.wait_for(|d| *d).await;
+        let state = app.state::<AppState>();
+        let was_detached = state.runs.detached.lock().unwrap().remove(&child_id);
+        if !was_detached || child.cancel.is_cancelled() {
+            return;
+        }
+        let message = {
+            let s = child.state.lock().unwrap();
+            let outcome = match s.status {
+                RunStatus::Error => Err(s.error.clone().unwrap_or_else(|| "unknown error".into())),
+                _ => Ok(subagents::final_text(&s.messages)),
+            };
+            subagents::report_message(&call_id, &description, outcome)
+        };
+        // The parent as it is now: the user may have renamed it, or changed its tools.
+        let live = state.runs.live.lock().unwrap().get(&parent_id).cloned();
+        let current = live.map(|l| (l.state.lock().unwrap().thread.clone(), l.ui_config.lock().unwrap().clone()));
+        let (thread, config) = match current {
+            Some((thread, config)) => (Some(thread), config),
+            None => {
+                let (store, id) = (state.store.clone(), parent_id.clone());
+                (blocking(move || Ok(store.thread_meta(&id)?)).await.ok().flatten(), config)
+            }
+        };
+        let Some(thread) = thread else { return };
+        if let Err(e) = start(&app, thread, RunAction::Steer { message }, config, None).await {
+            eprintln!("sush: couldn't deliver a sub-agent's report to {parent_id}: {e}");
+        }
+    });
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
@@ -433,15 +633,23 @@ pub fn runs_subscribe(app: AppHandle, window: Window, state: State<'_, AppState>
 /// running there; an answer to a waiting tool call or a steering message goes
 /// to the live run, or starts from the saved thread if there is none.
 #[tauri::command]
-pub async fn run_start(
-    app: AppHandle,
-    state: State<'_, AppState>,
+pub async fn run_start(app: AppHandle, thread: ThreadMeta, action: RunAction, config: RunConfig) -> AppResult<()> {
+    start(&app, thread, action, config, None).await.map(|_| ())
+}
+
+/// `run_start`, also for a sub-agent's run (`checkpoint_to`: its parent's
+/// thread and turn). Returns the new run, or None if a live run took the action.
+async fn start(
+    app: &AppHandle,
     thread: ThreadMeta,
     action: RunAction,
     config: RunConfig,
-) -> AppResult<()> {
+    checkpoint_to: Option<(String, String)>,
+) -> AppResult<Option<Arc<Live>>> {
+    let state = app.state::<AppState>();
     let runs = &state.runs;
     let mut starting = runs.starting.lock().await;
+    let ui_config = config.clone();
     let (config, cowork, report) = prepare(&state, &thread, config).await?;
     loop {
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
@@ -453,13 +661,15 @@ pub async fn run_start(
                 }
                 let answer = Inbox::Respond { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()) };
                 if !live.cancel.is_cancelled() && live.inbox.send(answer).is_ok() {
-                    return Ok(());
+                    *live.ui_config.lock().unwrap() = ui_config;
+                    return Ok(None);
                 }
             }
             RunAction::Steer { message } if !live.cancel.is_cancelled() => {
                 let steer = Inbox::Steer { message: message.clone(), config: Some(config.clone()) };
                 if live.inbox.send(steer).is_ok() {
-                    return Ok(());
+                    *live.ui_config.lock().unwrap() = ui_config;
+                    return Ok(None);
                 }
                 // The run is finishing and takes no more messages. Let it end
                 // (it may need other starts to answer it, so don't hold them
@@ -495,6 +705,8 @@ pub async fn run_start(
         done,
         cowork,
         report,
+        ui_config: Mutex::new(ui_config),
+        checkpoint_to,
     });
     runs.live.lock().unwrap().insert(thread.id.clone(), live.clone());
 
@@ -503,7 +715,7 @@ pub async fn run_start(
         set_report_status(&state, id, &thread.id, ReportStatus::Running, None).await;
     }
 
-    let host = Host { app: app.clone(), thread_id: thread.id.clone(), live };
+    let host = Host { app: app.clone(), thread_id: thread.id.clone(), live: live.clone() };
     tauri::async_runtime::spawn(async move {
         let cancel = host.live.cancel.clone();
         agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
@@ -526,18 +738,20 @@ pub async fn run_start(
         drop(live);
         let _ = done_tx.send(true);
     });
-    Ok(())
+    Ok(Some(live))
 }
 
 /// The config a run gets: the UI's, minus anything posing as a workspace,
-/// browser or report tool, plus the workspace's and the browser's tools and
-/// instructions for a Cowork session. A report's thread gets its own (`report_config`).
+/// browser, report or sub-agent tool, plus the workspace's and the browser's
+/// tools and instructions for a Cowork session, and `spawn_agent` (or, on a
+/// sub-agent's thread, its instructions). A report's thread gets its own (`report_config`).
 async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>)> {
     config.tools.retain(|t| {
-        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Report)
+        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Report | ToolExec::Agent)
             && !ws_tools::is_workspace_tool(&t.spec.name)
             && !browser_tools::is_browser_tool(&t.spec.name)
             && !reports::is_report_tool(&t.spec.name)
+            && !subagents::is_agent_tool(&t.spec.name)
     });
     // Incognito is chat only: Cowork would leave checkpoints of its edits on disk.
     if thread.incognito {
@@ -561,7 +775,10 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
         let (config, cowork) = report_config(config, &report, role, workspace)?;
         return Ok((config, Some(cowork), Some(ReportRun { report, role })));
     }
-    let Some(workspace) = workspace else { return Ok((config, None, None)) };
+    let Some(workspace) = workspace else {
+        add_subagents(&mut config, thread);
+        return Ok((config, None, None));
+    };
     let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
     let mut sandbox = state.sandbox.status().await;
     if sandbox.available {
@@ -588,7 +805,21 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
     config.tools.extend(
         browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask }),
     );
+    add_subagents(&mut config, thread);
     Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None))
+}
+
+/// A session's run can start sub-agents; a sub-agent's gets their instructions instead.
+fn add_subagents(config: &mut RunConfig, thread: &ThreadMeta) {
+    if thread.parent_id.is_some() {
+        let section = subagents::system_section();
+        config.system = Some(match config.system.take() {
+            Some(system) => format!("{system}\n\n---\n\n{section}"),
+            None => section.to_string(),
+        });
+    } else {
+        config.tools.push(RunTool { spec: subagents::spec(), exec: ToolExec::Agent, approval: Approval::Auto });
+    }
 }
 
 /// A report thread's config: the folder read-only whatever the workspace
@@ -643,8 +874,71 @@ async fn set_report_status(state: &AppState, id: &str, thread_id: &str, status: 
 /// Stop a thread's run: the model stream and any tool calls in flight.
 #[tauri::command]
 pub async fn run_cancel(state: State<'_, AppState>, thread_id: String) -> AppResult<()> {
-    state.runs.stop(&thread_id).await;
+    state.runs.stop_with_agents(&thread_id).await;
     Ok(())
+}
+
+/// Restore a checkpoint: take a session back to just before `message_id`, one
+/// of its user messages. Its run stops, every file changed from that turn on is
+/// put back as it was (as Undo does, sub-agents' changes included), and that
+/// message and everything after it are dropped. Every window gets the shorter
+/// thread as a `reset`.
+#[tauri::command]
+pub async fn thread_rewind(state: State<'_, AppState>, thread: ThreadMeta, message_id: String) -> AppResult<UndoResult> {
+    let runs = &state.runs;
+    // No run may start (or still be going) while the thread and its files change.
+    let _starting = loop {
+        let starting = runs.starting.lock().await;
+        if !runs.is_running(&thread.id) {
+            break starting;
+        }
+        drop(starting);
+        runs.stop_with_agents(&thread.id).await;
+    };
+    let mut thread = thread;
+    thread.updated_at = now_ms();
+    let messages = if thread.incognito {
+        runs.incognito.lock().unwrap().get(&thread.id).cloned().unwrap_or_default()
+    } else {
+        let store = state.store.clone();
+        let id = thread.id.clone();
+        blocking(move || Ok(store.messages(&id)?)).await?
+    };
+    let id_of = |m: &Value| m.get("id").and_then(Value::as_str).map(str::to_owned);
+    let at = messages
+        .iter()
+        .position(|m| ui::role(m) == Some("user") && id_of(m).as_deref() == Some(message_id.as_str()))
+        .ok_or_else(|| AppError::NotFound("That message is no longer in this session.".into()))?;
+    let kept = messages[..at].to_vec();
+
+    let (result, workspace_id) = if thread.incognito {
+        // Incognito sessions have no workspace, so no files to put back.
+        runs.incognito.lock().unwrap().insert(thread.id.clone(), kept.clone());
+        (UndoResult::default(), None)
+    } else {
+        // Turns are keyed by the user message that started them; the earliest
+        // dropped one that changed files is where the files go back to.
+        let dropped: HashSet<String> = messages[at..].iter().filter(|m| ui::role(m) == Some("user")).filter_map(id_of).collect();
+        let store = state.store.clone();
+        let (meta, kept) = (thread.clone(), kept.clone());
+        blocking(move || {
+            let first = store.turn_changes(&meta.id)?.into_iter().find(|t| dropped.contains(&t.turn_id));
+            let result = match first {
+                Some(turn) => workspaces::restore_since(&store, &meta.id, &turn.turn_id, None)?,
+                None => UndoResult::default(),
+            };
+            store.save_thread(&meta, Some(kept))?;
+            Ok((result, store.thread_workspace(&meta.id)?.or(meta.workspace_id.clone())))
+        })
+        .await?
+    };
+
+    runs.send(RunFrame::Op { thread_id: thread.id.clone(), op: Op::Reset { messages: kept } });
+    runs.send(RunFrame::Saved { thread: thread.clone() });
+    if let Some(workspace_id) = workspace_id.filter(|_| !result.restored.is_empty() || !result.failed.is_empty()) {
+        runs.send(RunFrame::FilesChanged { thread_id: thread.id, workspace_id });
+    }
+    Ok(result)
 }
 
 /// "Send now": the messages steering a thread's run join it at once, ending

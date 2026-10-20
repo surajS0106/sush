@@ -22,6 +22,8 @@ export interface SushMetadata {
   paused?: boolean;
   /** On the "continue" message Resume adds when a reply stopped mid-text. */
   resumed?: boolean;
+  /** On the message that brings a background sub-agent's report (`sush_core::agent::subagents::report_message`). */
+  subagentReport?: { callId: string; description: string; status: "done" | "failed" };
 }
 
 /** A provider-run tool (web search/fetch) and the pages it returned. */

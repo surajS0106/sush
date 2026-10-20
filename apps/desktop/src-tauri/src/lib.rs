@@ -71,6 +71,8 @@ pub fn run() {
             runs::runs_subscribe,
             runs::run_start,
             runs::run_cancel,
+            runs::agent_spawn,
+            runs::thread_rewind,
             runs::run_interrupt,
             runs::tool_result,
             workspaces::workspaces_list,

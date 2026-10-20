@@ -1,3 +1,4 @@
+import type { DynamicToolUIPart } from "ai";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
@@ -5,6 +6,7 @@ import {
   CornerDownRightIcon,
   FolderKanbanIcon,
   GhostIcon,
+  HistoryIcon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -22,7 +24,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
-import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
+import { usePromptInputController, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { ActivityGroup, groupParts } from "@/components/activity-group";
 import { BranchCard, BranchChip, latestBranchCall } from "@/components/branch-card";
@@ -30,6 +32,7 @@ import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/
 import { Composer } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
+import { AgentTeam, SubagentReport, withTeams } from "@/components/subagents";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
 import { FileChanges } from "@/components/file-changes";
 import { SessionOptions } from "@/components/session-options";
@@ -63,6 +66,7 @@ import {
   editMessage,
   regenerate,
   respond,
+  restoreCheckpoint,
   resume,
   sendMessage,
   sendQueued,
@@ -172,6 +176,30 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     const files = message.parts.filter((p) => p.type === "file");
     editMessage(id, message.id, text, files);
   };
+
+  // Restoring a checkpoint goes back to just before a user message: the run
+  // stops, it and everything after it go, and in Cowork the files changed
+  // since are put back. Its text returns to the composer to edit or send again.
+  const { textInput } = usePromptInputController();
+  const restore = (message: SushUIMessage) => {
+    const at = messages.findIndex((m) => m.id === message.id);
+    if (at < 0) return;
+    const dropped = new Set(messages.slice(at).filter((m) => m.role === "user").map((m) => m.id));
+    const files = new Set([...turnChanges].filter(([turnId]) => dropped.has(turnId)).flatMap(([, paths]) => paths));
+    const what = files.size > 0 ? ` and put back the ${files.size === 1 ? "file" : `${files.size} files`} changed since` : "";
+    if (!window.confirm(`Go back to before this message? This removes it and everything after it${what}.`)) return;
+    const text = message.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n\n");
+    restoreCheckpoint(id, message.id)
+      .then((r) => {
+        if (!textInput.value.trim()) textInput.setInput(text);
+        if (r.failed.length > 0) toast.error(`Couldn’t restore ${r.failed.length} file(s)`, { description: r.failed.join("\n") });
+        else toast.success("Checkpoint restored", r.restored.length > 0 ? { description: `Put back ${r.restored.length === 1 ? r.restored[0] : `${r.restored.length} files`}` } : undefined);
+      })
+      .catch((e) => toast.error("Couldn’t restore the checkpoint", { description: errorMessage(e) }));
+  };
+  // Messages only redraw when what they show changes, so they call the latest `restore` through this.
+  const restoreRef = useRef(restore);
+  restoreRef.current = restore;
 
   // Providers served from this machine (Ollama, LM Studio) cost nothing per token.
   const localProviders = useMemo(
@@ -318,6 +346,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               onRegenerate={() => regenerate(id, message.id)}
               canEdit={!busy}
               onEdit={(text) => edit(message, text)}
+              onRestore={() => restoreRef.current(message)}
               // Only the latest turn's questions can still be answered.
               canAnswer={!busy && message.id === last?.id}
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
@@ -571,6 +600,8 @@ interface ChatMessageProps {
   onRegenerate: () => void;
   canEdit: boolean;
   onEdit: (text: string) => void;
+  /** Go back to before this user message (the session and, in Cowork, its files). */
+  onRestore: () => void;
   canAnswer: boolean;
   /** A waiting tool call answered in its card (ask_user, skill_save, a denial). */
   onToolResult: (toolCallId: string, result: ToolResult) => void;
@@ -672,6 +703,7 @@ const ChatMessage = memo(function ChatMessage({
   onRegenerate,
   canEdit,
   onEdit,
+  onRestore,
   canAnswer,
   onToolResult,
   onApprove,
@@ -691,6 +723,8 @@ const ChatMessage = memo(function ChatMessage({
   const markdownComponents = useMemo(() => citationComponents(sources), [sourceKey]);
   // Failed or aborted turns can leave an assistant message with no content.
   if (!hasVisibleContent(message)) return null;
+  // A background sub-agent's report, sent to the model as a user message.
+  if (message.metadata?.subagentReport) return <SubagentReport message={message} />;
   // The note Resume sends when a reply stopped mid-text.
   if (message.metadata?.resumed) {
     return (
@@ -785,11 +819,20 @@ const ChatMessage = memo(function ChatMessage({
   return (
     <SourcesProvider defaultExpanded={false}>
       <Message from={message.role}>
-        {groupParts(message.parts, branchCall).map((item) =>
+        {withTeams(groupParts(message.parts, branchCall), message.parts).map((item) =>
           Array.isArray(item) ? (
             <ActivityGroup key={`${message.id}-g${item[0]}`} parts={item.map((i) => message.parts[i])}>
               {item.map((i) => renderPart(message.parts[i], i))}
             </ActivityGroup>
+          ) : typeof item === "object" ? (
+            <AgentTeam
+              key={`${message.id}-t${item.team[0]}`}
+              threadId={threadId}
+              parts={item.team.map((i) => message.parts[i] as DynamicToolUIPart)}
+              before={message.parts.slice(0, item.team[0])}
+              after={message.parts.slice(item.team[item.team.length - 1] + 1)}
+              streaming={streaming}
+            />
           ) : (
             renderPart(message.parts[item], item)
           ),
@@ -806,6 +849,9 @@ const ChatMessage = memo(function ChatMessage({
                 <PencilIcon className="size-3.5" />
               </MessageAction>
             )}
+            <MessageAction tooltip="Restore checkpoint" onClick={onRestore}>
+              <HistoryIcon className="size-3.5" />
+            </MessageAction>
           </MessageActions>
         )}
         {message.role === "assistant" && !streaming && text && (

@@ -182,6 +182,19 @@ html[data-resizing] * {
   [data-pixel-loader] > * { animation: none !important; }
 }
 
+/* Sub-agent graph (components/subagents.tsx): work flowing along a connector. */
+@keyframes flow-down {
+  to { background-position: 0 8px; }
+}
+
+@keyframes flow-right {
+  to { background-position: 8px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-flow] { animation: none !important; }
+}
+
 /* AskUserCard (components/ask-user-card.tsx) entrances. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }

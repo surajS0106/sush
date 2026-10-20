@@ -10,7 +10,7 @@
 
 import { Channel } from "@tauri-apps/api/core";
 import type { FileUIPart } from "ai";
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
@@ -24,7 +24,9 @@ import {
   createStore,
   getAskUser,
   getConversations,
+  getSubagentThread,
   getTarget,
+  subagentThreadIds,
   showMessages,
   subscribeConversations,
   threadMeta,
@@ -65,7 +67,7 @@ const savedViews = new WeakMap<SushUIMessage[], ThreadView>();
 
 /** A view of the saved conversation; cached so `useSyncExternalStore` sees a stable value. */
 function saved(id: string): ThreadView {
-  const messages = getConversations().find((c) => c.id === id)?.messages ?? EMPTY;
+  const messages = (getConversations().find((c) => c.id === id) ?? getSubagentThread(id))?.messages ?? EMPTY;
   let view = savedViews.get(messages);
   if (!view) savedViews.set(messages, (view = { messages, status: "ready" }));
   return view;
@@ -191,7 +193,7 @@ export async function initSessions() {
 
 /** The model a conversation's next request goes to. */
 export function sessionTarget(id: string): ModelTarget | null {
-  return targets.get(id) ?? getConversations().find((c) => c.id === id)?.target ?? getTarget();
+  return targets.get(id) ?? (getConversations().find((c) => c.id === id) ?? getSubagentThread(id))?.target ?? getTarget();
 }
 
 export function setSessionTarget(id: string, target: ModelTarget) {
@@ -328,11 +330,74 @@ export function editMessage(id: string, messageId: string, text: string, files: 
   void start(id, { type: "send", message, replace: messageId }, messages);
 }
 
+/**
+ * Restore the checkpoint before a user message: stop the run, put back the
+ * files changed since (in a Cowork session), and drop that message and
+ * everything after it. Every window gets the shorter thread from Rust.
+ */
+export async function restoreCheckpoint(id: string, messageId: string) {
+  const thread = threadMeta(id);
+  if (!thread) throw new Error("This session is gone.");
+  return api.threadRewind(thread, messageId);
+}
+
 /** Ask again for an assistant message (by default the last one). */
 export function regenerate(id: string, messageId?: string) {
   setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
   void start(id, { type: "regenerate", messageId: messageId ?? null }, current(id));
 }
+
+/**
+ * Add an agent to a reply's agent graph: it starts at once, in the background,
+ * and its report reaches the lead as a message when it's done. Its call id
+ * (`added-<anchor>-<time>`) ties it to the graph whose first call is `anchor`.
+ */
+export function addAgent(id: string, anchor: string, task: string, others: string[]) {
+  const thread = threadMeta(id);
+  if (!thread) return;
+  const messages = current(id);
+  // The turn the graph belongs to: the user message before the reply that started it.
+  const at = messages.findIndex((m) => m.parts.some((p) => p.type === "dynamic-tool" && p.toolCallId === anchor));
+  const turn = messages.slice(0, at < 0 ? messages.length : at).findLast((m) => m.role === "user" && !m.metadata?.subagentReport);
+  const request = turn?.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n").trim();
+  const prompt = [
+    task.trim(),
+    request && `This is part of what the user asked for:\n<request>\n${request}\n</request>`,
+    others.length > 0 && `Other agents already cover these, so don't repeat their work:\n${others.map((o) => `- ${o}`).join("\n")}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const callId = `added-${anchor}-${Date.now()}`;
+  const childId = `${id}:${callId}`;
+  // Shown at once; the run's first update replaces it with the same.
+  setView(childId, () => ({ messages: [userMessage(crypto.randomUUID(), prompt, [])], status: "submitted" }));
+  void (async () => {
+    try {
+      await api.agentSpawn(thread, runConfig(id, messages), callId, turn?.id ?? "", prompt);
+    } catch (e) {
+      setView(childId, (v) => ({ ...v, status: "error", error: errorMessage(e) }));
+      toast.error("Couldn’t start the agent", { description: errorMessage(e) });
+    }
+  })();
+}
+
+/** Agents added to the graph whose first call is `anchor` (`addAgent`), by call id, oldest first. */
+export function useAddedAgents(id: string, anchor: string): string[] {
+  const prefix = `${id}:added-${anchor}-`;
+  const key = useSyncExternalStore(views.subscribe, () => {
+    const ids = new Set<string>();
+    for (const t of views.get().keys()) if (t.startsWith(prefix)) ids.add(t);
+    for (const t of subagentThreadIds()) if (t.startsWith(prefix)) ids.add(t);
+    return [...ids]
+      .sort()
+      .map((t) => t.slice(id.length + 1))
+      .join("\n");
+  });
+  return useMemo(() => (key ? key.split("\n") : []), [key]);
+}
+
+/** A thread's messages as shown: live while it runs, else as saved. */
+export const threadMessages = (id: string) => current(id);
 
 /** Answer a tool call that waits for the user: an approval, a denial, or a result. */
 export function respond(id: string, callId: string, response: ToolResponse) {
@@ -379,13 +444,40 @@ export function useQueued(id: string): SushUIMessage[] {
   return useSyncExternalStore(queues.subscribe, () => queues.get().get(id) ?? NONE);
 }
 
-/** `working`: streaming or running tools. `needs-input`: waiting on an approval or an answer. */
+/** Several threads' run statuses, comma-separated ("" for a thread without a run), e.g. a reply's sub-agents. */
+export function useThreadStatuses(ids: string[]): string {
+  const key = ids.join(",");
+  return useSyncExternalStore(views.subscribe, () =>
+    key
+      .split(",")
+      .map((id) => {
+        // A run's status, "paused" for a stopped reply, or "" for a thread neither running nor saved.
+        const view = views.get().get(id);
+        const messages = view?.messages ?? getSubagentThread(id)?.messages;
+        if (!messages) return "";
+        const status = view?.status ?? "ready";
+        return status === "ready" && messages.at(-1)?.metadata?.paused ? "paused" : status;
+      })
+      .join(","),
+  );
+}
+
+/** `working`: streaming or running tools. `needs-input`: waiting on an approval or an answer, its own or a sub-agent's. */
 export type SessionStatus = "working" | "needs-input";
 
 export function useSessionStatus(id: string): SessionStatus | null {
   return useSyncExternalStore(views.subscribe, () => {
     const status = views.get().get(id)?.status;
-    return status === "submitted" || status === "streaming" ? "working" : status === "awaiting" ? "needs-input" : null;
+    // Sub-agents' threads are `<parent>:<call id>` (`sush_core::agent::subagents::child_thread_id`);
+    // ones in the background keep their session going after its reply ends.
+    let agents: SessionStatus | null = null;
+    for (const [childId, view] of views.get()) {
+      if (!childId.startsWith(`${id}:`)) continue;
+      if (view.status === "awaiting") return "needs-input";
+      if (view.status === "submitted" || view.status === "streaming") agents = "working";
+    }
+    if (status === "awaiting") return "needs-input";
+    return status === "submitted" || status === "streaming" ? "working" : agents;
   });
 }
 

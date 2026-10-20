@@ -5,7 +5,7 @@
 // each command finishing in the terminal.
 
 import { CloudIcon, CopyIcon, GitBranchIcon, GitGraphIcon, RefreshCwIcon, TagIcon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,7 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
   const rows = useMemo(() => (log ? buildRows(log) : []), [log]);
   const { cols, edges, lanes } = useMemo(() => layout(rows), [rows]);
   const width = Math.min(MAX_GRAPH_WIDTH, G.pad * 2 + (lanes - 1) * G.lane);
+  const selectedCommit = selected ? rows.find((r) => r.key === selected)?.commit : undefined;
 
   // Up/Down move between commits.
   const onKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -176,6 +177,7 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
                     you={log.you}
                     selected={selected === r.key}
                     onSelect={() => setSelected((s) => (s === r.key ? null : r.key))}
+                    onPrefetch={() => void loadCommit(workspace.id, r.key)}
                   />
                 ) : (
                   <div key={r.key} className="flex items-center gap-2 pr-3 text-muted-foreground" style={{ height: G.row }}>
@@ -199,7 +201,9 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
               </button>
             )}
           </div>
-          {selected && <CommitDetails key={selected} workspace={workspace} sha={selected} onClose={() => setSelected(null)} />}
+          {selectedCommit && (
+            <CommitDetails key={selectedCommit.sha} workspace={workspace} commit={selectedCommit} onClose={() => setSelected(null)} />
+          )}
         </>
       )}
     </section>
@@ -219,14 +223,19 @@ function CommitRow({
   you,
   selected,
   onSelect,
+  onPrefetch,
 }: {
   commit: LogCommit;
   color: string;
   you: string | null;
   selected: boolean;
   onSelect: () => void;
+  onPrefetch: () => void;
 }) {
   const author = you && c.author === you ? "You" : c.author;
+  // Only a pause on the row reads ahead, not every row the pointer crosses.
+  const hover = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(hover.current), []);
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
@@ -236,6 +245,11 @@ function CommitRow({
           aria-selected={selected}
           data-sha={c.sha}
           onClick={onSelect}
+          onPointerEnter={() => {
+            clearTimeout(hover.current);
+            hover.current = setTimeout(onPrefetch, PREFETCH_MS);
+          }}
+          onPointerLeave={() => clearTimeout(hover.current)}
           title={`${c.subject}\n${c.sha.slice(0, 7)} · ${c.author} · ${new Date(c.time * 1000).toLocaleString()}`}
           className={cn(
             "flex w-full items-center gap-2 rounded-l-md pr-3 pl-1 text-left outline-none focus-visible:bg-muted",
@@ -315,52 +329,81 @@ function RefChips({ refs, color }: { refs: GitRef[]; color: string }) {
   );
 }
 
-function CommitDetails({ workspace, sha, onClose }: { workspace: Workspace; sha: string; onClose: () => void }) {
-  const [detail, setDetail] = useState<CommitDetail | null>(null);
+/** Commits never change, so each one's details are read from git once. */
+const details = new Map<string, Promise<CommitDetail>>();
+const loaded = new Map<string, CommitDetail>();
+
+function loadCommit(workspaceId: string, sha: string): Promise<CommitDetail> {
+  const key = `${workspaceId}:${sha}`;
+  let p = details.get(key);
+  if (!p) {
+    p = api.workspaceGitCommit(workspaceId, sha);
+    details.set(key, p);
+    p.then(
+      (d) => loaded.set(key, d),
+      () => details.delete(key),
+    );
+  }
+  return p;
+}
+
+/** Hovering a row this long reads its details ahead of the click. */
+const PREFETCH_MS = 120;
+/** A read that finishes sooner than this never shows the loader. */
+const LOADER_DELAY_MS = 150;
+
+function CommitDetails({ workspace, commit, onClose }: { workspace: Workspace; commit: LogCommit; onClose: () => void }) {
+  const [detail, setDetail] = useState(() => loaded.get(`${workspace.id}:${commit.sha}`) ?? null);
   const [error, setError] = useState<string | null>(null);
+  const [slow, setSlow] = useState(false);
   useEffect(() => {
+    if (detail) return;
     let live = true;
-    api
-      .workspaceGitCommit(workspace.id, sha)
+    const timer = setTimeout(() => live && setSlow(true), LOADER_DELAY_MS);
+    loadCommit(workspace.id, commit.sha)
       .then((d) => live && setDetail(d))
       .catch((e) => live && setError(errorMessage(e)));
     return () => {
       live = false;
+      clearTimeout(timer);
     };
-  }, [workspace.id, sha]);
+  }, [workspace.id, commit.sha, detail]);
 
-  const [subject, ...rest] = (detail?.message ?? "").split("\n");
+  // The row already has the subject, author, time and SHA: show them at once.
+  const [subject, ...rest] = (detail?.message ?? commit.subject).split("\n");
   const body = rest.join("\n").trim();
   const added = detail?.files.reduce((n, f) => n + (f.additions ?? 0), 0) ?? 0;
   const removed = detail?.files.reduce((n, f) => n + (f.deletions ?? 0), 0) ?? 0;
 
   return (
     <div className="flex max-h-[45%] min-h-24 shrink-0 flex-col border-t">
-      {!detail ? (
-        error ? (
-          <p className="p-3 text-sm text-muted-foreground">{error}</p>
+      <div className="min-h-0 overflow-y-auto p-3 text-sm">
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium">{subject}</p>
+          <Button variant="ghost" size="icon" className="-mt-1 -mr-1 size-6" aria-label="Close commit" onClick={onClose}>
+            <XIcon className="size-3.5" />
+          </Button>
+        </div>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span title={detail?.email}>{detail?.author ?? commit.author}</span>·
+          <span>{new Date(commit.time * 1000).toLocaleString()}</span>·
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 font-mono hover:text-foreground"
+            title="Copy commit SHA"
+            onClick={() => copy(commit.sha, "commit SHA")}
+          >
+            {commit.sha.slice(0, 7)} <CopyIcon className="size-3" />
+          </button>
+        </p>
+        {!detail ? (
+          error ? (
+            <p className="mt-3 text-xs text-muted-foreground">{error}</p>
+          ) : (
+            slow && <LoadingState label="Reading the files" className="mt-3" />
+          )
         ) : (
-          <LoadingState label="Reading the commit" className="m-3" />
-        )
-      ) : (
-        <div className="min-h-0 overflow-y-auto p-3 text-sm">
-          <div className="flex items-start gap-2">
-            <p className="min-w-0 flex-1 font-medium">{subject}</p>
-            <Button variant="ghost" size="icon" className="-mt-1 -mr-1 size-6" aria-label="Close commit" onClick={onClose}>
-              <XIcon className="size-3.5" />
-            </Button>
-          </div>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-            <span title={detail.email}>{detail.author}</span>·<span>{new Date(detail.time * 1000).toLocaleString()}</span>·
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 font-mono hover:text-foreground"
-              title="Copy commit SHA"
-              onClick={() => copy(detail.sha, "commit SHA")}
-            >
-              {detail.sha.slice(0, 7)} <CopyIcon className="size-3" />
-            </button>
-          </p>
+          <>
           {body && <p className="mt-2 text-xs whitespace-pre-wrap text-muted-foreground">{body}</p>}
           <p className="mt-3 mb-1 text-xs text-muted-foreground">
             {detail.files.length} {detail.files.length === 1 ? "file" : "files"} changed
@@ -402,8 +445,9 @@ function CommitDetails({ workspace, sha, onClose }: { workspace: Workspace; sha:
               );
             })}
           </ul>
-        </div>
-      )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

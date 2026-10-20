@@ -95,6 +95,9 @@ export function ToolPart(props: ToolPartProps) {
       return <BrowserPart {...props} />;
     case "image":
       return <ImagePart part={props.part} />;
+    case "agent":
+      // Shown with the rest of its step's sub-agents (`components/subagents.tsx`).
+      return null;
     default:
       return <ConnectorPart {...props} />;
   }

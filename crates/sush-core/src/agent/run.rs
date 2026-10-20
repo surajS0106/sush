@@ -13,6 +13,11 @@
 //! at once: it ends the step or tool calls in progress, and the calls it cuts
 //! short get an [`INTERRUPTED`] result. A stopped run marks its reply `paused`;
 //! `Resume` carries on from there.
+//!
+//! Sub-agents (`ToolExec::Agent`) are the exception: a steer doesn't wait for
+//! them, and an interrupt doesn't cut them short. The host moves them to the
+//! background (`RunHost::detach`), they get a result saying so, and the
+//! message joins at once; the host delivers each report later.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -107,6 +112,9 @@ pub enum ToolExec {
     /// A report run's own tools (`crate::reports`): its diff and recording
     /// its results. Only the host adds these.
     Report,
+    /// `spawn_agent`: a sub-agent's run on a thread of its own
+    /// (`super::subagents`). Only the host adds it.
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +172,12 @@ pub trait RunHost: Send + Sync {
     /// setting; hosts can decide per call (e.g. reading a secrets file).
     fn approval(&self, _call: &ToolCall, tool: &RunTool) -> Approval {
         tool.approval
+    }
+    /// Move a sub-agent's call still running out of the run, which carries on
+    /// without it; the host delivers its outcome later. Returns the call's
+    /// result for now, or None to keep waiting (e.g. it just finished).
+    fn detach(&self, _call: &ToolCall) -> Option<Value> {
+        None
     }
 }
 
@@ -503,7 +517,10 @@ impl Runner<'_> {
         let mut running = FuturesUnordered::new();
         let mut in_flight: HashMap<String, (usize, ToolCall)> = HashMap::new();
         // Cancels the running calls on an interrupt; a stop cancels it too.
+        // Sub-agents only stop on a stop: an interrupt moves them to the background.
         let interrupt = self.cancel.child_token();
+        let stop = self.cancel.clone();
+        let token = |exec: &ToolExec| if *exec == ToolExec::Agent { stop.child_token() } else { interrupt.child_token() };
 
         let start = |index: usize, call: ToolCall, exec: ToolExec, cancel: CancellationToken| {
             host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: true });
@@ -521,7 +538,8 @@ impl Runner<'_> {
                 ))),
                 Some(t) if host.approval(&call, &t) == Approval::Auto => {
                     in_flight.insert(call.id.clone(), (index, call.clone()));
-                    running.push(start(index, call, t.exec, interrupt.child_token()));
+                    let cancel = token(&t.exec);
+                    running.push(start(index, call, t.exec, cancel));
                 }
                 Some(_) => {
                     waiting.insert(call.id.clone(), (index, call));
@@ -538,7 +556,8 @@ impl Runner<'_> {
                     ToolResponse::Approve => match self.tool(&call.name).map(|t| t.exec.clone()) {
                         Some(exec) => {
                             in_flight.insert(call.id.clone(), (index, call.clone()));
-                            running.push(start(index, call, exec, interrupt.child_token()));
+                            let cancel = token(&exec);
+                            running.push(start(index, call, exec, cancel));
                         }
                         None => self.set_result(index, &call, Err(format!("Unknown tool {}.", call.name))),
                     },
@@ -556,7 +575,8 @@ impl Runner<'_> {
                     let (index, call) = waiting.remove(&id).expect("listed above");
                     let exec = self.tool(&call.name).expect("checked above").exec.clone();
                     in_flight.insert(call.id.clone(), (index, call.clone()));
-                    running.push(start(index, call, exec, interrupt.child_token()));
+                    let cancel = token(&exec);
+                    running.push(start(index, call, exec, cancel));
                 }
             }
             // A stop wins over anything that finished at the same moment.
@@ -566,6 +586,25 @@ impl Runner<'_> {
                     self.set_result(index, &call, Err(STOPPED.into()));
                 }
                 return Resolved::Cancelled;
+            }
+            // The user said something while sub-agents work: rather than wait for
+            // them all, they carry on in the background and the message can join.
+            // A background agent's report waits for the step boundary like any message.
+            let from_user = |m: &Value| m.get("metadata").and_then(|meta| meta.get(super::subagents::REPORT)).is_none();
+            if self.steers.iter().any(from_user) {
+                let agents: Vec<String> = in_flight
+                    .iter()
+                    .filter(|(_, (_, call))| self.tool(&call.name).is_some_and(|t| t.exec == ToolExec::Agent))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                for id in agents {
+                    let (index, call) = in_flight[&id].clone();
+                    if let Some(result) = host.detach(&call) {
+                        in_flight.remove(&id);
+                        self.host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: false });
+                        self.set_result(index, &call, Ok(result));
+                    }
+                }
             }
             // "Send now": the calls still going or waiting give way to the user's message.
             if self.take_interrupt() {
@@ -579,10 +618,11 @@ impl Runner<'_> {
                 }
                 return Resolved::Done;
             }
-            if waiting.is_empty() && running.is_empty() {
+            // Calls moved to the background may still be in `running`; they're dropped here.
+            if waiting.is_empty() && in_flight.is_empty() {
                 return Resolved::Done;
             }
-            if running.is_empty() {
+            if in_flight.is_empty() {
                 if !inbox_open {
                     // Nobody can answer any more.
                     return Resolved::Cancelled;
@@ -593,7 +633,10 @@ impl Runner<'_> {
                 biased;
                 _ = self.cancel.cancelled() => continue,
                 Some((index, call, result)) = running.next(), if !running.is_empty() => {
-                    in_flight.remove(&call.id);
+                    // Moved to the background: it already has its result.
+                    if in_flight.remove(&call.id).is_none() {
+                        continue;
+                    }
                     self.host.emit(RunEvent::ToolRunning { call_id: call.id.clone(), running: false });
                     self.set_result(index, &call, result);
                 }
@@ -706,6 +749,9 @@ mod tests {
                 tool.approval
             }
         }
+        fn detach(&self, call: &ToolCall) -> Option<Value> {
+            (call.name == "agent_tool").then(|| json!("in the background"))
+        }
     }
 
     fn spec(name: &str) -> ToolSpec {
@@ -719,6 +765,7 @@ mod tests {
             tools: tools([
                 (spec("auto_tool"), ToolExec::Client, Approval::Auto),
                 (spec("ask_tool"), ToolExec::Connector { connector_id: "c".into(), tool: "t".into() }, Approval::Ask),
+                (spec("agent_tool"), ToolExec::Agent, Approval::Auto),
             ]),
             ..Default::default()
         }
@@ -876,6 +923,50 @@ mod tests {
         assert_eq!(ui::parts(&messages[1])[1]["errorText"], INTERRUPTED);
         assert_eq!(messages[2]["id"], "now");
         assert_eq!(ui::parts(&messages[3])[1]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn a_steer_moves_running_sub_agents_to_the_background() {
+        let mut host = FakeHost::new(vec![vec![call("agent_tool")], vec![text("ok")]]);
+        Arc::get_mut(&mut host).unwrap().hang_tools = true;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while host.executed.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        // Even "Send now" leaves the sub-agent going.
+        tx.send(steer("meanwhile")).unwrap();
+        tx.send(Inbox::Interrupt).unwrap();
+        let messages = runner.await.unwrap();
+
+        assert_eq!(ui::parts(&messages[1])[1]["output"], "in the background");
+        assert_eq!(messages[2]["id"], "meanwhile");
+        assert_eq!(ui::parts(&messages[3])[1]["text"], "ok");
+    }
+
+    #[tokio::test]
+    async fn a_report_waits_for_the_sub_agents_still_working() {
+        let mut host = FakeHost::new(vec![vec![call("agent_tool")], vec![text("ok")]]);
+        Arc::get_mut(&mut host).unwrap().hang_tools = true;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while host.executed.lock().unwrap().is_empty() {
+            tokio::task::yield_now().await;
+        }
+        let report = json!({ "id": "r", "role": "user", "parts": [], "metadata": { super::super::subagents::REPORT: {} } });
+        tx.send(Inbox::Steer { message: report, config: None }).unwrap();
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!runner.is_finished());
+        assert_eq!(host.requests.lock().unwrap().len(), 1, "still waiting on the sub-agent");
+        runner.abort();
     }
 
     #[tokio::test]

@@ -14,6 +14,7 @@
 //   artifact_write  runs immediately: the chat shows it as a versioned artifact (artifacts.ts)
 //   slides_write    runs immediately: the deck opens in the slides panel (slides.ts)
 //   image_generate  runs immediately with the image model from Settings → Images (images.ts)
+//   spawn_agent     offered and run by Rust: a sub-agent on a thread of its own (components/subagents.tsx)
 //   <connector>__*  sent to an MCP connector, after the user approves
 
 import { useSyncExternalStore } from "react";
@@ -239,6 +240,7 @@ export type ToolKind =
   | "image"
   | "workspace"
   | "browser"
+  | "agent"
   | "connector"
   | "unknown";
 
@@ -261,6 +263,9 @@ export const WORKSPACE_TOOLS = new Set([
 /** The Cowork tool whose latest call shows as the live pull request card (`components/branch-card.tsx`). */
 export const BRANCH_STATUS = "branch_status";
 
+/** Starts a sub-agent. Rust offers and runs it (`sush_core::agent::subagents`). */
+export const SPAWN_AGENT = "spawn_agent";
+
 /** Cowork's built-in browser. Rust offers and runs them (`sush_core::browser`). */
 export const BROWSER_TOOLS = new Set(["browser_navigate", "browser_read", "browser_click", "browser_type"]);
 
@@ -268,6 +273,7 @@ export function toolKind(name: string): ToolKind {
   if (name === ASK_USER) return "ask-user";
   if (WORKSPACE_TOOLS.has(name)) return "workspace";
   if (BROWSER_TOOLS.has(name)) return "browser";
+  if (name === SPAWN_AGENT) return "agent";
   if (name === MEMORY_WRITE || name === MEMORY_DELETE || name === MEMORY_SAVE) return "memory";
   if (name === CHATS_SEARCH || name === CHAT_READ) return "chats";
   if (name === SKILL) return "skill";
