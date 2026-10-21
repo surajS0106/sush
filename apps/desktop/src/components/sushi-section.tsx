@@ -8,10 +8,11 @@ import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useState } from "react";
 
 import { Mascot, MascotSprite, type MascotStage } from "@/components/mascot";
-import { Group, Page } from "@/components/settings-layout";
+import { Group, Page, Setting } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { AVATARS } from "@/lib/avatars";
-import { MASCOTS, setMascot, useMascot } from "@/lib/mascot";
+import { MASCOTS, setMascot, setMascotSounds, useMascot, useMascotSounds } from "@/lib/mascot";
 import { cn } from "@/lib/utils";
 
 /** The tile color behind each character: the avatar's own, salmon pink for Sushi. */
@@ -20,6 +21,7 @@ const tint = (key: string) => AVATARS.find((a) => a.key === key)?.background ?? 
 export function SushiSection() {
   const current = useMascot();
   const label = MASCOTS.find((m) => m.key === current)?.label ?? "Sushi";
+  const sounds = useMascotSounds();
 
   return (
     <Page>
@@ -28,6 +30,9 @@ export function SushiSection() {
           Your little buddy on the composer. It watches you type, runs while Sush works and naps when you're away.
         </p>
         <Stage kind={current} label={label} />
+        <Setting title="Sound effects" description={`Let ${label} make noise, like the thud when it falls over.`}>
+          <Switch checked={sounds} onCheckedChange={setMascotSounds} aria-label="Sound effects" />
+        </Setting>
       </Group>
       <Group title="Choose a character">
         <div role="radiogroup" aria-label="Mascot" className="grid grid-cols-4 gap-2 pt-2 md:grid-cols-5">
@@ -67,7 +72,7 @@ function Stage({ kind, label }: { kind: string; label: string }) {
         />
       </div>
       <div className="flex items-center justify-between gap-4">
-        <p className="text-xs text-muted-foreground">Click to say hi. Three quick clicks for a backflip.</p>
+        <p className="text-xs text-muted-foreground">Click to say hi. Three quick clicks for a backflip. Keep going and see what happens.</p>
         <Button variant="outline" size="sm" onClick={() => setBusy((b) => !b)} aria-pressed={busy}>
           {busy ? <SquareIcon /> : <PlayIcon />} {busy ? "Stop" : "Pretend to work"}
         </Button>

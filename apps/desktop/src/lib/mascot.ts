@@ -19,3 +19,10 @@ if (!MASCOTS.some((m) => m.key === mascot.get())) mascot.set(DEFAULT_MASCOT);
 
 export const useMascot = () => useSyncExternalStore(mascot.subscribe, mascot.get);
 export const setMascot = (key: string) => mascot.set(key);
+
+// Whether the mascot makes sounds (its fall when clicked too much: lib/sfx.ts).
+const sounds = createStore<boolean>("sush.mascot.sounds", true);
+
+export const mascotSounds = () => sounds.get();
+export const useMascotSounds = () => useSyncExternalStore(sounds.subscribe, sounds.get);
+export const setMascotSounds = (on: boolean) => sounds.set(on);

@@ -8,14 +8,18 @@
 // screen lighting its face) and writing the answer (typing faster, a glint
 // sweeping the lenses). When the reply is done the glasses lift off with a
 // little hop. Clicking it hops
-// and pops a heart; three quick clicks do a backflip. Switching characters
+// and pops a heart; three quick clicks do a backflip, and a whole flurry of
+// them leaves it dizzy: it reels, eyes rolling, falls flat on its back with a
+// "whoa" and a thud (`lib/sfx.ts`) and lies there seeing stars to birdsong,
+// then springs back up. Switching characters
 // pops the new one in with a puff of sparkles. Purely decorative.
 
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
-import { DEFAULT_MASCOT, useMascot } from "@/lib/mascot";
+import { DEFAULT_MASCOT, mascotSounds, useMascot } from "@/lib/mascot";
+import { audio, fallSounds } from "@/lib/sfx";
 import { cn } from "@/lib/utils";
 
 // One character per pixel; "." is transparent. Eyes and legs are drawn
@@ -94,6 +98,22 @@ const COLORS: Record<string, string> = {
 const WANDER = 72;
 const WALK_SPEED = 28;
 const SLEEP_AFTER = 60_000;
+/** This many clicks within DIZZY_WINDOW ms make it dizzy. */
+const DIZZY_CLICKS = 8;
+const DIZZY_WINDOW = 3000;
+/** Eyes rolling round while dizzy, one step per frame. */
+const EYE_ROLL: Look[] = [
+  { x: 1, y: 0 },
+  { x: 1, y: 1 },
+  { x: 0, y: 1 },
+  { x: -1, y: 1 },
+  { x: -1, y: 0 },
+  { x: -1, y: -1 },
+  { x: 0, y: -1 },
+  { x: 1, y: -1 },
+];
+/** Points round an ellipse for the stars circling its head. */
+const ORBIT = Array.from({ length: 13 }, (_, i) => (i / 12) * Math.PI * 2);
 
 type Run = { x: number; y: number; w: number; fill: string };
 
@@ -365,6 +385,7 @@ function MascotBody({
   const [hearts, setHearts] = useState<number[]>([]);
   const [sparks, setSparks] = useState(entrance && !reduceMotion);
   const [ponder, setPonder] = useState(false);
+  const [dizzy, setDizzy] = useState<"reeling" | "down" | null>(null);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
@@ -375,6 +396,16 @@ function MascotBody({
   sleepingRef.current = sleeping;
   const lastActivity = useRef(Date.now());
   const clicks = useRef<number[]>([]);
+  const pokes = useRef<number[]>([]);
+  // Bumped to call off a dizzy spell in progress; set while one is going.
+  const dizzyRun = useRef(0);
+  const dizzyRef = useRef(false);
+  useEffect(
+    () => () => {
+      dizzyRun.current++;
+    },
+    [],
+  );
 
   // Blink every few seconds, at slightly random intervals, sometimes twice.
   useEffect(() => {
@@ -426,7 +457,7 @@ function MascotBody({
     window.addEventListener("pointerdown", wake);
     window.addEventListener("keydown", wake);
     const idle = setInterval(() => {
-      if (!still && !busyRef.current && !sleepingRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
+      if (!still && !busyRef.current && !sleepingRef.current && !dizzyRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
     }, 5000);
     return () => {
       cancelAnimationFrame(frame);
@@ -454,7 +485,7 @@ function MascotBody({
     prevMood.current = mood;
     if (busy) setSleeping(false);
     if (reduceMotion) return;
-    const settle = { y: 0, scaleX: 1, scaleY: 1, rotate: 0 };
+    const settle = { x: 0, y: 0, scaleX: 1, scaleY: 1, rotate: 0, rotateX: 0 };
     if (mood === "idle") {
       if (entrance && from === "idle") {
         // Pop in: drop from a little above, squash on landing, wobble upright.
@@ -539,9 +570,9 @@ function MascotBody({
     return () => clearTimeout(timer);
   }, [laptopOut, reduceMotion]);
 
-  // One frame counter drives both the walking legs and the typing hands.
-  const moving = walking || laptopOut;
-  const frameMs = walking ? 150 : mood === "writing" ? 90 : 120;
+  // One frame counter drives the walking legs, the typing hands and the rolling eyes.
+  const moving = walking || laptopOut || dizzy !== null;
+  const frameMs = dizzy === "reeling" ? 80 : dizzy === "down" ? 130 : walking ? 150 : mood === "writing" ? 90 : 120;
   useEffect(() => {
     if (reduceMotion || !moving) return setFrame(0);
     const id = setInterval(() => setFrame((f) => f + 1), frameMs);
@@ -550,7 +581,7 @@ function MascotBody({
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
-    if (reduceMotion || still || walking || busy || sleeping) return;
+    if (reduceMotion || still || walking || busy || sleeping || dizzy) return;
     const t = setTimeout(
       () => {
         let target = x !== 0 && Math.random() < 0.6 ? 0 : -Math.round(Math.random() * WANDER);
@@ -561,7 +592,7 @@ function MascotBody({
       9000 + Math.random() * 12000,
     );
     return () => clearTimeout(t);
-  }, [reduceMotion, still, walking, busy, sleeping, x]);
+  }, [reduceMotion, still, walking, busy, sleeping, dizzy, x]);
 
   const [walkFrom, setWalkFrom] = useState(0);
   useEffect(() => {
@@ -569,12 +600,78 @@ function MascotBody({
   }, [walking, x]);
   const walkDir = sign(x - walkFrom, 0);
 
+  // Once the last heart has floated off: reel with the eyes rolling, fall flat
+  // on its back with a "whoa" and a thud, lie there seeing stars (birds
+  // tweeting), then spring back up and shake it off. Called off (the pose
+  // settled by the mood effect, the sounds cut) if a run starts.
+  const getDizzy = async () => {
+    const run = ++dizzyRun.current;
+    const on = () => dizzyRun.current === run && !busyRef.current;
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const sounds = mascotSounds() ? fallSounds() : null;
+    dizzyRef.current = true;
+    try {
+      await wait(700);
+      if (!on()) return;
+      setDizzy("reeling");
+      await hopControls.start({
+        x: [0, -3, 3, -4, 2, 0],
+        y: 0,
+        scaleX: 1,
+        scaleY: 1,
+        rotate: [0, -10, 9, -14, 8, -18],
+        transition: { duration: 1.5, ease: "easeInOut" },
+      });
+      if (!on()) return;
+      setDizzy("down");
+      // Stiff as a board, tipping back about its feet (the top going away
+      // into the screen), bouncing once on landing.
+      sounds?.whoa();
+      const fall = hopControls.start({
+        x: 0,
+        rotate: [-18, 0, 0, 0, 0],
+        rotateX: [0, -12, 82, 68, 78],
+        y: [0, -4, 0, -3, 0],
+        transition: { duration: 0.75, times: [0, 0.2, 0.6, 0.8, 1], ease: ["easeOut", "easeIn", "easeOut", "easeIn"] },
+      });
+      const landed = setTimeout(() => on() && sounds?.thud(), 450);
+      await fall;
+      clearTimeout(landed);
+      if (!on()) return;
+      sounds?.tweets(2.8);
+      await wait(2800);
+      if (!on()) return;
+      setDizzy(null);
+      await hopControls.start({
+        rotateX: [78, 0, 0, 0],
+        y: [0, -12, 0, 0],
+        scaleY: [1, 1.1, 0.85, 1],
+        transition: { duration: 0.6, times: [0, 0.45, 0.75, 1], ease: "easeOut" },
+      });
+      if (!on()) return;
+      await hopControls.start({ rotate: [0, -7, 7, -4, 4, 0], transition: { duration: 0.5, ease: "easeInOut" } });
+    } finally {
+      sounds?.stop();
+      if (dizzyRun.current === run) {
+        dizzyRef.current = false;
+        setDizzy(null);
+      }
+    }
+  };
+
   const onClick = () => {
-    if (reduceMotion) return;
+    if (reduceMotion || dizzyRef.current) return;
     const now = Date.now();
     clicks.current = [...clicks.current.filter((t) => now - t < 900), now];
+    pokes.current = [...pokes.current.filter((t) => now - t < DIZZY_WINDOW), now];
     setHearts((h) => [...h, now]);
     if (busy) return;
+    if (pokes.current.length >= DIZZY_CLICKS) {
+      pokes.current = [];
+      clicks.current = [];
+      if (mascotSounds()) audio(); // unlocked by this click, ready when the fall begins
+      void getDizzy();
+    }
     if (clicks.current.length >= 3) {
       clicks.current = [];
       void hopControls.start({
@@ -593,8 +690,10 @@ function MascotBody({
     }
   };
 
-  const closed = sleeping || blink;
-  const look: Look = sleeping
+  const closed = !dizzy && (sleeping || blink);
+  const look: Look = dizzy
+    ? EYE_ROLL[frame % EYE_ROLL.length]
+    : sleeping
     ? { x: 0, y: 1 }
     : walking
       ? { x: walkDir, y: 0 }
@@ -659,6 +758,38 @@ function MascotBody({
           </motion.div>
         ))}
       <AnimatePresence>
+        {dizzy === "down" && (
+          // Stars circling just above it as it lies on its back, nearer ones bigger.
+          <motion.div
+            key="stars"
+            className="pointer-events-none absolute left-1/2"
+            style={{ top: height * px * 0.8 - 8 }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { delay: 0.5, duration: 0.2 } }}
+            exit={{ opacity: 0, transition: { duration: 0.15 } }}
+          >
+            {[0, 1, 2].map((i) => {
+              const phase = (i / 3) * Math.PI * 2;
+              const rx = Math.min(width * px * 0.3, 14);
+              return (
+                <motion.div
+                  key={i}
+                  className="absolute -mt-0.75 -ml-0.75"
+                  animate={{
+                    x: ORBIT.map((a) => Math.cos(a + phase) * rx),
+                    y: ORBIT.map((a) => Math.sin(a + phase) * 4),
+                    scale: ORBIT.map((a) => 0.8 + Math.sin(a + phase) * 0.3),
+                  }}
+                  transition={{ duration: 1.2, repeat: Infinity, ease: "linear" }}
+                >
+                  <Glyph rows={STAR} />
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
         {mood === "thinking" && (
           <motion.div
             key="thought"
@@ -691,7 +822,7 @@ function MascotBody({
           </motion.div>
         )}
       </AnimatePresence>
-      <motion.div animate={hopControls} style={{ transformOrigin: "50% 100%" }}>
+      <motion.div animate={hopControls} style={{ transformOrigin: "50% 100%", transformPerspective: 160 }}>
         <motion.svg
           viewBox={`0 0 ${width} ${height}`}
           width={width * px}
