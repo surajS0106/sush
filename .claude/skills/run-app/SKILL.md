@@ -26,7 +26,7 @@ In dev builds the app does **not** start the auth server itself (`auth_server.rs
    `curl -s http://localhost:3000/health`
 3. Start the app in the background: `bun run dev:app`. The first run compiles the Rust crate, including whisper.cpp, which takes several minutes. The output has ANSI colour codes, so wait for `Finished` or `target\debug\sush.exe` (not the regex `Running .*sush`), or for `error[`/`could not compile`. A compile error leaves `tauri dev` watching: fix the file and it rebuilds by itself.
 4. If port 1420 or 3000 is already taken, an earlier dev session is probably still running. Find it and ask the user before killing it.
-5. To try a shared session, start a second instance once the first has compiled (row above). It gets its own data, dev secrets and, on Windows, its own webview storage (`paths.rs`), so it signs in as a different person. Details are in the `multiplayer` skill.
+5. To try a shared session, start a second instance once the first has compiled (row above). It gets its own data, dev secrets and, on Windows, its own webview storage (`paths.rs`), so it signs in as a different person. Details are in the `multiplayer` skill. After a Rust change, `tauri dev` restarts the first instance, but the second keeps running the old binary: tell the user to close and restart it (and that a rebuild can't replace `sush.exe` while instance B holds it open on Windows).
 
 ## Stopping
 

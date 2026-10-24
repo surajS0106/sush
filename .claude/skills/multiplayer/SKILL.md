@@ -5,7 +5,7 @@ description: Work on Sush Multiplayer, the live shared sessions where others wat
 
 # Sush Multiplayer
 
-Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the user chose. §2 is the wire protocol, §3 maps each intent to a permission check and a code path, §5 is the threat model, and §6 lists phases 2–4 file by file. Phase 1 (watch only, LAN relay) was built and tested by hand on 2026-10-25. Phase 2 (roles, steering, suggestions, approvals, comments, audit log) was built the same day; the plan's "Phase 2 as built" table records the choices made while building it.
+Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the user chose. §2 is the wire protocol, §3 maps each intent to a permission check and a code path, §5 is the threat model, and §6 lists phases 2–4 file by file. Phase 1 (watch only, LAN relay) was built and tested by hand on 2026-10-25. Phase 2 (roles, steering, suggestions, approvals, comments, audit log) was built, tested by hand and pushed the same day; the plan's "Phase 2 as built" table records the choices made while building it.
 
 ## The rule that must not break
 
@@ -73,6 +73,15 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
 2. Instance B, from the repo root in PowerShell, once A has compiled (it reuses A's Vite on 1420): `$env:SUSH_PROFILE='b'; .\target\debug\sush.exe`. Its window is titled "Sush (b)" and it has its own data (`%APPDATA%\com.sush.app-b`), dev secrets and WebView2 storage, so its own login. macOS shares webview storage between instances, so use two machines there.
 3. In each instance, go to Settings → Sharing or the share dialog and choose **Use the account I'm signed in with**. Then in A: session menu → **Share live…** → start and copy the link. In B: **Shared with you** → **+** → paste → Join. In A: **Let in**.
 4. For two machines on a LAN, run `bun run dev:relay` (all interfaces, port 3000) on the host instead of `dev:server`. Everyone, including the host, uses `http://<host-ip>:3000`, because links carry the relay's origin.
+5. Phase 2 checks (all passed by hand on 2026-10-25). Give A's Cowork session auto-edits, and use a folder with a `.env`. Join B with **Link to suggest**:
+   - B's suggestion reaches A's queue. A sends it on (edited); the message shows B's avatar and "sent by A".
+   - An edit asks A despite auto-edits (the floor). B sees "Waiting for A".
+   - Make B **Drives**. B's messages steer; mid-run they queue and "Send now" works. B can pause and resume, and answers `ask_user` ("Answered by B").
+   - Edits wait for A until **File changes** is delegated, then B gets the card ("Approved by B"). Two clicks on one card: the second gets "Already answered by …". `.env` reads stay A's.
+   - B's images go through; other files and ones over 2 MB are refused.
+   - Comments show on both sides; a viewer can't comment. The Activity log lists it all.
+   - Removing B (or ending the share) with an edit card waiting lets the edit run by itself.
+   - B reloads and catches up.
 
 ## Gotchas met so far
 
@@ -81,6 +90,9 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
 - `app.state::<AppState>().x.lock()` held across later lines fails with E0716 (the temporary `State` is dropped). Bind `let state = app.state::<AppState>();` first.
 - A type guard that also checks a field (`isLive`) must say so in its predicate type, or TypeScript narrows the other branch to `never`.
 - Server modules import `db` from `share/db.ts`, which re-exports it from `auth.ts`.
+- A `String` moved into a `blocking(move || …)` closure can't be printed afterwards in the same task (E0382). Clone it for the closure first.
+- The relay drops guest frames over its cap (8 MB) with `too-large`. Anything bigger a guest sends needs chunking, not a higher cap.
+- After a Rust fix, instance B keeps the old binary until restarted by hand.
 
 ## Verify
 
