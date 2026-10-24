@@ -25,8 +25,14 @@ function writeToken(token: string | null) {
   }
 }
 
+/** The server accounts live on. In dev it doubles as the relay for shared sessions. */
+export const AUTH_URL = import.meta.env.VITE_AUTH_URL ?? "http://localhost:3000";
+
+/** This app's session token, to share through the same server without signing in again (`lib/share.ts`). */
+export const getAuthToken = readToken;
+
 export const authClient = createAuthClient({
-  baseURL: import.meta.env.VITE_AUTH_URL ?? "http://localhost:3000",
+  baseURL: AUTH_URL,
   fetchOptions: {
     auth: { type: "Bearer", token: readToken },
     onSuccess: (ctx) => {

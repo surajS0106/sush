@@ -7,6 +7,10 @@
 // A message sent while a run works steers it: it waits in the thread's queue
 // until the run adds it at its next step boundary. Stopping pauses a reply;
 // `resume` carries on with it.
+//
+// A session someone shared with this app (`shared:<id>`, `lib/share.ts`)
+// arrives as the same frames and shows the same way, but only to watch: every
+// action here does nothing for it.
 
 import { Channel } from "@tauri-apps/api/core";
 import type { FileUIPart } from "ai";
@@ -34,6 +38,7 @@ import {
 import {
   api,
   errorMessage,
+  isSharedThread,
   type RunAction,
   type RunConfig,
   type RunFrame,
@@ -176,7 +181,31 @@ function onFrame(frame: RunFrame) {
     case "report":
       applyReport(frame.report);
       break;
+    case "share":
+    case "share-gone":
+      shareFrames?.(frame);
+      break;
   }
+}
+
+/** `lib/share.ts` follows share frames; it registers once the modules have loaded (`initShares`). */
+let shareFrames: ((frame: Extract<RunFrame, { type: "share" | "share-gone" }>) => void) | null = null;
+export function onShareFrames(handler: NonNullable<typeof shareFrames>) {
+  shareFrames = handler;
+}
+
+/** Show a joined share's thread as it stands (after a reload). */
+export function seedThread(id: string, view: ThreadView) {
+  setView(id, () => view);
+}
+
+/** Drop a thread and its sub-agents' threads from view: a share this app left. */
+export function forgetThreads(id: string) {
+  views.set((prev) => {
+    const next = new Map(prev);
+    for (const key of prev.keys()) if (key === id || key.startsWith(`${id}:`)) next.delete(key);
+    return next;
+  });
 }
 
 /** Follow every run, including ones that were going before the page (re)loaded. Call before rendering. */
@@ -280,6 +309,7 @@ const isBusy = (id: string) => {
  * run that stopped before taking it) goes along with it.
  */
 export function sendMessage(id: string, text: string, files: FileUIPart[]) {
+  if (isSharedThread(id)) return;
   const sent = userMessage(crypto.randomUUID(), text, files);
   if (isBusy(id)) {
     setQueue(id, (q) => [...q, sent]);
@@ -295,6 +325,7 @@ export function sendMessage(id: string, text: string, files: FileUIPart[]) {
  * (the run stopped before taking them) they start the next one.
  */
 export function sendQueued(id: string) {
+  if (isSharedThread(id)) return;
   const queued = queues.get().get(id);
   if (!queued?.length) return;
   const status = views.get().get(id)?.status;
@@ -322,6 +353,7 @@ function send(id: string, outgoing: SushUIMessage[]) {
 
 /** Replace a user message, dropping everything after it, and ask again. */
 export function editMessage(id: string, messageId: string, text: string, files: FileUIPart[]) {
+  if (isSharedThread(id)) return;
   const message = userMessage(messageId, text, files);
   const all = current(id);
   const at = all.findIndex((m) => m.id === messageId);
@@ -343,6 +375,7 @@ export async function restoreCheckpoint(id: string, messageId: string) {
 
 /** Ask again for an assistant message (by default the last one). */
 export function regenerate(id: string, messageId?: string) {
+  if (isSharedThread(id)) return;
   setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
   void start(id, { type: "regenerate", messageId: messageId ?? null }, current(id));
 }
@@ -353,6 +386,7 @@ export function regenerate(id: string, messageId?: string) {
  * (`added-<anchor>-<time>`) ties it to the graph whose first call is `anchor`.
  */
 export function addAgent(id: string, anchor: string, task: string, others: string[]) {
+  if (isSharedThread(id)) return;
   const thread = threadMeta(id);
   if (!thread) return;
   const messages = current(id);
@@ -401,6 +435,7 @@ export const threadMessages = (id: string) => current(id);
 
 /** Answer a tool call that waits for the user: an approval, a denial, or a result. */
 export function respond(id: string, callId: string, response: ToolResponse) {
+  if (isSharedThread(id)) return;
   void start(id, { type: "respond", callId, response }, current(id));
 }
 
@@ -410,12 +445,14 @@ export const toResponse = (result: ToolResult): ToolResponse =>
 
 /** Carry on with a stopped reply, or answer a message the app closed on. */
 export function resume(id: string) {
+  if (isSharedThread(id)) return;
   setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
   void start(id, { type: "resume" }, current(id));
 }
 
 /** Stop (pause) the run: the model stream and any tool calls in flight. The reply can be resumed. */
 export function stop(id: string) {
+  if (isSharedThread(id)) return;
   void api.runCancel(id).catch((e) => console.error("Could not stop the run", e));
 }
 

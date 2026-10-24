@@ -8,6 +8,7 @@ import { createStore } from "@/lib/store";
 import {
   api,
   errorMessage,
+  isSharedThread,
   type BranchStatus,
   type EditApproval,
   type FileDiff,
@@ -96,15 +97,20 @@ export function notifyWorkspaceChanged(workspaceId: string) {
 export const useFilesVersion = (key: string | undefined) =>
   useSyncExternalStore(versions.subscribe, () => (key ? (versions.get()[key] ?? 0) : 0));
 
-/** The turns of a Cowork session that changed files, by the user message that started each. */
+/**
+ * The turns of a Cowork session that changed files, by the user message that
+ * started each. For a session shared with this app, the host says (secret files left out).
+ */
 export function useTurnChanges(threadId: string, enabled: boolean): Map<string, string[]> {
   const version = useFilesVersion(threadId);
   const [turns, setTurns] = useState<TurnChanges[]>([]);
   useEffect(() => {
     if (!enabled) return setTurns([]);
     let live = true;
-    api
-      .turnChanges(threadId)
+    const load = isSharedThread(threadId)
+      ? api.shareRequest<TurnChanges[]>(threadId, { kind: "get-turn-changes" })
+      : api.turnChanges(threadId);
+    load
       .then((t) => live && setTurns(t))
       .catch((e) => console.warn("Could not load file changes", e));
     return () => {
@@ -121,8 +127,10 @@ export function useTurnDiff(threadId: string, turnId: string | undefined): FileD
   useEffect(() => {
     if (!turnId) return setDiff(null);
     let live = true;
-    api
-      .turnDiff(threadId, turnId)
+    const load = isSharedThread(threadId)
+      ? api.shareRequest<FileDiff[]>(threadId, { kind: "get-diff", turnId })
+      : api.turnDiff(threadId, turnId);
+    load
       .then((d) => live && setDiff(d))
       .catch((e) => console.warn("Could not load the diff", e));
     return () => {

@@ -132,19 +132,20 @@ const MAX_VIEW_BYTES: usize = 1024 * 1024;
 #[tauri::command]
 pub async fn workspace_read_file(state: State<'_, AppState>, id: String, path: String) -> AppResult<FileView> {
     let store = state.store.clone();
-    blocking(move || {
-        let fs = open(&store, &id)?;
-        let rel = fs.rel(&path).map_err(AppError::Invalid)?;
-        let bytes = fs.bytes(&rel).map_err(AppError::Invalid)?.ok_or_else(|| AppError::NotFound(format!("{rel} doesn't exist.")))?;
-        let size = bytes.len() as u64;
-        if bytes.iter().take(8192).any(|&b| b == 0) {
-            return Ok(FileView { path: rel, text: None, size, truncated: false });
-        }
-        let truncated = bytes.len() > MAX_VIEW_BYTES;
-        let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_VIEW_BYTES)]).into_owned();
-        Ok(FileView { path: rel, text: Some(text), size, truncated })
-    })
-    .await
+    blocking(move || file_view(&open(&store, &id)?, &path)).await
+}
+
+/// A workspace file for the viewer (also a shared session's guests', `share.rs`). Blocking.
+pub(crate) fn file_view(fs: &WorkspaceFs, path: &str) -> AppResult<FileView> {
+    let rel = fs.rel(path).map_err(AppError::Invalid)?;
+    let bytes = fs.bytes(&rel).map_err(AppError::Invalid)?.ok_or_else(|| AppError::NotFound(format!("{rel} doesn't exist.")))?;
+    let size = bytes.len() as u64;
+    if bytes.iter().take(8192).any(|&b| b == 0) {
+        return Ok(FileView { path: rel, text: None, size, truncated: false });
+    }
+    let truncated = bytes.len() > MAX_VIEW_BYTES;
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_VIEW_BYTES)]).into_owned();
+    Ok(FileView { path: rel, text: Some(text), size, truncated })
 }
 
 /// Save a file the user edited in the viewer. It's their own change, like
@@ -250,7 +251,7 @@ pub async fn workspace_git_switch(state: State<'_, AppState>, id: String, branch
 /// settings. The user's checkout is left alone.
 #[tauri::command]
 pub async fn worktree_create(app: AppHandle, state: State<'_, AppState>, id: String, base: String) -> AppResult<Workspace> {
-    let dir = app.path().app_data_dir().map_err(|e| AppError::Invalid(format!("No app data folder: {e}")))?.join("worktrees");
+    let dir = crate::paths::data_dir(&app).map_err(|e| AppError::Invalid(format!("No app data folder: {e}")))?.join("worktrees");
     let store = state.store.clone();
     blocking(move || {
         let parent = find(&store, &id)?;
@@ -327,44 +328,57 @@ pub struct FileDiff {
     binary: bool,
 }
 
+impl FileDiff {
+    /// For a shared session's guests: a secret-looking file shows as changed, without its content.
+    pub(crate) fn hidden_if_secret(self) -> Self {
+        if sush_core::workspace::looks_secret(&self.path) {
+            FileDiff { path: self.path, before: None, after: None, binary: true }
+        } else {
+            self
+        }
+    }
+}
+
 /// What each file a turn changed looked like before and after it. "After" is
 /// the file now, or what the next turn to change it found.
 #[tauri::command]
 pub async fn turn_diff(state: State<'_, AppState>, thread_id: String, turn_id: String) -> AppResult<Vec<FileDiff>> {
     let store = state.store.clone();
-    blocking(move || {
-        let files = store.turn_files(&thread_id, &turn_id)?;
-        let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
-        let mut out = Vec::with_capacity(files.len());
-        for f in files {
-            let after = match f.later {
-                Some(later) => later,
-                None => {
-                    if !folders.contains_key(&f.workspace_id) {
-                        let fs = store.workspace(&f.workspace_id)?.and_then(|w| WorkspaceFs::open(Path::new(&w.root)).ok());
-                        folders.insert(f.workspace_id.clone(), fs);
-                    }
-                    match &folders[&f.workspace_id] {
-                        Some(fs) => fs.bytes(&f.path).map_err(AppError::Invalid)?,
-                        None => None,
-                    }
+    blocking(move || turn_diff_files(&store, &thread_id, &turn_id)).await
+}
+
+/// `turn_diff`'s work (also for a shared session's guests, `share.rs`). Blocking.
+pub(crate) fn turn_diff_files(store: &Store, thread_id: &str, turn_id: &str) -> AppResult<Vec<FileDiff>> {
+    let files = store.turn_files(thread_id, turn_id)?;
+    let mut folders: HashMap<String, Option<WorkspaceFs>> = HashMap::new();
+    let mut out = Vec::with_capacity(files.len());
+    for f in files {
+        let after = match f.later {
+            Some(later) => later,
+            None => {
+                if !folders.contains_key(&f.workspace_id) {
+                    let fs = store.workspace(&f.workspace_id)?.and_then(|w| WorkspaceFs::open(Path::new(&w.root)).ok());
+                    folders.insert(f.workspace_id.clone(), fs);
                 }
-            };
-            let text = |b: Option<Vec<u8>>| -> Result<Option<String>, ()> {
-                match b {
-                    None => Ok(None),
-                    Some(b) if b.len() > DIFF_LIMIT || b.contains(&0) => Err(()),
-                    Some(b) => String::from_utf8(b).map(Some).map_err(|_| ()),
+                match &folders[&f.workspace_id] {
+                    Some(fs) => fs.bytes(&f.path).map_err(AppError::Invalid)?,
+                    None => None,
                 }
-            };
-            out.push(match (text(f.before), text(after)) {
-                (Ok(before), Ok(after)) => FileDiff { path: f.path, before, after, binary: false },
-                _ => FileDiff { path: f.path, before: None, after: None, binary: true },
-            });
-        }
-        Ok(out)
-    })
-    .await
+            }
+        };
+        let text = |b: Option<Vec<u8>>| -> Result<Option<String>, ()> {
+            match b {
+                None => Ok(None),
+                Some(b) if b.len() > DIFF_LIMIT || b.contains(&0) => Err(()),
+                Some(b) => String::from_utf8(b).map(Some).map_err(|_| ()),
+            }
+        };
+        out.push(match (text(f.before), text(after)) {
+            (Ok(before), Ok(after)) => FileDiff { path: f.path, before, after, binary: false },
+            _ => FileDiff { path: f.path, before: None, after: None, binary: true },
+        });
+    }
+    Ok(out)
 }
 
 /// Put every file changed since `turn_id` began back as it was before it, or

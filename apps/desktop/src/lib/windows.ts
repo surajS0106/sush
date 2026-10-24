@@ -49,6 +49,9 @@ void listen<string>("sush://leader", (e) => {
   waiting.splice(0).forEach((start) => start());
 });
 
+/** Whether this window leads now, e.g. so only one window shows a notice every window hears about. */
+export const isLeader = () => leading;
+
 /** Call `start` now if this window leads, or once it does. */
 export function whenLeader(start: () => void) {
   if (leading) start();

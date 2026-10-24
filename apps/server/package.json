@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
+    "relay": "SUSH_RELAY_LAN=1 bun --watch src/index.ts",
     "start": "bun src/index.ts",
     "compile": "bun build --compile --minify src/index.ts --outfile ../desktop/src-tauri/binaries/sush-auth-$(rustc --print host-tuple)",
     "typecheck": "tsc --noEmit"

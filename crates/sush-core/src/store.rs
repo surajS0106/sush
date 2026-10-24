@@ -228,6 +228,26 @@ impl Store {
             .optional()?)
     }
 
+    /// A session's sub-agents' threads with their messages, oldest first.
+    pub fn children(&self, parent_id: &str) -> StoreResult<Vec<Thread>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id FROM threads WHERE parent_id = ?1 ORDER BY created_at",
+        )?;
+        let metas = stmt.query_map([parent_id], meta_row)?.collect::<Result<Vec<_>, _>>()?;
+        let mut msgs = conn.prepare("SELECT data FROM messages WHERE thread_id = ?1 ORDER BY seq")?;
+        metas
+            .into_iter()
+            .map(|meta| {
+                let messages = msgs
+                    .query_map([&meta.id], |r| r.get::<_, String>(0))?
+                    .map(|data| Ok(serde_json::from_str(&data?)?))
+                    .collect::<StoreResult<Vec<Value>>>()?;
+                Ok(Thread { meta, messages })
+            })
+            .collect()
+    }
+
     /// The workspace a saved thread was created in, if it's a Cowork session.
     pub fn thread_workspace(&self, id: &str) -> StoreResult<Option<String>> {
         let conn = self.conn.lock().unwrap();

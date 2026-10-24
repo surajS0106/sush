@@ -124,6 +124,21 @@ pub fn delete(provider_id: &str) -> AppResult<()> {
     remove(&provider_name(provider_id))
 }
 
+/// The relay that shared sessions go through, and the session token for it (`share.rs`), as JSON.
+const SHARE_ACCOUNT: &str = "share:account";
+
+pub fn share_account_get() -> AppResult<Option<String>> {
+    read(SHARE_ACCOUNT)
+}
+
+pub fn share_account_set(value: &str) -> AppResult<()> {
+    write(SHARE_ACCOUNT, value)
+}
+
+pub fn share_account_delete() -> AppResult<()> {
+    remove(SHARE_ACCOUNT)
+}
+
 // Connector credentials can outgrow one Windows credential (2560 bytes,
 // stored as UTF-16), so they're split into parts; the first entry holds the
 // part count.

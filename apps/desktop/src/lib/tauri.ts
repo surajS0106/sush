@@ -441,7 +441,103 @@ export type RunFrame =
   | { type: "client-tool"; threadId: string; callId: string; name: string; input: unknown }
   | { type: "saved"; thread: ThreadMeta }
   | { type: "files-changed"; threadId: string; workspaceId: string }
-  | { type: "report"; report: Report };
+  | { type: "report"; report: Report }
+  | { type: "share"; share: ShareView }
+  | { type: "share-gone"; threadId: string };
+
+// --- shared sessions (`share.rs`, `sush_core::share`) --------------------------------
+
+/** A joined share's thread is `shared:<share id>`; its sub-agents' are `shared:<share id>:<call id>`. */
+export const isSharedThread = (id: string) => id.startsWith("shared:");
+
+export type ShareRole = "owner" | "driver" | "collaborator" | "viewer";
+
+export interface ShareMember {
+  userId: string;
+  name: string;
+  /** A `data:` image or a built-in avatar id. */
+  image?: string | null;
+  role: ShareRole;
+  online: boolean;
+}
+
+/** Someone connected to a share's room; `email` only for someone waiting to be let in. */
+export interface SharePeer {
+  peerId: string;
+  userId: string;
+  name: string;
+  image?: string | null;
+  isHost: boolean;
+  email?: string;
+}
+
+export interface SharePolicy {
+  /** Guests may list the folder and open any file in it (secret-looking ones never). */
+  browseFiles: boolean;
+}
+
+export interface ShareThreadInfo {
+  title: string;
+  kind: "chat" | "cowork";
+  workspaceName?: string | null;
+  hostName: string;
+}
+
+export type ShareLinkStatus = "connecting" | "live" | "lobby" | "offline" | "ended";
+
+/** A share hosted here (`role: "owner"`) or joined. */
+export interface ShareView {
+  threadId: string;
+  shareId: string;
+  role: ShareRole;
+  status: ShareLinkStatus;
+  thread: ShareThreadInfo;
+  members: ShareMember[];
+  /** People waiting to be let in (the host's view only). */
+  lobby: SharePeer[];
+  policy: SharePolicy;
+  expiresAt: number;
+  ended: string | null;
+  error: string | null;
+}
+
+export interface ShareAccount {
+  relayUrl: string | null;
+  user: { id: string; name: string; email: string; image?: string | null } | null;
+  error: string | null;
+}
+
+/** `link` is shown once, to copy: its token is after the `#`. */
+export interface InviteLink {
+  inviteId: string;
+  link: string;
+  expiresAt: number;
+  maxUses: number;
+}
+
+export interface InviteInfo {
+  inviteId: string;
+  createdAt: number;
+  expiresAt: number;
+  maxUses: number;
+  uses: number;
+  revoked: boolean;
+}
+
+/** What a guest may ask a share's host for (`sush_core::share::Intent`). */
+export type ShareIntent =
+  | { kind: "get-turn-changes" }
+  | { kind: "get-diff"; turnId: string }
+  | { kind: "get-file"; path: string }
+  | { kind: "list-dir"; path: string }
+  | { kind: "get-blob"; sha: string };
+
+export interface SharesState {
+  shares: ShareView[];
+  /** Joined shares' threads as they stand. */
+  threads: { threadId: string; messages: unknown[]; status: RunStatus; error: string | null }[];
+  running: string[];
+}
 
 export interface LiveRun {
   threadId: string;
@@ -512,6 +608,30 @@ export const api = {
   /** Have the messages steering a run join it now, cutting its current step or tool calls short. */
   runInterrupt: (threadId: string) => invoke<void>("run_interrupt", { threadId }),
   toolResult: (callId: string, result: { output: unknown } | { errorText: string }) => invoke<void>("tool_result", { callId, result }),
+  /** The relay shared sessions go through, and who's signed in to it. */
+  shareAccount: () => invoke<ShareAccount>("share_account"),
+  /** With `name`, creates an account on the relay. */
+  shareAccountSignIn: (relayUrl: string, email: string, password: string, name?: string) =>
+    invoke<ShareAccount>("share_account_sign_in", { relayUrl, email, password, name: name ?? null }),
+  /** Share through the server this app signs in to, with that session. */
+  shareAccountUseToken: (relayUrl: string, token: string) => invoke<ShareAccount>("share_account_use_token", { relayUrl, token }),
+  shareAccountSignOut: () => invoke<void>("share_account_sign_out"),
+  shareStart: (thread: ThreadMeta) => invoke<ShareView>("share_start", { thread }),
+  shareInviteCreate: (threadId: string, ttlHours?: number, maxUses?: number) =>
+    invoke<InviteLink>("share_invite_create", { threadId, ttlHours: ttlHours ?? null, maxUses: maxUses ?? null }),
+  shareInvitesList: (threadId: string) => invoke<InviteInfo[]>("share_invites_list", { threadId }),
+  shareInviteRevoke: (threadId: string, inviteId: string) => invoke<void>("share_invite_revoke", { threadId, inviteId }),
+  /** Let someone in from the lobby, or turn them away. */
+  shareAdmit: (threadId: string, userId: string, allow: boolean) => invoke<void>("share_admit", { threadId, userId, allow }),
+  shareKick: (threadId: string, userId: string) => invoke<void>("share_kick", { threadId, userId }),
+  shareSetPolicy: (threadId: string, policy: SharePolicy) => invoke<void>("share_set_policy", { threadId, policy }),
+  shareEnd: (threadId: string) => invoke<void>("share_end", { threadId }),
+  /** Join from an invite link; the share shows as its `threadId`. */
+  shareJoin: (link: string) => invoke<ShareView>("share_join", { link }),
+  shareLeave: (threadId: string) => invoke<void>("share_leave", { threadId }),
+  /** Ask a joined share's host for something; the host checks it first. */
+  shareRequest: <T>(threadId: string, intent: ShareIntent) => invoke<T>("share_request", { threadId, intent }),
+  sharesState: () => invoke<SharesState>("shares_state"),
   threadsLoad: () => invoke<StoredThread[]>("threads_load"),
   /** Without `messages`, only the metadata (title, pin, project, model) is updated. */
   threadSave: (thread: ThreadMeta, messages: unknown[] | null) => invoke<void>("thread_save", { thread, messages }),

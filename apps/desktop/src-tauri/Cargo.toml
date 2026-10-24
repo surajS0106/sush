@@ -32,6 +32,8 @@ sha2 = "0.10"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-util.workspace = true
+# Shared sessions' connection to the relay (`share.rs`); native-tls like reqwest.
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 url = "2"
 whisper-rs = "0.16"
 dunce = "1.0.5"

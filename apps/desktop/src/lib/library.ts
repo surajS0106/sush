@@ -334,6 +334,7 @@ export type SettingsSection =
   | "speech"
   | "images"
   | "memory"
+  | "sharing"
   | "design"
   | "skills"
   | "connectors"

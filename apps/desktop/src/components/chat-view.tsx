@@ -39,6 +39,9 @@ import { SessionOptions } from "@/components/session-options";
 import { DeckCard, SlidesPanel } from "@/components/slides-panel";
 import { UsageHeatmap } from "@/components/usage-heatmap";
 import { CoworkPanel } from "@/components/workspace-panel";
+import { Mascot } from "@/components/mascot";
+import { SharedFilesPanel } from "@/components/shared-files-panel";
+import { WatchingBar } from "@/components/shared-sessions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -80,7 +83,8 @@ import {
   useThread,
 } from "@/lib/sessions";
 import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
-import { errorMessage, type RunStatus, type Workspace } from "@/lib/tauri";
+import { WatchingHost } from "@/lib/share";
+import { errorMessage, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { formatTokens, formatTokensExact } from "@/lib/usage";
 import { cn } from "@/lib/utils";
@@ -92,9 +96,11 @@ interface ChatViewProps {
   /** Whether any provider is configured; `null` while that's still loading. */
   hasProviders: boolean | null;
   onOpenSettings: () => void;
+  /** A session someone shared with this app: shown to watch, with nothing to send or answer. */
+  watching?: ShareView;
 }
 
-export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }: ChatViewProps) {
+export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, watching }: ChatViewProps) {
   const id = conversation.id;
   // The run lives in Rust, so it keeps going when another chat is opened.
   const { messages, status: runStatus, error } = useThread(id);
@@ -121,7 +127,9 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   // Cowork: the folder this session works in, and the files each turn changed.
   const workspaceId = conversation.workspaceId;
   const workspace = useWorkspace(workspaceId);
-  const turnChanges = useTurnChanges(id, !!workspaceId && !busy);
+  // A watched Cowork session has a folder too, on its host's machine.
+  const cowork = !!workspaceId || watching?.thread.kind === "cowork";
+  const turnChanges = useTurnChanges(id, cowork && !busy);
   const changedPaths = useMemo(() => new Set([...turnChanges.values()].flat()), [turnChanges]);
   // A turn's file changes show under its last assistant message, keyed by the user message that started it.
   const turnEnds = useMemo(() => {
@@ -150,6 +158,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     <SlidesPanel threadId={id} deck={openDeck} busy={busy} />
   ) : workspace ? (
     <CoworkPanel workspace={workspace} changed={changedPaths} />
+  ) : watching && cowork ? (
+    <SharedFilesPanel share={watching} changed={changedPaths} />
   ) : null;
   const hideChat = !!openDeck && !!deckPanel?.expanded;
 
@@ -225,10 +235,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
   const waiting = busy && (last?.role !== "assistant" || !hasVisibleContent(last) || endsWithToolResult(last));
   // A reply that was stopped, or a message the app closed on before answering, can carry on.
   const resumable =
-    !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
+    !watching && !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
 
   // An incognito chat's composer has a dashed outline, as in a private window.
-  const composer = (
+  // Someone watching a shared session can't send anything: they see whose it is instead.
+  const composer = watching ? (
+    <WatchingBar share={watching} />
+  ) : (
     <div className={cn(incognito && "[&_[data-slot=input-group]]:border-dashed [&_[data-slot=input-group]]:border-foreground/30")}>
       <Composer
         catalog={catalog}
@@ -243,6 +256,25 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
       />
     </div>
   );
+
+  if (messages.length === 0 && watching) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+          <Mascot busy={watching.status === "live"} draft="" still />
+          <h1 className="text-xl font-medium tracking-tight">{watching.thread.title || "Shared session"}</h1>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            {watching.status === "live"
+              ? `Nothing here yet. ${watching.thread.hostName}’s messages and the agent’s work appear as they happen.`
+              : watching.status === "lobby"
+                ? `${watching.thread.hostName} lets you in once they see you’re here.`
+                : "Connecting…"}
+          </p>
+        </div>
+        <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">{composer}</div>
+      </div>
+    );
+  }
 
   if (messages.length === 0) {
     const connect = (
@@ -342,13 +374,13 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               streaming={busy && message.id === messages.at(-1)?.id}
               local={localProviders.has(message.metadata?.providerId ?? "")}
               logo={messageLogo(message, catalog)}
-              canRegenerate={!busy && message.id === lastAssistantId}
+              canRegenerate={!watching && !busy && message.id === lastAssistantId}
               onRegenerate={() => regenerate(id, message.id)}
-              canEdit={!busy}
+              canEdit={!watching && !busy}
               onEdit={(text) => edit(message, text)}
-              onRestore={() => restoreRef.current(message)}
-              // Only the latest turn's questions can still be answered.
-              canAnswer={!busy && message.id === last?.id}
+              onRestore={watching ? undefined : () => restoreRef.current(message)}
+              // Only the latest turn's questions can still be answered, and only by whoever runs the session.
+              canAnswer={!watching && !busy && message.id === last?.id}
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
               onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
@@ -358,7 +390,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
               branchCall={branchCall?.messageId === message.id ? branchCall.part.toolCallId : undefined}
               fileTurn={(() => {
                 const turnId = turnEnds.get(message.id);
-                return busy || !workspaceId || !turnId || !turnChanges.has(turnId) ? undefined : turnId;
+                return busy || !cowork || !turnId || !turnChanges.has(turnId) ? undefined : turnId;
               })()}
             />
           ))}
@@ -392,7 +424,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
 
       <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
         {workspaceId && branchCall && <BranchChip workspaceId={workspaceId} part={branchCall.part} />}
-        <QueuedMessages threadId={id} status={runStatus} />
+        {!watching && <QueuedMessages threadId={id} status={runStatus} />}
         {composer}
       </div>
 
@@ -424,9 +456,11 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings }
     </div>
   );
   return (
-    <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
-      {chat}
-    </WorkspaceFrame>
+    <WatchingHost.Provider value={watching ? watching.thread.hostName : null}>
+      <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
+        {chat}
+      </WorkspaceFrame>
+    </WatchingHost.Provider>
   );
 }
 
@@ -600,8 +634,8 @@ interface ChatMessageProps {
   onRegenerate: () => void;
   canEdit: boolean;
   onEdit: (text: string) => void;
-  /** Go back to before this user message (the session and, in Cowork, its files). */
-  onRestore: () => void;
+  /** Go back to before this user message (the session and, in Cowork, its files); none for a watched session. */
+  onRestore?: () => void;
   canAnswer: boolean;
   /** A waiting tool call answered in its card (ask_user, skill_save, a denial). */
   onToolResult: (toolCallId: string, result: ToolResult) => void;
@@ -634,7 +668,8 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
     a.threadId === b.threadId &&
     a.workspaceId === b.workspaceId &&
     a.fileTurn === b.fileTurn &&
-    a.branchCall === b.branchCall;
+    a.branchCall === b.branchCall &&
+    !a.onRestore === !b.onRestore;
   if (!same) return false;
   // Artifact and deck views are built from the whole thread; only their own cards read them.
   const usesViews = b.message.parts.some(
@@ -838,7 +873,7 @@ const ChatMessage = memo(function ChatMessage({
           ),
         )}
         {sources.length > 0 && <CitedSourceList sources={sources} />}
-        {workspaceId && fileTurn && <FileChanges threadId={threadId} workspaceId={workspaceId} turnId={fileTurn} />}
+        {fileTurn && <FileChanges threadId={threadId} workspaceId={workspaceId} turnId={fileTurn} />}
         {message.role === "user" && text && (
           <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
@@ -849,9 +884,11 @@ const ChatMessage = memo(function ChatMessage({
                 <PencilIcon className="size-3.5" />
               </MessageAction>
             )}
-            <MessageAction tooltip="Restore checkpoint" onClick={onRestore}>
-              <HistoryIcon className="size-3.5" />
-            </MessageAction>
+            {onRestore && (
+              <MessageAction tooltip="Restore checkpoint" onClick={onRestore}>
+                <HistoryIcon className="size-3.5" />
+              </MessageAction>
+            )}
           </MessageActions>
         )}
         {message.role === "assistant" && !streaming && text && (

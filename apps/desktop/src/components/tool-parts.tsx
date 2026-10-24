@@ -55,6 +55,7 @@ import {
 import { parseAskUserInput, type AskUserOutput } from "@/lib/ask-user";
 import { parseAutomationSave } from "@/lib/automation-save";
 import { createAutomation, describeSchedule, formatWhen, nextRunOf } from "@/lib/automations";
+import { WatchingHost } from "@/lib/share";
 import { connectorIcon } from "@/lib/connector-catalog";
 import { parseCommits, parsePullRequest } from "@/lib/github";
 import { saveImage, type ImageInput, type ImageOutput } from "@/lib/images";
@@ -75,8 +76,22 @@ interface ToolPartProps {
   onApprove: () => void;
 }
 
+/** Calls that wait for whoever runs the session (an approval, an answer). */
+const ASKS = new Set(["ask-user", "skill-save", "automation-save", "workspace", "browser", "connector"]);
+
 export function ToolPart(props: ToolPartProps) {
-  switch (toolKind(props.part.toolName)) {
+  // Watching someone's session: their approvals and questions are theirs to answer.
+  const host = useContext(WatchingHost);
+  const running = useRunningToolCalls().has(props.part.toolCallId);
+  const kind = toolKind(props.part.toolName);
+  if (host && props.part.state === "input-available" && !running && ASKS.has(kind)) {
+    return (
+      <p className="text-sm text-muted-foreground italic">
+        Waiting for {host} to {kind === "ask-user" ? "answer" : "approve"}
+      </p>
+    );
+  }
+  switch (kind) {
     case "ask-user":
       return <AskUserPart {...props} />;
     case "memory":

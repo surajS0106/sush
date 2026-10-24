@@ -1,5 +1,6 @@
 // The files a Cowork turn changed, under its reply: one row per file with
 // its added/removed line counts and an Undo, expanding to a unified diff.
+// A session watched from another machine has no folder here: no Undo or Open.
 
 import { structuredPatch } from "diff";
 import { ChevronRightIcon, FileIcon, FileMinusIcon, FilePlusIcon } from "lucide-react";
@@ -56,7 +57,8 @@ function diffFile(file: FileDiff): FileStat {
 
 interface FileChangesProps {
   threadId: string;
-  workspaceId: string;
+  /** None for a session watched from another machine: its diff comes from the host, and nothing here can change it. */
+  workspaceId?: string;
   /** The user message that started the turn. */
   turnId: string;
 }
@@ -67,6 +69,7 @@ export function FileChanges({ threadId, workspaceId, turnId }: FileChangesProps)
   if (stats.length === 0) return null;
 
   const undo = (path?: string) => {
+    if (!workspaceId) return;
     const what = path ?? (stats.length === 1 ? stats[0].file.path : `${stats.length} files`);
     if (!window.confirm(`Put back ${what} as before this turn? Later changes to the same files are undone too.`)) return;
     undoTurn(threadId, workspaceId, turnId, path)
@@ -85,7 +88,7 @@ export function FileChanges({ threadId, workspaceId, turnId }: FileChangesProps)
         <div className="flex items-center gap-3 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{stats.length} files changed</span>
           <Counts added={added} removed={removed} />
-          <UndoButton className="ml-auto" onClick={() => undo()} label="Undo all" />
+          {workspaceId && <UndoButton className="ml-auto" onClick={() => undo()} label="Undo all" />}
         </div>
       )}
       {stats.map((s) => (
@@ -95,7 +98,7 @@ export function FileChanges({ threadId, workspaceId, turnId }: FileChangesProps)
   );
 }
 
-function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId: string; onUndo: () => void }) {
+function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId?: string; onUndo: () => void }) {
   const [open, setOpen] = useState(false);
   const { file, added, removed } = stat;
   const created = !file.binary && file.before === null;
@@ -122,7 +125,7 @@ function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId: s
             </span>
           )}
         </button>
-        {!deleted && (
+        {!deleted && workspaceId && (
           <button
             type="button"
             onClick={() => openFile(workspaceId, file.path)}
@@ -131,7 +134,7 @@ function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId: s
             Open
           </button>
         )}
-        <UndoButton onClick={onUndo} />
+        {workspaceId && <UndoButton onClick={onUndo} />}
         {!file.binary && <Counts added={added} removed={removed} />}
         <button
           type="button"

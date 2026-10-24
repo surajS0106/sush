@@ -9,9 +9,11 @@ mod dock_icon;
 mod error;
 mod images;
 mod library;
+mod paths;
 mod reports;
 mod runs;
 mod secrets;
+mod share;
 mod speech;
 mod state;
 mod store;
@@ -25,6 +27,7 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    paths::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -35,9 +38,12 @@ pub fn run() {
             _ => PermissionResponse::Default,
         })
         .setup(|app| {
-            let config_dir = app.path().app_config_dir()?;
+            let config_dir = paths::config_dir(app.handle())?;
             secrets::init(&config_dir);
-            app.manage(state::AppState::load(config_dir, app.path().app_data_dir()?)?);
+            app.manage(state::AppState::load(config_dir, paths::data_dir(app.handle())?)?);
+            if let (Some(profile), Some(window)) = (paths::profile(), app.get_webview_window("main")) {
+                let _ = window.set_title(&format!("Sush ({profile})"));
+            }
             // Check the sandbox now, so the first Cowork command doesn't wait for it.
             let sandbox = app.state::<state::AppState>().sandbox.clone();
             tauri::async_runtime::spawn(async move {
@@ -75,6 +81,22 @@ pub fn run() {
             runs::thread_rewind,
             runs::run_interrupt,
             runs::tool_result,
+            share::share_account,
+            share::share_account_sign_in,
+            share::share_account_use_token,
+            share::share_account_sign_out,
+            share::share_start,
+            share::share_invite_create,
+            share::share_invites_list,
+            share::share_invite_revoke,
+            share::share_admit,
+            share::share_kick,
+            share::share_set_policy,
+            share::share_end,
+            share::share_join,
+            share::share_leave,
+            share::share_request,
+            share::shares_state,
             workspaces::workspaces_list,
             workspaces::workspace_add,
             workspaces::workspace_update,

@@ -13,6 +13,7 @@ import { initBrowser } from "./lib/browser";
 import { initMemory } from "./lib/memory";
 import { initReports } from "./lib/reports";
 import { initSessions } from "./lib/sessions";
+import { initShares } from "./lib/share";
 import { initWorkspaces } from "./lib/workspaces";
 import { initZoom } from "./lib/zoom";
 import { initStore } from "./lib/store";
@@ -46,6 +47,8 @@ const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement)
 // can read them synchronously; then follow the runs already going.
 Promise.all([initStore(), initMemory(), initWorkspaces(), initBrowser(), initReports()])
   .then(initSessions)
+  // Shared sessions come after the runs: their frames arrive on the same channel.
+  .then(initShares)
   .then(
   () =>
     root.render(

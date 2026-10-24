@@ -154,7 +154,8 @@ fn kill_tree(pid: u32) {
 }
 
 /// Environment variables that commonly carry credentials.
-fn is_secret_var(key: &str) -> bool {
+/// Whether an environment variable's name says it holds a credential.
+pub fn is_secret_var(key: &str) -> bool {
     let k = key.to_ascii_uppercase();
     k.starts_with("SUSH_")
         || k.starts_with("BETTER_AUTH")

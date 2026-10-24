@@ -2,11 +2,12 @@
 // fork, file under a project, pin, delete), shared by the sidebar's row menu and the title bar's menu; the
 // dialogs those open; and the incognito toggle.
 
-import { CheckIcon, ChevronDownIcon, GhostIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, GhostIcon, UsersIcon } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { toolbarButtonClass } from "@/components/nav-controls";
+import { ShareDialog } from "@/components/share-dialog";
 import { IS_MAC } from "@/components/window-controls";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -26,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createProject, deleteProject, getProject, updateProject, useProjects } from "@/lib/projects";
+import { isReportThread } from "@/lib/reports";
 import {
   createStore,
   forkConversation,
@@ -46,11 +48,14 @@ type DialogRequest =
   | { kind: "rename"; conversationId: string }
   /** A new project (`projectId` unset) or an existing one; `fileChat` is moved into a new project once it's made. */
   | { kind: "project"; projectId?: string; fileChat?: string }
-  | { kind: "delete-project"; projectId: string };
+  | { kind: "delete-project"; projectId: string }
+  | { kind: "share"; conversationId: string };
 
 const dialog = createStore<DialogRequest | null>("sush.sessionDialog", null, false);
 
 export const openRename = (conversationId: string) => dialog.set({ kind: "rename", conversationId });
+/** Share a session live (`components/share-dialog.tsx`). */
+export const openShare = (conversationId: string) => dialog.set({ kind: "share", conversationId });
 export const openProjectEditor = (projectId?: string, fileChat?: string) => dialog.set({ kind: "project", projectId, fileChat });
 export const confirmDeleteProject = (projectId: string) => dialog.set({ kind: "delete-project", projectId });
 
@@ -72,6 +77,7 @@ export function SessionDialogs() {
       <RenameDialog conversationId={request?.kind === "rename" ? request.conversationId : null} onClose={close} />
       <ProjectDialog request={request?.kind === "project" ? request : null} onClose={close} />
       <DeleteProjectDialog projectId={request?.kind === "delete-project" ? request.projectId : null} onClose={close} />
+      <ShareDialog threadId={request?.kind === "share" ? request.conversationId : null} onClose={close} />
     </>
   );
 }
@@ -286,6 +292,15 @@ export function SessionMenuItems({
               )}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          <DropdownMenuSeparator />
+        </>
+      )}
+      {/* Incognito chats are never shared; nor are reports (kept out of the session list anyway). */}
+      {!c.incognito && !isReportThread(c.id) && (
+        <>
+          <DropdownMenuItem data-shortcut="s" onSelect={() => openShare(c.id)}>
+            <UsersIcon /> Share live… <DropdownMenuShortcut>S</DropdownMenuShortcut>
+          </DropdownMenuItem>
           <DropdownMenuSeparator />
         </>
       )}

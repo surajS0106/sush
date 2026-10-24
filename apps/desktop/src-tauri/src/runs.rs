@@ -73,6 +73,18 @@ pub enum RunFrame {
     FilesChanged { thread_id: String, workspace_id: String },
     /// A report changed: its run started or ended, or recorded results.
     Report { report: Report },
+    /// A share hosted or joined here changed: who's in it, its connection, its end (`share.rs`).
+    Share { share: crate::share::ShareView },
+    /// A share is gone from this app: ended here, or left.
+    ShareGone { thread_id: String },
+}
+
+/// A live run's thread, for a share's snapshot.
+pub(crate) struct LiveThread {
+    pub thread_id: String,
+    pub messages: Vec<Value>,
+    pub status: RunStatus,
+    pub error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +111,8 @@ pub struct Runs {
     /// Sub-agents' threads working in the background, whose reports go to their parent as messages.
     /// Lock order: `detached`, then `live`.
     detached: Mutex<HashSet<String>>,
+    /// Sessions shared with others or joined (`share.rs`). Every frame passes it, in order.
+    pub(crate) shares: crate::share::Shares,
 }
 
 struct Live {
@@ -164,8 +178,10 @@ impl Runs {
 
     /// Send a frame to every window (a page may be reloading; it resubscribes),
     /// except a tool request, which only the leader runs, so it runs once.
-    fn send(&self, frame: RunFrame) {
+    /// A shared thread's frames also go to its guests.
+    pub(crate) fn send(&self, frame: RunFrame) {
         let channels = self.channels.lock().unwrap();
+        self.shares.on_frame(&frame);
         if matches!(frame, RunFrame::ClientTool { .. }) {
             if let Some(channel) = Self::leader(&channels) {
                 let _ = channel.send(frame);
@@ -252,6 +268,30 @@ impl Runs {
     /// Tell every window a report changed.
     pub fn report_changed(&self, report: Report) {
         self.send(RunFrame::Report { report });
+    }
+
+    /// Call `f` with the live copies of a thread and its sub-agents' threads,
+    /// while no run can send a frame: what `f` sees lines up exactly with the
+    /// next frame any of them sends (a share's snapshot relies on it).
+    pub(crate) fn with_family<R>(&self, thread_id: &str, f: impl FnOnce(Vec<LiveThread>) -> R) -> R {
+        let _channels = self.channels.lock().unwrap();
+        let prefix = subagents::child_thread_id(thread_id, "");
+        let lives: Vec<(String, Arc<Live>)> = self
+            .live
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| *id == thread_id || id.starts_with(&prefix))
+            .map(|(id, l)| (id.clone(), l.clone()))
+            .collect();
+        let threads = lives
+            .into_iter()
+            .map(|(thread_id, l)| {
+                let s = l.state.lock().unwrap();
+                LiveThread { thread_id, messages: s.messages.clone(), status: s.status, error: s.error.clone() }
+            })
+            .collect();
+        f(threads)
     }
 }
 
@@ -410,6 +450,7 @@ impl RunHost for Host {
                 RunEvent::ToolRunning { call_id, running } => RunFrame::ToolRunning { thread_id, call_id, running },
             }
         };
+        state.runs.shares.on_frame(&frame);
         for channel in channels.values() {
             let _ = channel.send(frame.clone());
         }

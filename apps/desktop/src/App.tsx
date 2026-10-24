@@ -11,6 +11,7 @@ import { NavControls, type Nav } from "@/components/nav-controls";
 import { ReportsPage } from "@/components/reports-page";
 import { WikiPage } from "@/components/wiki-page";
 import { IncognitoToggle, SessionDialogs, SessionMenu } from "@/components/session-actions";
+import { JoinSessionDialog, SharePresence } from "@/components/shared-sessions";
 import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { PanelToggles, WorkspaceChip } from "@/components/workspace-panel";
@@ -33,7 +34,8 @@ import {
   useConversations,
   type Conversation,
 } from "@/lib/store";
-import { errorMessage } from "@/lib/tauri";
+import { useShare } from "@/lib/share";
+import { errorMessage, type ShareView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
 import { whenLeader } from "@/lib/windows";
 import { addWorkspace, getWorkspaces } from "@/lib/workspaces";
@@ -49,6 +51,17 @@ export default function App() {
     setPage("session");
     openSession(id);
   };
+  // A session someone shared with this app, watched on a page of its own; it isn't one of ours, so it has no tab.
+  const [sharedId, setSharedId] = useState<string | null>(null);
+  const openShared = (threadId: string) => {
+    setSharedId(threadId);
+    setPage("shared");
+  };
+  const watched = useShare(page === "shared" ? (sharedId ?? undefined) : undefined);
+  // Left (here or in another window): back to the session.
+  useEffect(() => {
+    if (page === "shared" && !watched) setPage("session");
+  }, [page, watched]);
   const tabs = useTabs(activeId, ids, setActiveId);
   const { motion } = useAppearance();
   const layout = useLayout();
@@ -192,12 +205,15 @@ export default function App() {
             nav={nav}
             page={page}
             onOpenPage={setPage}
+            sharedId={sharedId}
+            onOpenShared={openShared}
           />
           <SidebarInset className="min-w-0">
             <AppHeader
               workspaceId={page === "session" ? current?.workspaceId : undefined}
               nav={nav}
               session={page === "session" ? current : null}
+              sharedId={page === "shared" ? sharedId : null}
               onToggleIncognito={toggleIncognito}
             >
               <SessionTabs
@@ -219,6 +235,17 @@ export default function App() {
               {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
               {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}
               {page === "wiki" && <WikiPage onOpenSession={tabs.openInNewTab} />}
+              {page === "shared" && watched && (
+                <PromptInputProvider key={watched.threadId}>
+                  <ChatView
+                    conversation={watchedConversation(watched)}
+                    catalog={catalog}
+                    hasProviders={providers ? providers.length > 0 : null}
+                    onOpenSettings={() => openSettings({ section: "providers" })}
+                    watching={watched}
+                  />
+                </PromptInputProvider>
+              )}
               {page === "session" && current && (
                 // Re-keyed on a prefill so the composer picks it up even if this chat was already open.
                 <PromptInputProvider key={prefilled?.id ?? current.id} initialInput={current.messages.length === 0 ? prefilled?.prompt : undefined}>
@@ -235,6 +262,7 @@ export default function App() {
           </SidebarInset>
         </SidebarProvider>
         <SessionDialogs />
+        <JoinSessionDialog onJoined={openShared} />
         <SettingsDialog providers={providers ?? []} onProvidersChanged={() => void refresh()} />
         <Toaster richColors position="bottom-right" />
       </TooltipProvider>
@@ -251,12 +279,15 @@ function AppHeader({
   workspaceId,
   nav,
   session,
+  sharedId,
   onToggleIncognito,
   children,
 }: {
   workspaceId?: string;
   nav: Nav;
   session: Conversation | null;
+  /** A session shared with this app, on screen instead of `session`. */
+  sharedId: string | null;
   onToggleIncognito: () => void;
   children: ReactNode;
 }) {
@@ -281,7 +312,9 @@ function AppHeader({
       )}
       {children}
       <span data-tauri-drag-region className="min-w-8 flex-1 self-stretch" />
-      {workspaceId ? (
+      {/* Who's watching: a session shared from here, or the one being watched. */}
+      {(sharedId ?? session?.id) && <SharePresence threadId={(sharedId ?? session?.id)!} />}
+      {sharedId ? null : workspaceId ? (
         <>
           <WorkspaceChip workspaceId={workspaceId} />
           <PanelToggles workspaceId={workspaceId} />
@@ -291,6 +324,11 @@ function AppHeader({
       )}
     </header>
   );
+}
+
+/** A watched share as the chat view takes a session: only for showing, never stored. */
+function watchedConversation(share: ShareView): Conversation {
+  return { id: share.threadId, title: share.thread.title, createdAt: 0, updatedAt: 0, messages: [] };
 }
 
 /** The open session plus back/forward stacks of the ones visited before it; deleted sessions are skipped. */

@@ -34,6 +34,7 @@ import { toast } from "sonner";
 
 import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
 import { confirmDeleteProject, openProjectEditor, SessionMenuItems } from "@/components/session-actions";
+import { SharedGroup } from "@/components/shared-sessions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -105,8 +106,11 @@ export const NEW_SHORTCUT_LABEL = IS_MAC ? "⌘N" : "Ctrl+N";
 /** A plain chat, or a Cowork session working in a folder. */
 export type SessionMode = "chat" | "cowork";
 
-/** What the main area shows: the open session, or a page the sidebar opens in its place. */
-export type Page = "session" | "automations" | "security" | "review" | "wiki";
+/**
+ * What the main area shows: the open session, or a page the sidebar opens in
+ * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
+ */
+export type Page = "session" | "automations" | "security" | "review" | "wiki" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -126,6 +130,9 @@ interface AppSidebarProps {
   /** What the main area shows: the open session, or a page like Automations. */
   page: Page;
   onOpenPage: (page: Page) => void;
+  /** The shared session open (on the `shared` page). */
+  sharedId: string | null;
+  onOpenShared: (threadId: string) => void;
 }
 
 /** The sidebar's right edge: drag it to set the width, or on past the minimum to close; double-click puts the default back. */
@@ -163,6 +170,8 @@ export function AppSidebar({
   onSwitchMode,
   page,
   onOpenPage,
+  sharedId,
+  onOpenShared,
 }: AppSidebarProps) {
   const { data: session } = useSession();
   const trafficLights = useTrafficLights();
@@ -266,6 +275,8 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroup>
           <EditSidebarDialog open={editingNav} onOpenChange={setEditingNav} />
+
+          <SharedGroup activeId={page === "shared" ? sharedId : null} onOpen={onOpenShared} />
 
           <SidebarGroup>
             <div className="flex items-center pr-1">

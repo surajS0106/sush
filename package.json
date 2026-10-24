@@ -7,6 +7,7 @@
     "dev": "concurrently -n auth,ollama,app -c blue,magenta,green \"bun run dev:server\" \"bun run dev:ollama\" \"bun run dev:app\"",
     "dev:app": "bun scripts/prune-incremental.ts && bun --filter desktop tauri dev",
     "dev:server": "bun --filter server dev",
+    "dev:relay": "bun --filter server relay",
     "dev:ollama": "ollama ps || ollama serve",
     "build": "bun --filter server compile && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json",
     "build:mac": "export PATH=\"$HOME/.cargo/bin:$PATH\" MACOSX_DEPLOYMENT_TARGET=11.0 && bun --filter server compile && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.macos-icon.conf.json --bundles dmg",

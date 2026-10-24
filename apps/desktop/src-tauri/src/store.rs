@@ -33,7 +33,9 @@ pub async fn thread_save(state: State<'_, AppState>, thread: ThreadMeta, message
 }
 
 #[tauri::command]
-pub async fn thread_delete(state: State<'_, AppState>, id: String) -> AppResult<()> {
+pub async fn thread_delete(app: tauri::AppHandle, state: State<'_, AppState>, id: String) -> AppResult<()> {
+    // Nobody keeps watching a session that's gone.
+    state.runs.shares.end_host(&app, &id);
     // A run still going would save the thread again; so would its sub-agents'.
     state.runs.stop_with_agents(&id).await;
     state.runs.forget(&id);
@@ -236,17 +238,25 @@ pub async fn memory_clear(state: State<'_, AppState>) -> AppResult<()> {
 /// Serves `sushblob://localhost/<sha>` (`http://sushblob.localhost/<sha>` on
 /// Windows) so the webview can show stored images.
 pub fn serve_blob<R: tauri::Runtime>(ctx: UriSchemeContext<'_, R>, request: tauri::http::Request<Vec<u8>>, responder: UriSchemeResponder) {
-    let store = ctx.app_handle().state::<AppState>().store.clone();
+    let app = ctx.app_handle().clone();
+    let store = app.state::<AppState>().store.clone();
     let sha = request.uri().path().trim_start_matches('/').to_string();
-    tauri::async_runtime::spawn_blocking(move || {
-        let response = match store.blob(&sha) {
+    tauri::async_runtime::spawn(async move {
+        let lookup = sha.clone();
+        let found = match tauri::async_runtime::spawn_blocking(move || store.blob(&lookup)).await {
+            // Not here: it may be an attachment in a session shared with this app, fetched from its host.
+            Ok(Ok(None)) => Ok(app.state::<AppState>().runs.shares.fetch_blob(&sha).await),
+            Ok(Ok(found)) => Ok(found),
+            _ => Err(()),
+        };
+        let response = match found {
             Ok(Some((media_type, bytes))) => Response::builder()
                 .header(header::CONTENT_TYPE, media_type)
                 // Content-addressed, so it never changes.
                 .header(header::CACHE_CONTROL, "max-age=31536000, immutable")
                 .body(bytes),
             Ok(None) => Response::builder().status(StatusCode::NOT_FOUND).body(Vec::new()),
-            Err(_) => Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Vec::new()),
+            Err(()) => Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Vec::new()),
         };
         responder.respond(response.expect("valid response"));
     });

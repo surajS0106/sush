@@ -1,7 +1,24 @@
 # Sush Multiplayer: shared, live agent sessions
 
-Status: **draft, waiting for approval**. Nothing here is built yet.
-Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1).
+Status: **approved 2026-10-25; phase 1 built** (watch live, LAN relay). Phases 2–4 not started.
+Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1); decisions below updated 2026-10-25.
+
+## Decisions (2026-10-25)
+
+| Question | Decision |
+|---|---|
+| Hosting | Free only: Vercel, or the LAN. **Vercel can't host the relay**: Vercel Functions don't keep WebSocket connections open, and the relay is a WebSocket room. Phase 1 therefore runs the relay on one machine on the LAN (`bun run dev:relay`, which binds every interface) and everyone points Settings → Sharing at it. The relay URL is a setting, so a free host that does support WebSockets (Cloudflare Workers with Durable Objects, Render, Deno Deploy) needs no code change later, just a port of `apps/server/src/share/` if it isn't Bun. |
+| Account | A relay account per app, separate from the app's own login, with its token in the OS keyring via Rust. "Use the account I'm signed in with" reuses this app's session when the relay is the same server (true in dev). |
+| Socket / CSP | Both ends of the socket are in Rust, so no `ws(s)` origin goes into `connect-src`. Nothing in the webview talks to the relay. |
+| Guests keep a copy? | No. The replica is in memory only and is dropped on leave. |
+| `fs_search` and secrets | It skips secret-looking files, for everyone, single-player included. |
+| Lobby | On for every new joiner. |
+| Approval floor (§3.4) | Accepted, for phase 2. |
+| Memory / past-chat tools | **Stay on** in shared sessions: the owner chose to share. Their inputs and outputs are still hidden from guests in the stream (`redact`). |
+| Scope | Plain chats and Cowork. Reports aren't shareable. |
+| Guest attachments (phase 2) | Images too: the host stores guest blobs with type and size checks. |
+| Dev profiles | `SUSH_PROFILE`. Separate webview storage on Windows only; on macOS, use two machines. |
+| Defaults | Share 12 h, invite 24 h (max 72), 10 uses (max 25), 10 guests. |
 
 A team watches an agent's Cowork session live, redirects it, and hands it off.
 The run, the workspace, the sandbox, API keys and connector tokens stay on the
@@ -211,7 +228,7 @@ When a guest intent needs a run, `share.rs` sends a `share-config { requestId, t
 
 As long as a driver or collaborator holds a role (or a viewer could be handed control), the host applies these rules in `Host::approval` and `runConfig`:
 
-- **Memory and past-chat tools are not offered** to a shared thread (as with incognito), so a steer can't get the model to paste them into its answer. The owner can turn them back on per share.
+- ~~Memory and past-chat tools are not offered to a shared thread.~~ Decided otherwise: they stay on, because the owner chose to share. A driver could still ask the model to repeat what they return, so a share with drivers should say so in the share dialog (phase 2).
 - **Standing permissions turn into fresh approvals.** These now ask: workspace auto-edits, sandboxed auto shell, connector tools set to "Always allow", and allowed browser sites. Each is decided by the delegation:
 
 | `ApprovalClass` (`policy::classify`) | who may answer | delegable? |
@@ -392,7 +409,7 @@ Guest data that reaches the host: steer text (sent to the model, like the owner'
 
 ---
 
-## 8. Open questions for you
+## 8. Open questions (answered 2026-10-25, see Decisions at the top)
 
 1. **A hosted relay for release.** Release builds use a local auth sidecar, so there's no shared account system. Options: (a) release builds sign in to a hosted Sush server for everything (accounts move off the device, with the sidecar kept for offline or self-host); (b) keep local accounts and add a separate "Sharing account" sign-in that only multiplayer uses; (c) a relay URL in Settings, so teams self-host. I recommend **(c) with a default hosted URL**, and storing that account's token in the OS keyring through Rust rather than localStorage. Who runs the hosted relay, and on what domain?
 2. **CSP.** Because the socket lives in Rust (§1), I'd add no `ws(s)` origin to `connect-src`, only the hosted relay's `https` origin to the release CSP once open question 1 is settled. Your brief asked for the `ws/wss` origin to be added; is the Rust-side socket acceptable instead?

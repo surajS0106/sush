@@ -19,6 +19,7 @@ import {
   SettingsIcon,
   ShapesIcon,
   Trash2Icon,
+  UsersIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useTheme } from "next-themes";
@@ -30,6 +31,7 @@ import { DesignSection, PluginsSection, SkillsSection } from "@/components/custo
 import { ImagesSection } from "@/components/images-section";
 import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
+import { SharingSection } from "@/components/sharing-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
 import { SushiSection } from "@/components/sushi-section";
@@ -74,6 +76,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
       { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
       { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
+      { id: "sharing", label: "Sharing", icon: UsersIcon, keywords: "share live multiplayer relay invite watch team guests lan" },
       { id: "design", label: "Design systems", icon: PaletteIcon, keywords: "brand style guidelines" },
     ],
   },
@@ -192,6 +195,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "speech" && <SpeechSection providers={providers} />}
           {state?.section === "images" && <ImagesSection providers={providers} />}
           {state?.section === "memory" && <MemorySection />}
+          {state?.section === "sharing" && <SharingSection />}
           {state?.section === "design" && <DesignSection />}
           {state?.section === "skills" && <SkillsSection />}
           {state?.section === "connectors" && <ConnectorsSection />}

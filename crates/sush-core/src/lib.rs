@@ -13,6 +13,7 @@ pub mod message;
 pub mod provider;
 pub mod providers;
 pub mod reports;
+pub mod share;
 pub mod sse;
 pub mod store;
 pub mod transcribe;

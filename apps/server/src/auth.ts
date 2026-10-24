@@ -6,11 +6,14 @@ import { bearer } from "better-auth/plugins";
 /** Origins the desktop webview loads from: Vite in dev, Tauri's custom protocol in builds. */
 export const trustedOrigins = ["http://localhost:1420", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 
+/** Accounts, and the shared sessions the relay keeps (`share/db.ts`). */
+export const db = new Database(process.env.DATABASE_PATH ?? "auth.sqlite");
+
 export const auth = betterAuth({
   baseURL: process.env.BETTER_AUTH_URL ?? `http://localhost:${process.env.PORT ?? 3000}`,
   // Falls back to a dev-only secret; set BETTER_AUTH_SECRET in production.
   secret: process.env.BETTER_AUTH_SECRET,
-  database: new Database(process.env.DATABASE_PATH ?? "auth.sqlite"),
+  database: db,
   trustedOrigins,
   emailAndPassword: { enabled: true, minPasswordLength: 8 },
   user: { deleteUser: { enabled: true } },

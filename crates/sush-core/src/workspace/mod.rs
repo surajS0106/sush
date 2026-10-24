@@ -324,7 +324,8 @@ impl WorkspaceFs {
         Ok((found, false))
     }
 
-    /// Lines matching a regex, as `path:line: text`.
+    /// Lines matching a regex, as `path:line: text`. Secret-looking files are
+    /// skipped: reading one needs the user's approval, which a search mustn't get around.
     pub fn search(&self, pattern: &str, glob: Option<&str>, ignore_case: bool, limit: usize) -> FsResult<(Vec<String>, bool)> {
         let re = regex::RegexBuilder::new(pattern)
             .case_insensitive(ignore_case)
@@ -340,7 +341,7 @@ impl WorkspaceFs {
             .transpose()?;
         let mut hits = Vec::new();
         for path in self.walk() {
-            if filter.as_ref().is_some_and(|f| !f.is_match(&path)) {
+            if filter.as_ref().is_some_and(|f| !f.is_match(&path)) || looks_secret(&path) {
                 continue;
             }
             let Ok(bytes) = self.dir.read(&path) else { continue };
@@ -485,6 +486,16 @@ mod tests {
         assert!(fs.read("link/secret.txt", 1, 10).is_err());
         assert!(fs.write("link/new.txt", b"x").is_err());
         assert!(!outside.path().join("new.txt").exists());
+    }
+
+    #[test]
+    fn search_skips_secret_files() {
+        let (_d, fs) = ws();
+        fs.write(".env", b"API_KEY=hunter2\n").unwrap();
+        fs.write("config.rs", b"const API_KEY: &str = \"env\";\n").unwrap();
+        let (hits, _) = fs.search("API_KEY", None, false, 10).unwrap();
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert!(hits[0].starts_with("config.rs:1:"));
     }
 
     #[test]

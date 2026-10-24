@@ -9,7 +9,7 @@ A command touches three places that must agree. Nothing checks them against each
 
 ## 1. Rust handler: `apps/desktop/src-tauri/src/<module>.rs`
 
-Put it in the module that owns the area (`commands.rs` for providers/chat, `library.rs` for local files and plugins, `connectors.rs` / `connector_auth.rs` for MCP, `speech.rs` / `whisper.rs` for dictation). Create a new module only for a new area, and add `mod <name>;` in `lib.rs`.
+Put it in the module that owns the area (`commands.rs` for providers/chat, `library.rs` for local files and plugins, `connectors.rs` / `connector_auth.rs` for MCP, `speech.rs` / `whisper.rs` for dictation, `share.rs` for shared sessions: read the `multiplayer` skill first, since a guest-triggered action is an `Intent`, not a new command). Create a new module only for a new area, and add `mod <name>;` in `lib.rs`.
 
 ```rust
 #[tauri::command]
