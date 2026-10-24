@@ -63,7 +63,7 @@ import { allowTool } from "@/lib/library";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
 import { errorMessage, type SandboxStatus } from "@/lib/tauri";
-import { FOLDER_MEDIA_TYPE, type WebActivity } from "@/lib/transport";
+import { FOLDER_MEDIA_TYPE, type SushMetadata, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
 
@@ -74,20 +74,42 @@ interface ToolPartProps {
   onResult: (result: ToolResult) => void;
   /** Let a waiting connector or Cowork call run; Rust runs it. */
   onApprove: () => void;
+  /** In a shared session: who answered this call (`metadata.sushAnswers` on its message). */
+  answer?: ToolAnswer;
 }
+
+export type ToolAnswer = NonNullable<SushMetadata["sushAnswers"]>[string];
 
 /** Calls that wait for whoever runs the session (an approval, an answer). */
 const ASKS = new Set(["ask-user", "skill-save", "automation-save", "workspace", "browser", "connector"]);
 
+const ANSWERED = { approve: "Approved", deny: "Denied", answer: "Answered" } as const;
+
 export function ToolPart(props: ToolPartProps) {
-  // Watching someone's session: their approvals and questions are theirs to answer.
-  const host = useContext(WatchingHost);
+  const card = <ToolCard {...props} />;
+  if (!props.answer) return card;
+  return (
+    <div className="flex flex-col gap-1">
+      {card}
+      <p className="text-xs text-muted-foreground">
+        {ANSWERED[props.answer.decision]} by {props.answer.by.name}
+      </p>
+    </div>
+  );
+}
+
+function ToolCard(props: ToolPartProps) {
+  // Watching someone's session: their approvals and questions are theirs to
+  // answer, apart from what a driver was handed.
+  const watching = useContext(WatchingHost);
   const running = useRunningToolCalls().has(props.part.toolCallId);
   const kind = toolKind(props.part.toolName);
-  if (host && props.part.state === "input-available" && !running && ASKS.has(kind)) {
+  // A guest doesn't have the host's connectors; their tools are `<connector>__<tool>`.
+  const asks = ASKS.has(kind) || (kind === "unknown" && props.part.toolName.includes("__"));
+  if (watching && props.part.state === "input-available" && !running && asks && !watching.mayAnswer(props.part)) {
     return (
       <p className="text-sm text-muted-foreground italic">
-        Waiting for {host} to {kind === "ask-user" ? "answer" : "approve"}
+        Waiting for {watching.hostName} to {kind === "ask-user" ? "answer" : "approve"}
       </p>
     );
   }
@@ -663,6 +685,8 @@ function BrowserPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
 export const DENIED = "The user denied this tool call.";
 
 function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
+  // A guest answering for the host: they don't have the connector, and "Always allow" stays the host's.
+  const watching = useContext(WatchingHost);
   const [running, setRunning] = useState(false);
   const inFlight = useRunningToolCalls().has(part.toolCallId);
   const found = findConnectorTool(part.toolName);
@@ -714,16 +738,17 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
       if (running || inFlight) {
         return <LoadingState label={`Running ${toolName}`} />;
       }
-      if (!canAnswer || !found) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
+      if (!canAnswer || (!found && !watching)) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
       return (
         <ToolApprovalCard
           connector={connectorName}
           tool={toolName}
-          description={found.spec.description.replace(/^\[[^\]]*\] /, "")}
+          description={found?.spec.description.replace(/^\[[^\]]*\] /, "")}
           input={part.input}
+          allowAlways={!watching && !!found}
           onDeny={() => onResult({ errorText: DENIED })}
           onAllow={(always) => {
-            if (always) allowTool(found.connector.id, found.tool);
+            if (always && found) allowTool(found.connector.id, found.tool);
             setRunning(true);
             onApprove();
           }}

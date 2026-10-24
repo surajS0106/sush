@@ -11,6 +11,7 @@ import { NavControls, type Nav } from "@/components/nav-controls";
 import { ReportsPage } from "@/components/reports-page";
 import { WikiPage } from "@/components/wiki-page";
 import { IncognitoToggle, SessionDialogs, SessionMenu } from "@/components/session-actions";
+import { ShareActivityButton } from "@/components/share-activity";
 import { JoinSessionDialog, SharePresence } from "@/components/shared-sessions";
 import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
@@ -313,6 +314,7 @@ function AppHeader({
       {children}
       <span data-tauri-drag-region className="min-w-8 flex-1 self-stretch" />
       {/* Who's watching: a session shared from here, or the one being watched. */}
+      {(sharedId ?? session?.id) && <ShareActivityButton threadId={(sharedId ?? session?.id)!} />}
       {(sharedId ?? session?.id) && <SharePresence threadId={(sharedId ?? session?.id)!} />}
       {sharedId ? null : workspaceId ? (
         <>

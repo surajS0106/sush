@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 
-use super::{redact, HostMsg, Member, SharePolicy, ThreadInfo, ThreadState, TurnFiles};
+use super::{audit, redact, Comment, HostMsg, Member, Room, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
 use crate::agent::{Op, RunStatus};
 
 /// Merged text deltas stop growing past this, so one message stays small.
@@ -23,6 +23,9 @@ pub enum Event {
     FilesChanged { turns: Vec<TurnFiles> },
     Members { members: Vec<Member>, policy: SharePolicy },
     Thread { thread: ThreadInfo },
+    Queue { suggestions: Vec<Suggestion> },
+    Comment { comment: Comment },
+    Audit { entry: audit::Entry },
 }
 
 #[derive(Debug)]
@@ -87,6 +90,9 @@ impl Outbox {
                     Event::FilesChanged { turns } => HostMsg::FilesChanged { epoch, seq, turns },
                     Event::Members { members, policy } => HostMsg::Members { epoch, seq, members, policy },
                     Event::Thread { thread } => HostMsg::Thread { epoch, seq, thread },
+                    Event::Queue { suggestions } => HostMsg::Queue { epoch, seq, suggestions },
+                    Event::Comment { comment } => HostMsg::Comment { epoch, seq, comment },
+                    Event::Audit { entry } => HostMsg::Audit { epoch, seq, entry },
                 }
             })
             .collect()
@@ -94,22 +100,14 @@ impl Outbox {
 
     /// A snapshot that follows the last flushed message. Flush first: anything
     /// still pending is already part of `threads` and must not be sent again.
-    #[allow(clippy::too_many_arguments)]
-    pub fn snapshot(
-        &self,
-        thread: ThreadInfo,
-        threads: Vec<ThreadState>,
-        running: Vec<String>,
-        turns: Vec<TurnFiles>,
-        members: Vec<Member>,
-        policy: SharePolicy,
-    ) -> HostMsg {
+    pub fn snapshot(&self, thread: ThreadInfo, threads: Vec<ThreadState>, running: Vec<String>, turns: Vec<TurnFiles>, room: Room) -> HostMsg {
         debug_assert!(self.pending.is_empty(), "flush before taking a snapshot");
         let threads = threads
             .into_iter()
             .map(|t| ThreadState { messages: redact::messages(&t.messages), ..t })
             .collect();
-        HostMsg::Snapshot { epoch: self.epoch, seq: self.seq, thread, threads, running, turns, members, policy }
+        let Room { members, policy, suggestions, comments, audit } = room;
+        HostMsg::Snapshot { epoch: self.epoch, seq: self.seq, thread, threads, running, turns, members, policy, suggestions, comments, audit }
     }
 }
 
@@ -195,7 +193,7 @@ mod tests {
         out.push(text(0, "x"));
         out.flush();
         let info = ThreadInfo { title: "t".into(), kind: super::super::ThreadKind::Chat, workspace_name: None, host_name: "h".into() };
-        let snap = out.snapshot(info, vec![], vec![], vec![], vec![], SharePolicy::default());
+        let snap = out.snapshot(info, vec![], vec![], vec![], Room::default());
         assert_eq!(snap.order(), Some((2, 1)));
         out.next_epoch();
         out.push(text(0, "y"));

@@ -47,7 +47,8 @@ export function SharingSection() {
       <Group title="What guests see">
         <p className="py-3 text-sm text-muted-foreground">
           The messages, tool calls, and the files a session changes, as it runs. Never your keys, secret files (.env, keys),
-          memory or past chats. Guests can’t send messages or approve anything, and the session keeps running here. The relay
+          memory or past chats. Guests watch unless you let them suggest messages, or hand one of them the wheel: the driver
+          sends messages and answers only the approvals you choose. The session keeps running here, with your keys. The relay
           can read what passes through it, so use one you trust: on your own network, run <code>bun run dev:relay</code> on
           one machine.
         </p>

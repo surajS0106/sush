@@ -9,8 +9,15 @@
 // `resume` carries on with it.
 //
 // A session someone shared with this app (`shared:<id>`, `lib/share.ts`)
-// arrives as the same frames and shows the same way, but only to watch: every
-// action here does nothing for it.
+// arrives as the same frames and shows the same way. Actions on it become
+// requests to its host (`share_request`), which checks the guest's role first:
+// a driver's message steers the host's run (a collaborator's waits as a
+// suggestion), and stop, resume, "Send now" and answers go the same way.
+// Editing, regenerating and rewinding stay the host's.
+//
+// When someone in a session shared from here starts a run, Rust asks this
+// window (the leader) for the run's config (`share-config`), built and
+// budgeted as for the owner's own actions.
 
 import { Channel } from "@tauri-apps/api/core";
 import type { FileUIPart } from "ai";
@@ -43,6 +50,8 @@ import {
   type RunConfig,
   type RunFrame,
   type RunStatus,
+  type ShareImage,
+  type ShareIntent,
   type ThreadOp,
   type ToolResponse,
 } from "@/lib/tauri";
@@ -185,7 +194,60 @@ function onFrame(frame: RunFrame) {
     case "share-gone":
       shareFrames?.(frame);
       break;
+    case "share-config":
+      void answerShareConfig(frame);
+      break;
   }
+}
+
+/** Build the config for a run someone in a session shared from here starts, as for the owner's own (budgets included). */
+async function answerShareConfig(frame: Extract<RunFrame, { type: "share-config" }>) {
+  try {
+    const config = runConfig(frame.threadId, current(frame.threadId));
+    const blocked = frame.action === "respond" ? null : budgetBlock(config.providerId);
+    if (blocked) throw new Error(blocked);
+    await api.shareConfigResult(frame.requestId, config, null);
+  } catch (e) {
+    await api.shareConfigResult(frame.requestId, null, errorMessage(e)).catch((err) => console.error("Could not answer a share", err));
+  }
+}
+
+/** The config a session's next run gets, for the owner sending a suggestion on (`lib/share.ts`). */
+export const sessionRunConfig = (id: string) => runConfig(id, current(id));
+
+/** A joined share's thread (`shared:<share>`) and, for a sub-agent's (`shared:<share>:<call>`), its call. */
+function sharedParts(id: string): { root: string; child: string | null } {
+  const rest = id.slice("shared:".length);
+  const at = rest.indexOf(":");
+  return at < 0 ? { root: id, child: null } : { root: `shared:${rest.slice(0, at)}`, child: rest.slice(at + 1) };
+}
+
+/** Ask a joined share's host to do something; a refusal shows as a toast. */
+async function askHost<T>(id: string, intent: ShareIntent, failed: string): Promise<T | null> {
+  try {
+    return await api.shareRequest<T>(sharedParts(id).root, intent);
+  } catch (e) {
+    toast.error(failed, { description: errorMessage(e) });
+    return null;
+  }
+}
+
+/** Images attached in a shared session's composer, as the host takes them (other files can't be sent). */
+function shareImages(files: FileUIPart[]): ShareImage[] {
+  return files.flatMap((f) => {
+    const match = /^data:([^;,]+);base64,(.*)$/.exec(f.url);
+    return match && match[1].startsWith("image/") ? [{ mediaType: match[1], data: match[2], filename: f.filename }] : [];
+  });
+}
+
+/** A guest's message: a driver's steers the host's run (shown queued until it joins), a collaborator's becomes a suggestion. */
+async function sendShared(id: string, text: string, files: FileUIPart[]) {
+  const images = shareImages(files);
+  const reply = await askHost<{ messageId?: string; suggestionId?: string }>(id, { kind: "steer", text, images }, "Couldn’t send that");
+  const messageId = reply?.messageId;
+  if (!messageId || current(id).some((m) => m.id === messageId)) return;
+  const parts = files.filter((f) => f.url.startsWith("data:image/"));
+  setQueue(id, (q) => [...q, userMessage(messageId, text, parts)]);
 }
 
 /** `lib/share.ts` follows share frames; it registers once the modules have loaded (`initShares`). */
@@ -309,7 +371,10 @@ const isBusy = (id: string) => {
  * run that stopped before taking it) goes along with it.
  */
 export function sendMessage(id: string, text: string, files: FileUIPart[]) {
-  if (isSharedThread(id)) return;
+  if (isSharedThread(id)) {
+    void sendShared(id, text, files);
+    return;
+  }
   const sent = userMessage(crypto.randomUUID(), text, files);
   if (isBusy(id)) {
     setQueue(id, (q) => [...q, sent]);
@@ -325,7 +390,11 @@ export function sendMessage(id: string, text: string, files: FileUIPart[]) {
  * (the run stopped before taking them) they start the next one.
  */
 export function sendQueued(id: string) {
-  if (isSharedThread(id)) return;
+  if (isSharedThread(id)) {
+    // The host's run holds a driver's messages already.
+    void askHost(id, { kind: "send-now" }, "Couldn’t send that now");
+    return;
+  }
   const queued = queues.get().get(id);
   if (!queued?.length) return;
   const status = views.get().get(id)?.status;
@@ -435,7 +504,14 @@ export const threadMessages = (id: string) => current(id);
 
 /** Answer a tool call that waits for the user: an approval, a denial, or a result. */
 export function respond(id: string, callId: string, response: ToolResponse) {
-  if (isSharedThread(id)) return;
+  if (isSharedThread(id)) {
+    // The host takes only approve or deny, and an answer to the model's questions; never a made-up result.
+    const { child } = sharedParts(id);
+    const decision = response.type === "error" ? "deny" : "approve";
+    const answer = response.type === "output" ? response.output : undefined;
+    void askHost(id, { kind: "respond", child, callId, decision, answer }, "Couldn’t answer");
+    return;
+  }
   void start(id, { type: "respond", callId, response }, current(id));
 }
 
@@ -445,14 +521,20 @@ export const toResponse = (result: ToolResult): ToolResponse =>
 
 /** Carry on with a stopped reply, or answer a message the app closed on. */
 export function resume(id: string) {
-  if (isSharedThread(id)) return;
+  if (isSharedThread(id)) {
+    void askHost(id, { kind: "resume" }, "Couldn’t resume");
+    return;
+  }
   setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
   void start(id, { type: "resume" }, current(id));
 }
 
 /** Stop (pause) the run: the model stream and any tool calls in flight. The reply can be resumed. */
 export function stop(id: string) {
-  if (isSharedThread(id)) return;
+  if (isSharedThread(id)) {
+    void askHost(id, { kind: "stop" }, "Couldn’t stop it");
+    return;
+  }
   void api.runCancel(id).catch((e) => console.error("Could not stop the run", e));
 }
 

@@ -4,7 +4,7 @@
 
 import type { FileUIPart, UIMessage } from "ai";
 
-import { api } from "@/lib/tauri";
+import { api, type ShareAuthor } from "@/lib/tauri";
 
 export interface ModelTarget {
   providerId: string;
@@ -24,6 +24,12 @@ export interface SushMetadata {
   resumed?: boolean;
   /** On the message that brings a background sub-agent's report (`sush_core::agent::subagents::report_message`). */
   subagentReport?: { callId: string; description: string; status: "done" | "failed" };
+  /** In a shared session, on a message someone else wrote (set by the host, never by the sender). */
+  author?: ShareAuthor;
+  /** On a collaborator's suggestion: who sent it on. */
+  acceptedBy?: ShareAuthor;
+  /** On a reply in a shared session: who answered its tool calls, by call id (`sush_core::agent::ANSWERS`). */
+  sushAnswers?: Record<string, { by: ShareAuthor; decision: "approve" | "deny" | "answer"; at: number }>;
 }
 
 /** A provider-run tool (web search/fetch) and the pages it returned. */

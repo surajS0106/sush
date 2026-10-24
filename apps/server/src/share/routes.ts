@@ -69,9 +69,11 @@ const ownerOnly = (c: { get: (key: "isHost") => boolean }) => c.get("isHost");
 
 shares.post("/:id/invites", async (c) => {
   if (!ownerOnly(c)) return c.json({ error: "Only the host can invite people." }, 403);
-  const body = await c.req.json<{ ttlHours?: unknown; maxUses?: unknown }>().catch(() => ({}) as Record<string, unknown>);
+  const body = await c.req.json<{ ttlHours?: unknown; maxUses?: unknown; roleCap?: unknown }>().catch(() => ({}) as Record<string, unknown>);
   const ttl = clamp(body.ttlHours, INVITE_TTL_HOURS.default, INVITE_TTL_HOURS.max);
   const maxUses = clamp(body.maxUses, INVITE_USES.default, INVITE_USES.max);
+  // A link lets people watch, or also suggest. Driving is only ever handed over in the session.
+  const roleCap = body.roleCap === "collaborator" ? "collaborator" : "viewer";
   const share = c.get("share");
   const token = randomId(32);
   const id = randomId(9);
@@ -79,10 +81,10 @@ shares.post("/:id/invites", async (c) => {
   // An invite can't outlive its share.
   const expiresAt = Math.min(now + ttl * HOUR, share.expires_at);
   db.run(
-    "INSERT INTO share_invite (id, share_id, token_hash, role_cap, created_at, expires_at, max_uses) VALUES (?, ?, ?, 'viewer', ?, ?, ?)",
-    [id, share.id, hashToken(token), now, expiresAt, maxUses],
+    "INSERT INTO share_invite (id, share_id, token_hash, role_cap, created_at, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [id, share.id, hashToken(token), roleCap, now, expiresAt, maxUses],
   );
-  return c.json({ inviteId: id, token, expiresAt, maxUses });
+  return c.json({ inviteId: id, token, expiresAt, maxUses, roleCap });
 });
 
 shares.get("/:id/invites", (c) => {
@@ -98,6 +100,7 @@ shares.get("/:id/invites", (c) => {
       maxUses: r.max_uses,
       uses: r.uses,
       revoked: !!r.revoked_at,
+      roleCap: r.role_cap,
     })),
   );
 });

@@ -137,6 +137,19 @@ const MIGRATIONS: &[&str] = &[r#"
 "#, r#"
     ALTER TABLE threads ADD COLUMN parent_id TEXT;
     CREATE INDEX threads_parent ON threads (parent_id);
+"#, r#"
+    -- What happened in sessions shared from here (`crate::share::audit`).
+    CREATE TABLE share_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        share_id TEXT NOT NULL,
+        thread_id TEXT NOT NULL,
+        at INTEGER NOT NULL,
+        actor_user_id TEXT NOT NULL,
+        actor_name TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        detail_json TEXT NOT NULL
+    );
+    CREATE INDEX share_events_share ON share_events (share_id, seq);
 "#];
 
 pub struct Store {
@@ -622,6 +635,35 @@ impl Store {
     }
 
     /// Forget a report. Its threads are the caller's to delete.
+    /// Add an entry to a shared session's audit log.
+    pub fn add_share_event(&self, share_id: &str, thread_id: &str, entry: &crate::share::audit::Entry) -> StoreResult<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO share_events (share_id, thread_id, at, actor_user_id, actor_name, kind, detail_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![share_id, thread_id, entry.at, entry.actor_user_id, entry.actor_name, entry.kind.as_str(), serde_json::to_string(&entry.detail)?],
+        )?;
+        Ok(())
+    }
+
+    /// A shared session's latest audit entries, oldest first.
+    pub fn share_events(&self, share_id: &str, limit: usize) -> StoreResult<Vec<crate::share::audit::Entry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT at, actor_user_id, actor_name, kind, detail_json FROM share_events WHERE share_id = ?1 ORDER BY seq DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![share_id, limit as i64], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?, r.get::<_, String>(4)?))
+        })?;
+        let mut entries = Vec::new();
+        for row in rows {
+            let (at, actor_user_id, actor_name, kind, detail) = row?;
+            // Kinds a later version added are skipped.
+            let Some(kind) = crate::share::audit::Kind::parse(&kind) else { continue };
+            entries.push(crate::share::audit::Entry { at, actor_user_id, actor_name, kind, detail: serde_json::from_str(&detail)? });
+        }
+        entries.reverse();
+        Ok(entries)
+    }
+
     pub fn delete_report(&self, id: &str) -> StoreResult<()> {
         self.conn.lock().unwrap().execute("DELETE FROM reports WHERE id = ?1", [id])?;
         Ok(())
@@ -813,6 +855,21 @@ mod tests {
         assert_eq!(threads.iter().map(|t| t.meta.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
         assert_eq!(threads[1].meta, a);
         assert_eq!(threads[1].messages, vec![text("user", "hello")]);
+    }
+
+    #[test]
+    fn share_events_come_back_latest_last() {
+        use crate::share::audit::{Entry, Kind};
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let entry = |at: i64, kind| Entry { at, actor_user_id: "u".into(), actor_name: "Shruti".into(), kind, detail: json!({ "n": at }) };
+        for at in 0..5 {
+            store.add_share_event("s1", "t", &entry(at, Kind::Steered)).unwrap();
+        }
+        store.add_share_event("s2", "t", &entry(9, Kind::Joined)).unwrap();
+        let events = store.share_events("s1", 3).unwrap();
+        assert_eq!(events.iter().map(|e| e.at).collect::<Vec<_>>(), [2, 3, 4]);
+        assert_eq!(events[2], entry(4, Kind::Steered));
     }
 
     #[test]

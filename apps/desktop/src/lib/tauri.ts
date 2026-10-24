@@ -443,7 +443,9 @@ export type RunFrame =
   | { type: "files-changed"; threadId: string; workspaceId: string }
   | { type: "report"; report: Report }
   | { type: "share"; share: ShareView }
-  | { type: "share-gone"; threadId: string };
+  | { type: "share-gone"; threadId: string }
+  /** Build the config for a run someone in a shared session starts; answer with `shareConfigResult`. */
+  | { type: "share-config"; requestId: string; threadId: string; action: "steer" | "respond" | "resume" };
 
 // --- shared sessions (`share.rs`, `sush_core::share`) --------------------------------
 
@@ -474,6 +476,70 @@ export interface SharePeer {
 export interface SharePolicy {
   /** Guests may list the folder and open any file in it (secret-looking ones never). */
   browseFiles: boolean;
+  /** Approvals the driver may answer for the owner. */
+  delegation: ShareDelegation;
+}
+
+/** Kinds of approval the owner hands to the driver (`sush_core::share::Delegation`). Secret reads never. */
+export interface ShareDelegation {
+  edits: boolean;
+  shell: boolean;
+  /** Commands with network or outside the sandbox, and merges into another branch. */
+  escalated: boolean;
+  connectors: boolean;
+  browser: boolean;
+}
+
+/** Someone in a shared session, as messages and answers credit them (`sush_core::agent::Author`). */
+export interface ShareAuthor {
+  userId: string;
+  name: string;
+  image?: string | null;
+}
+
+/** A collaborator's message waiting for the driver or the owner. */
+export interface ShareSuggestion {
+  id: string;
+  author: ShareAuthor;
+  text: string;
+  /** Image attachments, as file parts. */
+  files: { type: "file"; mediaType: string; url: string; filename?: string }[];
+  at: number;
+}
+
+export interface ShareComment {
+  id: string;
+  author: ShareAuthor;
+  text: string;
+  messageId?: string | null;
+  at: number;
+}
+
+export type ShareAuditKind =
+  | "joined"
+  | "left"
+  | "steered"
+  | "suggested"
+  | "accepted"
+  | "dropped"
+  | "approved"
+  | "denied"
+  | "answered"
+  | "interrupted"
+  | "stopped"
+  | "resumed"
+  | "commented"
+  | "role"
+  | "kicked"
+  | "denied-intent"
+  | "ended";
+
+export interface ShareAuditEntry {
+  at: number;
+  actorUserId: string;
+  actorName: string;
+  kind: ShareAuditKind;
+  detail: Record<string, unknown> | null;
 }
 
 export interface ShareThreadInfo {
@@ -499,6 +565,12 @@ export interface ShareView {
   expiresAt: number;
   ended: string | null;
   error: string | null;
+  /** This app's user on the relay. */
+  me: string | null;
+  suggestions: ShareSuggestion[];
+  comments: ShareComment[];
+  /** The latest entries of the audit log, oldest first. */
+  audit: ShareAuditEntry[];
 }
 
 export interface ShareAccount {
@@ -522,15 +594,31 @@ export interface InviteInfo {
   maxUses: number;
   uses: number;
   revoked: boolean;
+  roleCap: "viewer" | "collaborator";
 }
 
-/** What a guest may ask a share's host for (`sush_core::share::Intent`). */
+/** An image a guest attaches to a message, base64 without the `data:` prefix. */
+export interface ShareImage {
+  mediaType: string;
+  data: string;
+  filename?: string;
+}
+
+/** What a guest may ask a share's host for (`sush_core::share::Intent`). The host checks each against their role. */
 export type ShareIntent =
   | { kind: "get-turn-changes" }
   | { kind: "get-diff"; turnId: string }
   | { kind: "get-file"; path: string }
   | { kind: "list-dir"; path: string }
-  | { kind: "get-blob"; sha: string };
+  | { kind: "get-blob"; sha: string }
+  | { kind: "steer"; text: string; images: ShareImage[] }
+  | { kind: "suggestion-accept"; id: string; text?: string | null }
+  | { kind: "suggestion-drop"; id: string }
+  | { kind: "send-now" }
+  | { kind: "stop" }
+  | { kind: "resume" }
+  | { kind: "respond"; child?: string | null; callId: string; decision: "approve" | "deny"; answer?: unknown }
+  | { kind: "comment"; text: string; messageId?: string | null };
 
 export interface SharesState {
   shares: ShareView[];
@@ -617,14 +705,25 @@ export const api = {
   shareAccountUseToken: (relayUrl: string, token: string) => invoke<ShareAccount>("share_account_use_token", { relayUrl, token }),
   shareAccountSignOut: () => invoke<void>("share_account_sign_out"),
   shareStart: (thread: ThreadMeta) => invoke<ShareView>("share_start", { thread }),
-  shareInviteCreate: (threadId: string, ttlHours?: number, maxUses?: number) =>
-    invoke<InviteLink>("share_invite_create", { threadId, ttlHours: ttlHours ?? null, maxUses: maxUses ?? null }),
+  shareInviteCreate: (threadId: string, roleCap: "viewer" | "collaborator" = "viewer", ttlHours?: number, maxUses?: number) =>
+    invoke<InviteLink>("share_invite_create", { threadId, roleCap, ttlHours: ttlHours ?? null, maxUses: maxUses ?? null }),
   shareInvitesList: (threadId: string) => invoke<InviteInfo[]>("share_invites_list", { threadId }),
   shareInviteRevoke: (threadId: string, inviteId: string) => invoke<void>("share_invite_revoke", { threadId, inviteId }),
   /** Let someone in from the lobby, or turn them away. */
   shareAdmit: (threadId: string, userId: string, allow: boolean) => invoke<void>("share_admit", { threadId, userId, allow }),
   shareKick: (threadId: string, userId: string) => invoke<void>("share_kick", { threadId, userId }),
   shareSetPolicy: (threadId: string, policy: SharePolicy) => invoke<void>("share_set_policy", { threadId, policy }),
+  /** One driver at a time: a new one makes the old one a collaborator. */
+  shareSetRole: (threadId: string, userId: string, role: Exclude<ShareRole, "owner">) => invoke<void>("share_set_role", { threadId, userId, role }),
+  /** The owner sends a suggestion, as it is or edited, with the config their UI built. */
+  shareSuggestionAccept: (threadId: string, suggestionId: string, text: string | null, config: RunConfig) =>
+    invoke<void>("share_suggestion_accept", { threadId, suggestionId, text, config }),
+  shareSuggestionDrop: (threadId: string, suggestionId: string) => invoke<void>("share_suggestion_drop", { threadId, suggestionId }),
+  shareComment: (threadId: string, text: string, messageId?: string | null) =>
+    invoke<void>("share_comment", { threadId, text, messageId: messageId ?? null }),
+  /** The answer to a `share-config` frame. */
+  shareConfigResult: (requestId: string, config: RunConfig | null, error: string | null) =>
+    invoke<void>("share_config_result", { requestId, config, error }),
   shareEnd: (threadId: string) => invoke<void>("share_end", { threadId }),
   /** Join from an invite link; the share shows as its `threadId`. */
   shareJoin: (link: string) => invoke<ShareView>("share_join", { link }),

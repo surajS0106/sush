@@ -9,9 +9,12 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{HostMsg, Member, SharePolicy, ThreadInfo, ThreadState, TurnFiles};
+use super::{audit, Comment, HostMsg, Member, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
 use crate::agent::ui::{self, Op};
 use crate::agent::RunStatus;
+
+/// Comments a copy keeps, at most.
+pub const MAX_COMMENTS: usize = 200;
 
 /// What to do with a message from the host.
 #[derive(Debug, Clone, PartialEq)]
@@ -35,6 +38,9 @@ pub enum Change {
     FilesChanged,
     Members,
     Thread,
+    Queue,
+    Comment,
+    Audit,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +54,9 @@ pub struct Replica {
     pub turns: Vec<TurnFiles>,
     pub members: Vec<Member>,
     pub policy: SharePolicy,
+    pub suggestions: Vec<Suggestion>,
+    pub comments: Vec<Comment>,
+    pub audit: Vec<audit::Entry>,
 }
 
 impl Replica {
@@ -61,7 +70,10 @@ impl Replica {
     }
 
     pub fn apply(&mut self, msg: HostMsg) -> Applied {
-        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy } = msg {
+        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy, suggestions, comments, audit } = msg {
+            self.suggestions = suggestions;
+            self.comments = comments;
+            self.audit = audit;
             self.at = Some((epoch, seq));
             self.thread = Some(thread);
             self.threads = threads
@@ -123,6 +135,21 @@ impl Replica {
                 self.thread = Some(thread);
                 Change::Thread
             }
+            HostMsg::Queue { suggestions, .. } => {
+                self.suggestions = suggestions;
+                Change::Queue
+            }
+            HostMsg::Comment { comment, .. } => {
+                self.comments.push(comment);
+                if self.comments.len() > MAX_COMMENTS {
+                    self.comments.remove(0);
+                }
+                Change::Comment
+            }
+            HostMsg::Audit { entry, .. } => {
+                audit::push(&mut self.audit, entry);
+                Change::Audit
+            }
             HostMsg::Snapshot { .. } | HostMsg::Reply { .. } | HostMsg::Incompatible { .. } => return Applied::Ignored,
         };
         Applied::Changed(change)
@@ -175,7 +202,7 @@ fn localize_part(part: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::share::{outbox::Outbox, outbox::Event, ThreadKind};
+    use crate::share::{outbox::Event, outbox::Outbox, Author, Room, ThreadKind};
     use serde_json::json;
 
     fn info() -> ThreadInfo {
@@ -184,7 +211,25 @@ mod tests {
 
     fn snapshot(out: &Outbox, messages: Vec<Value>) -> HostMsg {
         let threads = vec![ThreadState { child: None, messages, status: RunStatus::Streaming, error: None }];
-        out.snapshot(info(), threads, vec![], vec![], vec![], SharePolicy::default())
+        out.snapshot(info(), threads, vec![], vec![], Room::default())
+    }
+
+    #[test]
+    fn suggestions_comments_and_the_log_follow_the_host() {
+        let mut out = Outbox::new(1);
+        let mut guest = Replica::default();
+        guest.apply(snapshot(&out, vec![]));
+        let author = Author { user_id: "u".into(), name: "Shruti".into(), image: None };
+        let suggestion = Suggestion { id: "s".into(), author: author.clone(), text: "try tabs".into(), files: vec![], at: 1 };
+        out.push(Event::Queue { suggestions: vec![suggestion.clone()] });
+        out.push(Event::Comment { comment: Comment { id: "c".into(), author, text: "nice".into(), message_id: None, at: 2 } });
+        let entry = audit::Entry { at: 3, actor_user_id: "u".into(), actor_name: "Shruti".into(), kind: audit::Kind::Suggested, detail: json!({}) };
+        out.push(Event::Audit { entry: entry.clone() });
+        let changes: Vec<Applied> = out.flush().into_iter().map(|m| guest.apply(m)).collect();
+        assert_eq!(changes, [Applied::Changed(Change::Queue), Applied::Changed(Change::Comment), Applied::Changed(Change::Audit)]);
+        assert_eq!(guest.suggestions, [suggestion]);
+        assert_eq!(guest.comments[0].text, "nice");
+        assert_eq!(guest.audit, [entry]);
     }
 
     /// The host's thread, as Rust applies the run's ops, and the guest's copy must end up the same.

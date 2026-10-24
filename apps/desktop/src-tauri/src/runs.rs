@@ -43,6 +43,7 @@ use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent
 use sush_core::browser as browser_tools;
 use sush_core::provider::EventStream;
 use sush_core::reports::{self, Report, ReportStatus, Role};
+use sush_core::share::policy as share_policy;
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{git, tools as ws_tools, Access, Workspace, WorkspaceFs};
@@ -77,6 +78,9 @@ pub enum RunFrame {
     Share { share: crate::share::ShareView },
     /// A share is gone from this app: ended here, or left.
     ShareGone { thread_id: String },
+    /// Build the config for a run someone in a share starts (`action`: steer,
+    /// respond or resume) and answer with `share_config_result`. Leader only.
+    ShareConfig { request_id: String, thread_id: String, action: String },
 }
 
 /// A live run's thread, for a share's snapshot.
@@ -182,7 +186,7 @@ impl Runs {
     pub(crate) fn send(&self, frame: RunFrame) {
         let channels = self.channels.lock().unwrap();
         self.shares.on_frame(&frame);
-        if matches!(frame, RunFrame::ClientTool { .. }) {
+        if matches!(frame, RunFrame::ClientTool { .. } | RunFrame::ShareConfig { .. }) {
             if let Some(channel) = Self::leader(&channels) {
                 let _ = channel.send(frame);
             }
@@ -263,6 +267,36 @@ impl Runs {
 
     pub fn is_running(&self, thread_id: &str) -> bool {
         self.live.lock().unwrap().contains_key(thread_id)
+    }
+
+    /// Whether any window is there to answer a request (a tool, a share's config).
+    pub(crate) fn has_windows(&self) -> bool {
+        !self.channels.lock().unwrap().is_empty()
+    }
+
+    /// A live run's copy of its thread's metadata.
+    pub(crate) fn live_meta(&self, thread_id: &str) -> Option<ThreadMeta> {
+        let live = self.live.lock().unwrap().get(thread_id).cloned();
+        live.map(|l| l.state.lock().unwrap().thread.clone())
+    }
+
+    /// "Send now" (see `run_interrupt`).
+    pub(crate) fn interrupt(&self, thread_id: &str) {
+        let live = self.live.lock().unwrap().get(thread_id).cloned();
+        if let Some(live) = live.filter(|l| !l.cancel.is_cancelled()) {
+            let _ = live.inbox.send(Inbox::Interrupt);
+        }
+    }
+
+    /// Who may steer a thread's session changed: its runs (and its sub-agents')
+    /// look again at the calls they hold for approval (`Host::approval`).
+    pub(crate) fn recheck_family(&self, thread_id: &str) {
+        let prefix = subagents::child_thread_id(thread_id, "");
+        for (id, live) in self.live.lock().unwrap().iter() {
+            if (id == thread_id || id.starts_with(&prefix)) && !live.cancel.is_cancelled() {
+                let _ = live.inbox.send(Inbox::Recheck);
+            }
+        }
     }
 
     /// Tell every window a report changed.
@@ -404,7 +438,7 @@ impl RunHost for Host {
     }
 
     fn approval(&self, call: &ToolCall, tool: &RunTool) -> Approval {
-        match (&tool.exec, &self.live.cowork) {
+        let approval = match (&tool.exec, &self.live.cowork) {
             (ToolExec::Workspace, Some(cowork)) => {
                 ws_tools::approval(&cowork.workspace.lock().unwrap(), &call.name, &call.input, Some(&cowork.sandbox))
             }
@@ -413,7 +447,19 @@ impl RunHost for Host {
                 browser_tools::approval(&call.name, &call.input, &allowed)
             }
             _ => tool.approval,
+        };
+        // While others can steer a shared session, the owner's standing
+        // permissions (auto edits, sandboxed commands, "Always allow"
+        // connectors, allowed sites) ask again, so nothing runs on the
+        // owner's authority because of someone else's message.
+        let standing = matches!(tool.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Connector { .. });
+        if approval == Approval::Auto && standing && self.app.state::<AppState>().runs.shares.steerable(&self.thread_id) {
+            let contained = self.live.cowork.as_ref().is_some_and(|c| c.sandbox.available && c.sandbox.network_blocked);
+            if share_policy::floored(share_policy::classify(&call.name, &call.input, contained)) {
+                return Approval::Ask;
+            }
         }
+        approval
     }
 
     fn detach(&self, call: &ToolCall) -> Option<Value> {
@@ -673,9 +719,32 @@ pub fn runs_subscribe(app: AppHandle, window: Window, state: State<'_, AppState>
 /// Start a run on a thread. A new message or regenerate replaces whatever is
 /// running there; an answer to a waiting tool call or a steering message goes
 /// to the live run, or starts from the saved thread if there is none.
+///
+/// In a shared session the first answer to a call wins, the owner's included:
+/// an answer that comes too late is refused, and one in time is credited to
+/// the owner so everyone sees who gave it.
 #[tauri::command]
 pub async fn run_start(app: AppHandle, thread: ThreadMeta, action: RunAction, config: RunConfig) -> AppResult<()> {
+    let action = match action {
+        RunAction::Respond { call_id, response, .. } => {
+            let state = app.state::<AppState>();
+            let shares = &state.runs.shares;
+            let by = shares.claim_local(&thread.id, &call_id)?;
+            let (id, call) = (thread.id.clone(), call_id.clone());
+            let started = start(&app, thread, RunAction::Respond { call_id, response, by }, config, None).await;
+            if started.is_err() {
+                shares.release_local(&id, &call);
+            }
+            return started.map(|_| ());
+        }
+        action => action,
+    };
     start(&app, thread, action, config, None).await.map(|_| ())
+}
+
+/// Start a run as `run_start` does, for someone in a shared session (`share.rs`).
+pub(crate) async fn start_run(app: &AppHandle, thread: ThreadMeta, action: RunAction, config: RunConfig) -> AppResult<()> {
+    start(app, thread, action, config, None).await.map(|_| ())
 }
 
 /// `run_start`, also for a sub-agent's run (`checkpoint_to`: its parent's
@@ -696,11 +765,12 @@ async fn start(
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
         let Some(live) = existing else { break };
         match &action {
-            RunAction::Respond { call_id, response } => {
+            RunAction::Respond { call_id, response, by } => {
                 if let (Some(current), Some(fresh)) = (&live.cowork, &cowork) {
                     *current.workspace.lock().unwrap() = fresh.workspace.lock().unwrap().clone();
                 }
-                let answer = Inbox::Respond { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()) };
+                let answer =
+                    Inbox::Respond { call_id: call_id.clone(), response: response.clone(), config: Some(config.clone()), by: by.clone() };
                 if !live.cancel.is_cancelled() && live.inbox.send(answer).is_ok() {
                     *live.ui_config.lock().unwrap() = ui_config;
                     return Ok(None);
@@ -986,10 +1056,7 @@ pub async fn thread_rewind(state: State<'_, AppState>, thread: ThreadMeta, messa
 /// its current step or tool calls early. Nothing happens if no run takes them.
 #[tauri::command]
 pub fn run_interrupt(state: State<'_, AppState>, thread_id: String) {
-    let live = state.runs.live.lock().unwrap().get(&thread_id).cloned();
-    if let Some(live) = live.filter(|l| !l.cancel.is_cancelled()) {
-        let _ = live.inbox.send(Inbox::Interrupt);
-    }
+    state.runs.interrupt(&thread_id);
 }
 
 /// The UI's answer to a `client-tool` frame.

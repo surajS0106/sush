@@ -784,6 +784,7 @@ function AgentDetail({
                 canAnswer={canAnswer}
                 onResult={(result) => respond(childId, p.toolCallId, toResponse(result))}
                 onApprove={() => respond(childId, p.toolCallId, { type: "approve" })}
+                answer={m.metadata?.sushAnswers?.[p.toolCallId]}
               />
             );
           };

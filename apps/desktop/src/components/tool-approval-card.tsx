@@ -14,11 +14,13 @@ interface ToolApprovalCardProps {
   tool: string;
   description?: string | null;
   input: unknown;
+  /** Offer "Always allow" (not to someone answering for a shared session's host). */
+  allowAlways?: boolean;
   onAllow: (always: boolean) => void;
   onDeny: () => void;
 }
 
-export function ToolApprovalCard({ connector, tool, description, input, onAllow, onDeny }: ToolApprovalCardProps) {
+export function ToolApprovalCard({ connector, tool, description, input, allowAlways = true, onAllow, onDeny }: ToolApprovalCardProps) {
   const args = Object.entries((input ?? {}) as Record<string, unknown>);
   return (
     <div className="w-full max-w-md">
@@ -53,9 +55,11 @@ export function ToolApprovalCard({ connector, tool, description, input, onAllow,
           <Button variant="ghost" size="sm" className="rounded-full" onClick={onDeny}>
             Deny
           </Button>
-          <Button variant="outline" size="sm" className="rounded-full" onClick={() => onAllow(true)}>
-            Always allow
-          </Button>
+          {allowAlways && (
+            <Button variant="outline" size="sm" className="rounded-full" onClick={() => onAllow(true)}>
+              Always allow
+            </Button>
+          )}
           <Button size="sm" className="rounded-full" onClick={() => onAllow(false)}>
             Allow
           </Button>

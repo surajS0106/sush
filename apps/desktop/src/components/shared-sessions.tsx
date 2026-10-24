@@ -1,9 +1,12 @@
 // Shared sessions in the app's chrome: the sidebar's "Shared with you" group
-// and its join dialog, who's watching in the header, and the bar a guest sees
-// in place of the composer. The share dialog itself is `share-dialog.tsx`.
+// and its join dialog, who's watching in the header, and what a guest has in
+// place of the composer: a bar for a viewer, or a composer for a driver (whose
+// messages steer the host's run) or a collaborator (whose messages wait as
+// suggestions). The share dialog itself is `share-dialog.tsx`.
 
-import { EyeIcon, LogInIcon, PlusIcon, RadioIcon, XIcon } from "lucide-react";
-import { useState, useSyncExternalStore, type FormEvent } from "react";
+import type { FileUIPart } from "ai";
+import { ArrowUpIcon, EyeIcon, ImagePlusIcon, LightbulbIcon, LogInIcon, NavigationIcon, PauseIcon, PlusIcon, RadioIcon, XIcon } from "lucide-react";
+import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { toolbarButtonClass } from "@/components/nav-controls";
@@ -13,12 +16,19 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
+import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserAvatar } from "@/components/user-avatar";
+import { sendMessage, stop } from "@/lib/sessions";
 import { isLive, joinShare, leaveShare, safeImage, useJoinedShares, useShare, useShareAccount, watchers } from "@/lib/share";
 import { createStore } from "@/lib/store";
-import { errorMessage, type ShareView } from "@/lib/tauri";
+import { errorMessage, type RunStatus, type ShareView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+
+/** Images a guest may attach, as the host takes them. */
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGES = 3;
 
 const joining = createStore<boolean>("sush.joinDialog", false, false);
 export const openJoin = () => joining.set(true);
@@ -172,6 +182,124 @@ export function SharePresence({ threadId }: { threadId: string }) {
       </TooltipTrigger>
       <TooltipContent side="bottom">{label}</TooltipContent>
     </Tooltip>
+  );
+}
+
+function readAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Couldn’t read the image."));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * The composer in someone else's session, for a driver or a collaborator. A
+ * driver's message goes to the host's run (joining at its next step while it
+ * works); a collaborator's waits as a suggestion for the driver or the host.
+ * Images go along; other files can't.
+ */
+export function GuestComposer({ share, status }: { share: ShareView; status: RunStatus }) {
+  const [text, setText] = useState("");
+  const [images, setImages] = useState<FileUIPart[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const driver = share.role === "driver";
+  const busy = status === "submitted" || status === "streaming";
+  const host = share.thread.hostName;
+  const decider = share.members.find((m) => m.role === "driver")?.name ?? host;
+  const canSend = !!text.trim() || images.length > 0;
+
+  const send = () => {
+    if (!canSend) return;
+    sendMessage(share.threadId, text, images);
+    setText("");
+    setImages([]);
+  };
+  const attach = async (files: FileList | null) => {
+    const picked = [...(files ?? [])];
+    if (fileRef.current) fileRef.current.value = "";
+    const ok = picked.filter((f) => IMAGE_TYPES.includes(f.type) && f.size <= MAX_IMAGE_BYTES);
+    if (ok.length < picked.length) toast.error("Only PNG, JPEG, GIF or WebP images up to 2 MB can go along.");
+    const room = MAX_IMAGES - images.length;
+    if (ok.length > room) toast.error(`Attach at most ${MAX_IMAGES} images.`);
+    const added = await Promise.all(
+      ok.slice(0, Math.max(0, room)).map(async (f) => ({ type: "file" as const, mediaType: f.type, filename: f.name, url: await readAsDataUrl(f) })),
+    );
+    setImages((prev) => [...prev, ...added]);
+  };
+
+  return (
+    <div className="rounded-2xl border border-foreground/15 bg-background shadow-xs dark:border-white/10 dark:bg-card">
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-4 pt-3">
+          {images.map((f, i) => (
+            <div key={i} className="group/att relative size-14 overflow-hidden rounded-xl border">
+              <img src={f.url} alt={f.filename ?? "image"} className="size-full object-cover" />
+              <button
+                type="button"
+                aria-label={`Remove ${f.filename ?? "image"}`}
+                onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                className="absolute top-0.5 right-0.5 rounded-full bg-background/90 p-0.5 opacity-0 shadow-xs group-hover/att:opacity-100 focus-visible:opacity-100"
+              >
+                <XIcon className="size-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <Textarea
+        aria-label={driver ? "Message" : "Suggestion"}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault();
+            send();
+          }
+        }}
+        placeholder={
+          driver
+            ? busy
+              ? "Steer the agent: this joins its reply at the next step"
+              : `Message the agent in ${host}’s session`
+            : `Suggest a message: ${decider} decides whether to send it`
+        }
+        className="max-h-60 min-h-14 resize-none border-none bg-transparent px-4 pt-3.5 text-[15px] shadow-none focus-visible:ring-0 dark:bg-transparent"
+      />
+      <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
+        <input ref={fileRef} type="file" accept={IMAGE_TYPES.join(",")} multiple hidden onChange={(e) => void attach(e.target.files)} />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button type="button" aria-label="Attach images" className={toolbarButtonClass} onClick={() => fileRef.current?.click()}>
+              <ImagePlusIcon />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>Attach images</TooltipContent>
+        </Tooltip>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs text-muted-foreground">
+          {driver ? <NavigationIcon className="size-3.5 shrink-0 text-brand" /> : <LightbulbIcon className="size-3.5 shrink-0" />}
+          {driver ? `You’re driving ${host}’s session` : `You can suggest in ${host}’s session`}
+        </span>
+        <Button variant="ghost" size="sm" className="h-7 rounded-full text-xs" onClick={() => void leaveShare(share.threadId)}>
+          Leave
+        </Button>
+        {driver && busy && (
+          <Button variant="outline" size="sm" className="h-8 rounded-full" onClick={() => stop(share.threadId)}>
+            <PauseIcon className="size-3.5" /> Pause
+          </Button>
+        )}
+        <Button
+          size="sm"
+          className="h-8 rounded-full bg-brand text-brand-foreground hover:bg-brand/90"
+          disabled={!canSend}
+          onClick={send}
+        >
+          {driver ? <ArrowUpIcon className="size-4" /> : null}
+          {driver ? "Send" : "Suggest"}
+        </Button>
+      </div>
+    </div>
   );
 }
 

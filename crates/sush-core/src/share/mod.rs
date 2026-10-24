@@ -11,7 +11,13 @@
 //! is the body: what the host sends ([`HostMsg`]), what a guest sends
 //! ([`GuestMsg`]), the host's outbox that numbers them ([`outbox`]) and the
 //! guest's copy that applies them in order ([`replica`]).
+//!
+//! Beyond watching, a driver steers the run and answers the approvals the
+//! owner delegated; a collaborator suggests messages for the driver (or the
+//! owner) to accept, and comments. What anyone did is kept in the host's
+//! audit log ([`audit`]).
 
+pub mod audit;
 pub mod outbox;
 pub mod policy;
 pub mod redact;
@@ -20,6 +26,7 @@ pub mod replica;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use crate::agent::Author;
 use crate::agent::{Op, RunStatus};
 
 /// The protocol's major version, carried by every body as `v`.
@@ -53,6 +60,12 @@ pub struct Member {
     pub online: bool,
 }
 
+impl Member {
+    pub fn author(&self) -> Author {
+        Author { user_id: self.user_id.clone(), name: self.name.clone(), image: self.image.clone() }
+    }
+}
+
 /// What the owner lets guests do beyond watching.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +73,68 @@ pub struct SharePolicy {
     /// Guests may list the workspace and open any file in it (secret-looking ones never).
     #[serde(default)]
     pub browse_files: bool,
+    /// Approvals the driver may answer for the owner (`policy::may_answer`).
+    #[serde(default)]
+    pub delegation: Delegation,
+}
+
+/// Kinds of approval the owner hands to the driver. All off by default: the
+/// driver then answers only the model's questions. Reading a secret file is
+/// never delegated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Delegation {
+    /// File changes and commits.
+    #[serde(default)]
+    pub edits: bool,
+    /// Commands in the sandbox, without network.
+    #[serde(default)]
+    pub shell: bool,
+    /// Commands with network or outside the sandbox, and merges into another branch.
+    #[serde(default)]
+    pub escalated: bool,
+    /// Connector tools, which act with the owner's accounts.
+    #[serde(default)]
+    pub connectors: bool,
+    /// Opening a site in the built-in browser.
+    #[serde(default)]
+    pub browser: bool,
+}
+
+/// A message a collaborator suggests, waiting for the driver (or the owner) to send it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Suggestion {
+    pub id: String,
+    pub author: Author,
+    pub text: String,
+    /// Image attachments, as `file` parts with blob URLs the host stored.
+    #[serde(default)]
+    pub files: Vec<Value>,
+    pub at: i64,
+}
+
+/// A remark beside the session. Never part of the thread, never sent to the model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Comment {
+    pub id: String,
+    pub author: Author,
+    pub text: String,
+    /// The message it's about, if any.
+    #[serde(default)]
+    pub message_id: Option<String>,
+    pub at: i64,
+}
+
+/// Who's in a share and what they've said, as it stands.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Room {
+    pub members: Vec<Member>,
+    pub policy: SharePolicy,
+    pub suggestions: Vec<Suggestion>,
+    pub comments: Vec<Comment>,
+    pub audit: Vec<audit::Entry>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +192,13 @@ pub enum HostMsg {
         turns: Vec<TurnFiles>,
         members: Vec<Member>,
         policy: SharePolicy,
+        #[serde(default)]
+        suggestions: Vec<Suggestion>,
+        #[serde(default)]
+        comments: Vec<Comment>,
+        /// The latest entries of the audit log, oldest first.
+        #[serde(default)]
+        audit: Vec<audit::Entry>,
     },
     Op { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, op: Op },
     Status { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, status: RunStatus, error: Option<String> },
@@ -126,6 +208,12 @@ pub enum HostMsg {
     Members { epoch: u64, seq: u64, members: Vec<Member>, policy: SharePolicy },
     /// The title or the like changed.
     Thread { epoch: u64, seq: u64, thread: ThreadInfo },
+    /// The suggestions waiting, after any change.
+    Queue { epoch: u64, seq: u64, suggestions: Vec<Suggestion> },
+    /// A new comment.
+    Comment { epoch: u64, seq: u64, comment: Comment },
+    /// A new entry in the audit log.
+    Audit { epoch: u64, seq: u64, entry: audit::Entry },
     /// The answer to one intent.
     Reply {
         re: String,
@@ -149,7 +237,10 @@ impl HostMsg {
             | HostMsg::ToolRunning { epoch, seq, .. }
             | HostMsg::FilesChanged { epoch, seq, .. }
             | HostMsg::Members { epoch, seq, .. }
-            | HostMsg::Thread { epoch, seq, .. } => Some((*epoch, *seq)),
+            | HostMsg::Thread { epoch, seq, .. }
+            | HostMsg::Queue { epoch, seq, .. }
+            | HostMsg::Comment { epoch, seq, .. }
+            | HostMsg::Audit { epoch, seq, .. } => Some((*epoch, *seq)),
             HostMsg::Reply { .. } | HostMsg::Incompatible { .. } => None,
         }
     }
@@ -173,7 +264,8 @@ pub enum GuestMsg {
     Intent { id: String, intent: Intent },
 }
 
-/// Something a guest asks the host to do. Phase 1 has only reads.
+/// Something a guest asks the host to do: a read, or (for a driver or a
+/// collaborator) a change to the session.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Intent {
@@ -190,6 +282,57 @@ pub enum Intent {
     },
     /// An attachment the shared thread shows.
     GetBlob { sha: String },
+    /// A message for the run: a driver's joins it, a collaborator's waits as a suggestion.
+    Steer {
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        images: Vec<Image>,
+    },
+    /// Send a suggestion, as it is or with the driver's edits.
+    SuggestionAccept {
+        id: String,
+        #[serde(default)]
+        text: Option<String>,
+    },
+    SuggestionDrop { id: String },
+    /// "Send now": the messages waiting join the run at once.
+    SendNow,
+    Stop,
+    /// Carry on with a stopped reply.
+    Resume,
+    /// Answer a tool call waiting for approval, on the session (`child: None`)
+    /// or a sub-agent's thread. `answer` only for the model's questions.
+    Respond {
+        #[serde(default)]
+        child: Option<String>,
+        call_id: String,
+        decision: Decision,
+        #[serde(default)]
+        answer: Option<Value>,
+    },
+    Comment {
+        text: String,
+        #[serde(default)]
+        message_id: Option<String>,
+    },
+}
+
+/// An image a guest attaches to a message, base64 encoded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Image {
+    pub media_type: String,
+    pub data: String,
+    #[serde(default)]
+    pub filename: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Decision {
+    Approve,
+    Deny,
 }
 
 /// A message body with its version: `{ "v": 1, "type": …, … }`.
@@ -246,6 +389,37 @@ mod tests {
         assert!(decode::<GuestMsg>(r#"{ "v": 1, "type": "intent", "id": "x", "intent": { "kind": "run-shell" } }"#).is_err());
         // Fields added later within a version are ignored.
         assert!(decode::<GuestMsg>(r#"{ "v": 1, "type": "hello", "minV": 1, "future": true }"#).is_ok());
+    }
+
+    #[test]
+    fn phase_two_intents_round_trip() {
+        let intents = [
+            (json!({ "kind": "steer", "text": "try again" }), Intent::Steer { text: "try again".into(), images: vec![] }),
+            (
+                json!({ "kind": "respond", "callId": "c", "decision": "approve" }),
+                Intent::Respond { child: None, call_id: "c".into(), decision: Decision::Approve, answer: None },
+            ),
+            (json!({ "kind": "suggestion-accept", "id": "s" }), Intent::SuggestionAccept { id: "s".into(), text: None }),
+            (json!({ "kind": "send-now" }), Intent::SendNow),
+            (json!({ "kind": "comment", "text": "nice" }), Intent::Comment { text: "nice".into(), message_id: None }),
+        ];
+        for (wire, intent) in intents {
+            let text = Body::encode(GuestMsg::Intent { id: "i".into(), intent: intent.clone() });
+            let value: Value = serde_json::from_str(&text).unwrap();
+            for (k, v) in wire.as_object().unwrap() {
+                assert_eq!(&value["intent"][k], v, "{k}");
+            }
+            assert_eq!(decode::<GuestMsg>(&text).unwrap(), GuestMsg::Intent { id: "i".into(), intent });
+        }
+    }
+
+    #[test]
+    fn a_phase_one_snapshot_still_reads() {
+        let old = json!({ "v": 1, "type": "snapshot", "epoch": 1, "seq": 0,
+            "thread": { "title": "t", "kind": "chat", "hostName": "h" },
+            "threads": [], "running": [], "turns": [], "members": [], "policy": { "browseFiles": true } });
+        let HostMsg::Snapshot { policy, suggestions, .. } = decode::<HostMsg>(&old.to_string()).unwrap() else { panic!() };
+        assert!(policy.browse_files && !policy.delegation.edits && suggestions.is_empty());
     }
 
     #[test]

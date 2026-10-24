@@ -1,10 +1,19 @@
-//! Live shared sessions ("Sush Multiplayer"), phase 1: others watch.
+//! Live shared sessions ("Sush Multiplayer"): others watch, and redirect.
 //!
 //! The host is authoritative. The run, the workspace and every credential stay
 //! here; guests get the thread as the same ops the UI applies, redacted
-//! (`sush_core::share::redact`), and may only ask for reads, which are checked
-//! against their role and what the session shows (`sush_core::share::policy`)
-//! before the host carries them out through its own file access.
+//! (`sush_core::share::redact`), and send intents, which are checked against
+//! their role and what the session shows (`sush_core::share::policy`) before
+//! the host carries them out through its own code: reads through its file
+//! access, and a driver's messages, approvals, stops and resumes through
+//! `runs.rs` like the owner's. A run a guest starts needs a config only the UI
+//! can build, so the leader window is asked for one (`share-config` frame).
+//! A collaborator's message waits as a suggestion for the driver or the owner.
+//! Everything a guest does goes in the audit log (`share_events`).
+//!
+//! While anyone but the owner can steer, the owner's standing permissions ask
+//! again (`Shares::steerable`, used by `runs.rs`' `Host::approval`). Answers
+//! are first-wins (`HostShare::claim`), the owner's own included.
 //!
 //! Everything goes through a relay (`apps/server`, `/api/shares`): a room per
 //! share that forwards messages without reading them. Both ends of the socket
@@ -27,18 +36,21 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sush_core::agent::ui::new_id;
-use sush_core::agent::{Op, RunStatus};
+use sush_core::agent::ui::{self, new_id};
+use sush_core::agent::{Op, RunAction, RunConfig, RunStatus, ToolResponse};
+use sush_core::share::audit::{self, Kind};
 use sush_core::share::outbox::{self, Event, Outbox};
+use sush_core::share::policy::{Allowed, ApprovalClass};
 use sush_core::share::replica::{Applied, Change, Replica};
 use sush_core::share::{
-    self as proto, policy, Body, GuestMsg, HostMsg, Intent, Member, Role, SharePolicy, ThreadInfo, ThreadKind, ThreadState, TurnFiles,
+    self as proto, policy, Author, Body, Comment, Decision, GuestMsg, HostMsg, Image, Intent, Member, Role, Room, SharePolicy, Suggestion,
+    ThreadInfo, ThreadKind, ThreadState, TurnFiles,
 };
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::{looks_secret, WorkspaceFs};
@@ -50,7 +62,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::{AppError, AppResult};
-use crate::runs::RunFrame;
+use crate::runs::{self, RunFrame};
 use crate::state::AppState;
 use crate::store::blocking;
 use crate::{secrets, workspaces};
@@ -62,6 +74,30 @@ const BLOB_CACHE: usize = 64 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Text deltas arriving within this long go out as one message.
 const FLUSH_DELAY: Duration = Duration::from_millis(40);
+/// How long the leader window has to build a run's config for a guest.
+const CONFIG_TIMEOUT: Duration = Duration::from_secs(20);
+/// Suggestions waiting at once, at most.
+const MAX_SUGGESTIONS: usize = 20;
+/// Comments a share keeps, at most.
+const MAX_COMMENTS: usize = proto::replica::MAX_COMMENTS;
+/// One "Send now" per share in this long.
+const SEND_NOW_GAP: Duration = Duration::from_secs(2);
+/// The tool results the UI's cards give for a denial and a dismissed question
+/// (`DENIED` in `tool-parts.tsx`, `DISMISSED` there too), so a guest's answer reads the same.
+const DENIED: &str = "The user denied this tool call.";
+const DISMISSED: &str = "The user dismissed the questions without answering. Continue with your best judgement.";
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
+}
+
+/// A picture others may be shown: a `data:` image or a built-in avatar, never a URL to fetch.
+fn safe_image(image: Option<String>) -> Option<String> {
+    image.filter(|i| {
+        (i.starts_with("sush:avatar/") && i.len() < 64)
+            || (["data:image/png;", "data:image/jpeg;", "data:image/webp;", "data:image/gif;"].iter().any(|p| i.starts_with(p)) && i.len() <= 64 * 1024)
+    })
+}
 
 // --- the relay account --------------------------------------------------------------
 
@@ -208,12 +244,18 @@ pub struct Peer {
     /// Only for someone knocking, so the host knows who it is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     email: Option<String>,
+    /// What a guest's invite allows ("viewer" or "collaborator"): their role when they first join.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role_cap: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(tag = "t", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 enum RelayIn {
     Welcome {
+        /// This connection, as the relay knows it.
+        #[serde(default)]
+        you: Option<Peer>,
         #[serde(default)]
         peers: Vec<Peer>,
         #[serde(default)]
@@ -307,6 +349,12 @@ pub struct ShareView {
     expires_at: i64,
     ended: Option<String>,
     error: Option<String>,
+    /// This app's user on the relay.
+    me: Option<String>,
+    suggestions: Vec<Suggestion>,
+    comments: Vec<Comment>,
+    /// The latest entries of the audit log, oldest first.
+    audit: Vec<audit::Entry>,
 }
 
 /// A joined share's threads, for a page that reloads.
@@ -334,12 +382,15 @@ fn emit_view(app: &AppHandle, share: ShareView) {
 // --- the shares ---------------------------------------------------------------------
 
 /// Shares hosted here (by thread) and joined (by the thread they show as).
-/// Lock order: the runs' channels, then `hosts`, then a share's own locks;
-/// a share's `inner` and `outbox` are never held together.
+/// Lock order: the runs' channels, then `hosts`, then a share's own locks.
+/// A share's `outbox` may be held while taking its `inner` (`HostShare::append`,
+/// snapshots), never the other way round.
 #[derive(Default)]
 pub struct Shares {
     hosts: Mutex<HashMap<String, Arc<HostShare>>>,
     guests: Mutex<HashMap<String, Arc<GuestShare>>>,
+    /// Configs asked of the leader window for runs guests start, by request id.
+    configs: Mutex<HashMap<String, oneshot::Sender<Result<RunConfig, String>>>>,
 }
 
 pub(crate) struct HostShare {
@@ -347,6 +398,11 @@ pub(crate) struct HostShare {
     thread_id: String,
     account: Account,
     expires_at: i64,
+    /// The owner, as guests see them.
+    owner: Author,
+    /// Tool calls someone answered, with who did: the first answer wins.
+    claimed: Mutex<HashMap<String, String>>,
+    last_send_now: Mutex<Option<Instant>>,
     outbox: Mutex<Outbox>,
     flush: Notify,
     /// A turn changed files: guests get the new list with the next flush.
@@ -367,6 +423,10 @@ struct HostInner {
     policy: SharePolicy,
     /// Tool calls in flight, for a snapshot.
     running: HashSet<String>,
+    suggestions: Vec<Suggestion>,
+    comments: Vec<Comment>,
+    /// The latest audit entries; all of them are in the store.
+    audit: Vec<audit::Entry>,
     ended: Option<String>,
     error: Option<String>,
 }
@@ -386,7 +446,65 @@ impl HostShare {
             expires_at: self.expires_at,
             ended: i.ended.clone(),
             error: i.error.clone(),
+            me: Some(self.owner.user_id.clone()),
+            suggestions: i.suggestions.clone(),
+            comments: i.comments.clone(),
+            audit: i.audit.clone(),
         }
+    }
+
+    fn room(&self) -> Room {
+        let i = self.inner.lock().unwrap();
+        Room {
+            members: i.members.values().cloned().collect(),
+            policy: i.policy.clone(),
+            suggestions: i.suggestions.clone(),
+            comments: i.comments.clone(),
+            audit: i.audit.clone(),
+        }
+    }
+
+    /// Whether anyone but the owner can steer the run: then standing permissions ask again.
+    fn steerable(&self) -> bool {
+        let i = self.inner.lock().unwrap();
+        i.status != LinkStatus::Ended && i.members.values().any(|m| matches!(m.role, Role::Driver | Role::Collaborator))
+    }
+
+    /// Take the right to answer a tool call; whoever comes second is told who was first.
+    fn claim(&self, call_id: &str, name: &str) -> Result<(), String> {
+        let mut claimed = self.claimed.lock().unwrap();
+        if let Some(first) = claimed.get(call_id) {
+            return Err(format!("Already answered by {first}."));
+        }
+        claimed.insert(call_id.to_string(), name.to_string());
+        Ok(())
+    }
+
+    /// The answer didn't go through after all.
+    fn release(&self, call_id: &str) {
+        self.claimed.lock().unwrap().remove(call_id);
+    }
+
+    /// Note what someone did: in the store, in the share's log, and for guests.
+    fn record(&self, app: &AppHandle, actor: &Author, kind: Kind, detail: Value) {
+        let entry = audit::Entry { at: now_ms(), actor_user_id: actor.user_id.clone(), actor_name: actor.name.clone(), kind, detail };
+        self.append(|i| audit::push(&mut i.audit, entry.clone()), Event::Audit { entry: entry.clone() });
+        let store = app.state::<AppState>().store.clone();
+        let (share_id, thread_id) = (self.share_id.clone(), self.thread_id.clone());
+        tauri::async_runtime::spawn(async move {
+            let id = share_id.clone();
+            if let Err(e) = blocking(move || Ok(store.add_share_event(&id, &thread_id, &entry)?)).await {
+                eprintln!("sush: couldn't keep an audit entry for share {share_id}: {e}");
+            }
+        });
+        emit_view(app, self.view());
+    }
+
+    /// Tell guests (and the owner's windows) which suggestions wait now.
+    fn queue_changed(&self, app: &AppHandle) {
+        let suggestions = self.inner.lock().unwrap().suggestions.clone();
+        self.push(Event::Queue { suggestions });
+        emit_view(app, self.view());
     }
 
     fn send_to(&self, peer_id: &str, msg: HostMsg) {
@@ -403,6 +521,18 @@ impl HostShare {
 
     fn push(&self, event: Event) {
         self.outbox.lock().unwrap().push(event);
+        self.flush.notify_one();
+    }
+
+    /// Add to the share's state and tell guests as one step. Guests apply an
+    /// append on top of what they have, so a snapshot must hold it exactly when
+    /// the message falls before it: the outbox is held throughout (then the
+    /// share's state, the only place the two are held together; a snapshot reads its room the same way).
+    fn append(&self, change: impl FnOnce(&mut HostInner), event: Event) {
+        let mut outbox = self.outbox.lock().unwrap();
+        change(&mut self.inner.lock().unwrap());
+        outbox.push(event);
+        drop(outbox);
         self.flush.notify_one();
     }
 
@@ -433,6 +563,8 @@ struct GuestInner {
     replica: Replica,
     info: ThreadInfo,
     host_user: Option<String>,
+    /// This app's user on the relay, from its welcome.
+    me: Option<String>,
     status: LinkStatus,
     host_online: bool,
     admitted: bool,
@@ -450,10 +582,16 @@ impl GuestShare {
             role: Role::Owner,
             online: i.host_online,
         };
+        // As the host says; only what the host lets this guest do counts there anyway.
+        let role = i
+            .me
+            .as_ref()
+            .and_then(|me| i.replica.members.iter().find(|m| &m.user_id == me))
+            .map_or(Role::Viewer, |m| if m.role == Role::Owner { Role::Viewer } else { m.role });
         ShareView {
             thread_id: self.thread_id.clone(),
             share_id: self.share_id.clone(),
-            role: Role::Viewer,
+            role,
             status: i.status,
             thread: i.info.clone(),
             members: std::iter::once(host).chain(i.replica.members.iter().cloned()).collect(),
@@ -462,6 +600,10 @@ impl GuestShare {
             expires_at: self.expires_at,
             ended: i.ended.clone(),
             error: i.error.clone(),
+            me: i.me.clone(),
+            suggestions: i.replica.suggestions.clone(),
+            comments: i.replica.comments.clone(),
+            audit: i.replica.audit.clone(),
         }
     }
 
@@ -496,20 +638,7 @@ impl Shares {
             RunFrame::Saved { thread } => thread.id.as_str(),
             _ => return,
         };
-        let (share, child) = {
-            let hosts = self.hosts.lock().unwrap();
-            if hosts.is_empty() {
-                return;
-            }
-            // The session itself, or a sub-agent's thread, `<session>:<call>`.
-            match hosts.get(thread_id) {
-                Some(share) => (share.clone(), None),
-                None => match thread_id.split_once(':').and_then(|(parent, call)| hosts.get(parent).map(|s| (s.clone(), call.to_string()))) {
-                    Some((share, call)) => (share, Some(call)),
-                    None => return,
-                },
-            }
-        };
+        let Some((share, child)) = self.share_for(thread_id) else { return };
         let event = match frame {
             RunFrame::Op { op, .. } => Event::Op { child, op: op.clone() },
             RunFrame::Status { status, error, .. } => Event::Status { child, status: *status, error: error.clone() },
@@ -546,6 +675,42 @@ impl Shares {
             _ => return,
         };
         share.push(event);
+    }
+
+    /// The share hosting a thread: the session itself (`None`), or one of its
+    /// sub-agents' threads, `<session>:<call>` (`Some(call)`).
+    fn share_for(&self, thread_id: &str) -> Option<(Arc<HostShare>, Option<String>)> {
+        let hosts = self.hosts.lock().unwrap();
+        if hosts.is_empty() {
+            return None;
+        }
+        let found = match hosts.get(thread_id) {
+            Some(share) => Some((share.clone(), None)),
+            None => thread_id.split_once(':').and_then(|(parent, call)| hosts.get(parent).map(|s| (s.clone(), Some(call.to_string())))),
+        };
+        found
+    }
+
+    /// Whether others can steer this thread's session: its run's standing
+    /// permissions (auto edits, sandboxed commands, allowed connectors and
+    /// sites) then ask again (`Host::approval`).
+    pub(crate) fn steerable(&self, thread_id: &str) -> bool {
+        self.share_for(thread_id).is_some_and(|(share, _)| share.steerable())
+    }
+
+    /// The owner answers a call in their own app. In a shared session the
+    /// first answer wins, so it may be too late; returns who to credit.
+    pub(crate) fn claim_local(&self, thread_id: &str, call_id: &str) -> AppResult<Option<Author>> {
+        let Some((share, _)) = self.share_for(thread_id) else { return Ok(None) };
+        share.claim(call_id, &share.owner.name).map_err(AppError::Invalid)?;
+        Ok(Some(share.owner.clone()))
+    }
+
+    /// The owner's answer didn't reach the run.
+    pub(crate) fn release_local(&self, thread_id: &str, call_id: &str) {
+        if let Some((share, _)) = self.share_for(thread_id) {
+            share.release(call_id);
+        }
     }
 
     fn host(&self, thread_id: &str) -> AppResult<Arc<HostShare>> {
@@ -645,12 +810,16 @@ pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: Thr
     let share_id = created.get("shareId").and_then(Value::as_str).ok_or_else(|| AppError::Invalid("The relay didn't start the share.".into()))?;
     let expires_at = created.get("expiresAt").and_then(Value::as_i64).unwrap_or_default();
 
+    let host_name = if me.name.trim().is_empty() { me.email.split('@').next().unwrap_or_default().to_string() } else { me.name.clone() };
     let (out, rx) = mpsc::unbounded_channel();
     let share = Arc::new(HostShare {
         share_id: share_id.to_string(),
         thread_id: thread.id.clone(),
         account,
         expires_at,
+        owner: Author { user_id: me.id.clone(), name: host_name.clone(), image: safe_image(me.image.clone()) },
+        claimed: Mutex::default(),
+        last_send_now: Mutex::default(),
         outbox: Mutex::new(Outbox::new(1)),
         flush: Notify::new(),
         files_dirty: AtomicBool::new(false),
@@ -660,7 +829,7 @@ pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: Thr
                 title: thread.title.clone(),
                 kind: if workspace.is_some() { ThreadKind::Cowork } else { ThreadKind::Chat },
                 workspace_name: workspace.map(|w| w.name),
-                host_name: if me.name.trim().is_empty() { me.email.split('@').next().unwrap_or_default().to_string() } else { me.name },
+                host_name,
             },
             status: LinkStatus::Connecting,
             peers: HashMap::new(),
@@ -668,6 +837,9 @@ pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: Thr
             lobby: Vec::new(),
             policy: SharePolicy::default(),
             running: HashSet::new(),
+            suggestions: Vec::new(),
+            comments: Vec::new(),
+            audit: Vec::new(),
             ended: None,
             error: None,
         }),
@@ -792,20 +964,28 @@ fn finish_host(app: &AppHandle, share: &Arc<HostShare>, reason: String) {
     }
     drop(hosts);
     share.cancel.cancel();
+    // Nobody else can steer now: calls held only for the share start.
+    state.runs.recheck_family(&share.thread_id);
     emit_view(app, share.view());
 }
 
+/// Someone connected: a member from now on, first with the role their invite allows
+/// (the owner can change it, and only the owner hands out driving).
 fn upsert_member(members: &mut BTreeMap<String, Member>, peer: &Peer) {
     let member = members.entry(peer.user_id.clone()).or_insert_with(|| Member {
         user_id: peer.user_id.clone(),
         name: peer.name.clone(),
         image: None,
-        role: Role::Viewer,
+        role: if peer.role_cap.as_deref() == Some("collaborator") { Role::Collaborator } else { Role::Viewer },
         online: true,
     });
     member.name = peer.name.clone();
-    member.image = peer.image.clone();
+    member.image = safe_image(peer.image.clone());
     member.online = true;
+}
+
+fn peer_author(peer: &Peer) -> Author {
+    Author { user_id: peer.user_id.clone(), name: peer.name.clone(), image: safe_image(peer.image.clone()) }
 }
 
 /// A frame from the relay; returns true once the share is over.
@@ -830,26 +1010,38 @@ fn on_host_frame(app: &AppHandle, share: &Arc<HostShare>, text: &str) -> bool {
             }
         }
         RelayIn::PeerJoined { peer } => {
-            {
+            let first = {
                 let mut i = share.inner.lock().unwrap();
                 i.lobby.retain(|p| p.user_id != peer.user_id);
+                let first = !i.members.get(&peer.user_id).is_some_and(|m| m.online);
                 upsert_member(&mut i.members, &peer);
-                i.peers.insert(peer.peer_id.clone(), peer);
-            }
+                i.peers.insert(peer.peer_id.clone(), peer.clone());
+                first
+            };
             share.members_changed();
+            if first {
+                share.record(app, &peer_author(&peer), Kind::Joined, json!({}));
+            }
         }
         RelayIn::PeerLeft { peer_id } => {
-            {
+            let left = {
                 let mut i = share.inner.lock().unwrap();
                 i.lobby.retain(|p| p.peer_id != peer_id);
-                if let Some(gone) = i.peers.remove(&peer_id) {
-                    let still = i.peers.values().any(|p| p.user_id == gone.user_id);
-                    if let Some(m) = i.members.get_mut(&gone.user_id) {
-                        m.online = still;
+                match i.peers.remove(&peer_id) {
+                    Some(gone) => {
+                        let still = i.peers.values().any(|p| p.user_id == gone.user_id);
+                        if let Some(m) = i.members.get_mut(&gone.user_id) {
+                            m.online = still;
+                        }
+                        (!still).then_some(gone)
                     }
+                    None => None,
                 }
-            }
+            };
             share.members_changed();
+            if let Some(gone) = left {
+                share.record(app, &peer_author(&gone), Kind::Left, json!({}));
+            }
         }
         RelayIn::Recv { from, body } => {
             on_guest_message(app, share, from, &body);
@@ -906,10 +1098,7 @@ async fn send_snapshot(app: AppHandle, share: Arc<HostShare>, peer_id: String) {
     // As saved, for threads with no run going; read before taking the runs' lock.
     let Ok((saved, children)) = blocking(move || Ok((store.messages(&id)?, store.children(&id)?))).await else { return };
     let turns = visible_turns(&app, &share.thread_id).await;
-    let (info, members, policy) = {
-        let i = share.inner.lock().unwrap();
-        (i.info.clone(), i.members.values().cloned().collect::<Vec<_>>(), i.policy.clone())
-    };
+    let info = share.inner.lock().unwrap().info.clone();
     let prefix = format!("{}:", share.thread_id);
     let thread_id = share.thread_id.clone();
     state.runs.with_family(&thread_id, move |live| {
@@ -933,22 +1122,44 @@ async fn send_snapshot(app: AppHandle, share: Arc<HostShare>, peer_id: String) {
                 threads.push(ThreadState { child: Some(call.to_string()), messages: t.messages.clone(), status: t.status, error: t.error.clone() });
             }
         }
-        // Flushed first: what's pending is already in `threads`.
+        // Flushed first: what's pending is already in `threads`. The room is
+        // read while the outbox is held, so it matches the messages before it (`HostShare::append`).
         let mut outbox = share.outbox.lock().unwrap();
         for msg in outbox.flush() {
             let _ = share.out.send(relay_send("all", &Body::encode(msg)));
         }
-        let snapshot = outbox.snapshot(info, threads, running, turns, members, policy);
+        let room = share.room();
+        let snapshot = outbox.snapshot(info, threads, running, turns, room);
         let _ = share.out.send(relay_send(&peer_id, &Body::encode(snapshot)));
     });
+}
+
+/// An intent's name, for the audit log.
+fn intent_kind(intent: &Intent) -> &'static str {
+    match intent {
+        Intent::GetTurnChanges => "get-turn-changes",
+        Intent::GetDiff { .. } => "get-diff",
+        Intent::GetFile { .. } => "get-file",
+        Intent::ListDir { .. } => "list-dir",
+        Intent::GetBlob { .. } => "get-blob",
+        Intent::Steer { .. } => "steer",
+        Intent::SuggestionAccept { .. } => "suggestion-accept",
+        Intent::SuggestionDrop { .. } => "suggestion-drop",
+        Intent::SendNow => "send-now",
+        Intent::Stop => "stop",
+        Intent::Resume => "resume",
+        Intent::Respond { .. } => "respond",
+        Intent::Comment { .. } => "comment",
+    }
 }
 
 /// Check a guest's request against their role and what the session shows, then carry it out.
 async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: Intent) -> Result<Value, String> {
     let state = app.state::<AppState>();
-    let (role, policy_now) = {
+    let (member, policy_now, suggestions, running) = {
         let i = share.inner.lock().unwrap();
-        (i.members.get(&from.user_id).map(|m| m.role), i.policy.clone())
+        let suggestions: HashSet<String> = i.suggestions.iter().map(|s| s.id.clone()).collect();
+        (i.members.get(&from.user_id).cloned(), i.policy.clone(), suggestions, i.running.clone())
     };
     let store = state.store.clone();
     let id = share.thread_id.clone();
@@ -961,16 +1172,76 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
     })
     .await
     .map_err(|e| e.to_string())?;
-    // What the session shows now: the live copies of threads with a run going, and the saved ones.
+    // What the session shows now: each thread's live copy while its run goes, else as saved.
     let live = state.runs.with_family(&share.thread_id, |live| live);
-    let mut all: Vec<Value> = live.into_iter().flat_map(|t| t.messages).collect();
-    all.extend(saved);
-    all.extend(children.into_iter().flat_map(|c| c.messages));
+    let prefix = format!("{}:", share.thread_id);
+    let current = |id: &str, saved: Vec<Value>| match live.iter().find(|t| t.thread_id == id) {
+        Some(t) => (t.messages.clone(), t.status),
+        None => (saved, RunStatus::Ready),
+    };
+    let mut threads: Vec<(Option<String>, Vec<Value>, RunStatus)> = Vec::new();
+    let (messages, status) = current(&share.thread_id, saved);
+    threads.push((None, messages, status));
+    for c in children {
+        let Some(call) = c.meta.id.strip_prefix(&prefix).map(str::to_owned) else { continue };
+        let (messages, status) = current(&c.meta.id, c.messages);
+        threads.push((Some(call), messages, status));
+    }
+    for t in &live {
+        let Some(call) = t.thread_id.strip_prefix(&prefix) else { continue };
+        if !threads.iter().any(|(child, ..)| child.as_deref() == Some(call)) {
+            threads.push((Some(call.to_string()), t.messages.clone(), t.status));
+        }
+    }
+    let all: Vec<Value> = threads.iter().flat_map(|(_, m, _)| m.iter().cloned()).collect();
     let touched = outbox::touched_paths(&all);
     let blobs = outbox::blob_shas(&all);
     let turn_ids: HashSet<String> = turns.iter().map(|t| t.turn_id.clone()).collect();
-    let ctx = policy::Ctx { role, policy: &policy_now, cowork: workspace.is_some(), touched: &touched, turns: &turn_ids, blobs: &blobs };
-    let policy::Allowed(intent) = policy::authorize(&ctx, intent)?;
+    // Calls waiting for an answer (not ones already running), with who may give it.
+    let sandbox = state.sandbox.status().await;
+    let contained = sandbox.available && sandbox.network_blocked;
+    let mut waiting = HashMap::new();
+    for (child, messages, _) in &threads {
+        for (_, call) in ui::unresolved_calls(messages) {
+            if !running.contains(&call.id) {
+                let class = policy::classify(&call.name, &call.input, contained);
+                waiting.insert((child.clone(), call.id), class);
+            }
+        }
+    }
+    let (session, status) = (&threads[0].1, threads[0].2);
+    let idle = matches!(status, RunStatus::Ready | RunStatus::Error);
+    let resumable = idle
+        && session.last().is_some_and(|m| {
+            ui::role(m) == Some("user") || m.get("metadata").and_then(|meta| meta.get("paused")).and_then(Value::as_bool) == Some(true)
+        });
+    let ctx = policy::Ctx {
+        role: member.as_ref().map(|m| m.role),
+        policy: &policy_now,
+        cowork: workspace.is_some(),
+        touched: &touched,
+        turns: &turn_ids,
+        blobs: &blobs,
+        waiting: &waiting,
+        resumable,
+        suggestions: &suggestions,
+    };
+    let kind = intent_kind(&intent);
+    let allowed = match policy::authorize(&ctx, intent) {
+        Ok(allowed) => allowed,
+        Err(error) => {
+            if let Some(m) = &member {
+                share.record(app, &m.author(), Kind::DeniedIntent, json!({ "intent": kind, "error": error }));
+            }
+            return Err(error);
+        }
+    };
+    // `authorize` refuses anyone who isn't a member.
+    let Some(author) = member.map(|m| m.author()) else { return Err("You're no longer in this session.".into()) };
+    let intent = match allowed {
+        Allowed::Suggest { text, images } => return suggest(app, share, &author, text, images).await,
+        Allowed::Do(intent) => intent,
+    };
 
     let root = workspace.map(|w| w.root);
     let open = move || -> AppResult<WorkspaceFs> {
@@ -979,20 +1250,23 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
     };
     let store = state.store.clone();
     let thread_id = share.thread_id.clone();
-    let result = match intent {
-        Intent::GetTurnChanges => return Ok(json!(visible_turns(app, &share.thread_id).await)),
+    let failed = |e: AppError| e.to_string();
+    match intent {
+        Intent::GetTurnChanges => Ok(json!(visible_turns(app, &share.thread_id).await)),
         Intent::GetDiff { turn_id } => blocking(move || {
             let diffs = workspaces::turn_diff_files(&store, &thread_id, &turn_id)?;
             Ok(json!(diffs.into_iter().map(workspaces::FileDiff::hidden_if_secret).collect::<Vec<_>>()))
         })
-        .await,
-        Intent::GetFile { path } => blocking(move || Ok(json!(workspaces::file_view(&open()?, &path)?))).await,
+        .await
+        .map_err(failed),
+        Intent::GetFile { path } => blocking(move || Ok(json!(workspaces::file_view(&open()?, &path)?))).await.map_err(failed),
         Intent::ListDir { path } => blocking(move || {
             let fs = open()?;
             let rel = fs.rel(&path).map_err(AppError::Invalid)?;
             Ok(json!(fs.list(&rel).map_err(AppError::Invalid)?))
         })
-        .await,
+        .await
+        .map_err(failed),
         Intent::GetBlob { sha } => blocking(move || {
             let (media_type, bytes) = store.blob(&sha)?.ok_or_else(|| AppError::NotFound("That file is no longer stored.".into()))?;
             if bytes.len() > MAX_BLOB {
@@ -1000,9 +1274,277 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
             }
             Ok(json!({ "mediaType": media_type, "data": base64::engine::general_purpose::STANDARD.encode(bytes) }))
         })
-        .await,
+        .await
+        .map_err(failed),
+        Intent::Steer { text, images } => {
+            let files = store_images(app, images).await?;
+            let message_id = steer(app, share, user_message(&text, files, &author, None), None).await?;
+            share.record(app, &author, Kind::Steered, json!({ "messageId": message_id, "preview": audit::preview(&text) }));
+            Ok(json!({ "messageId": message_id }))
+        }
+        Intent::SuggestionAccept { id, text } => accept(app, share, &id, text, &author, None).await,
+        Intent::SuggestionDrop { id } => drop_suggestion(app, share, &id, &author).map(|()| Value::Null),
+        Intent::SendNow => {
+            {
+                let mut last = share.last_send_now.lock().unwrap();
+                if last.is_some_and(|t| t.elapsed() < SEND_NOW_GAP) {
+                    return Err("Already sending.".into());
+                }
+                *last = Some(Instant::now());
+            }
+            state.runs.interrupt(&thread_id);
+            share.record(app, &author, Kind::Interrupted, json!({}));
+            Ok(Value::Null)
+        }
+        Intent::Stop => {
+            state.runs.stop_with_agents(&thread_id).await;
+            share.record(app, &author, Kind::Stopped, json!({}));
+            Ok(Value::Null)
+        }
+        Intent::Resume => {
+            start_with_config(app, &thread_id, RunAction::Resume, None).await?;
+            share.record(app, &author, Kind::Resumed, json!({}));
+            Ok(Value::Null)
+        }
+        Intent::Respond { child, call_id, decision, answer } => {
+            let class = waiting.get(&(child.clone(), call_id.clone())).copied().unwrap_or(ApprovalClass::OwnerOnly);
+            respond(app, share, &author, child, call_id, class, decision, answer).await
+        }
+        Intent::Comment { text, message_id } => Ok(comment(app, share, &author, &text, message_id)),
+    }
+}
+
+/// Ask the leader window for the config a run of this thread gets, built as
+/// for the owner's own actions (`runConfig` in `sessions.ts`, where budgets
+/// apply too). `action`: what the run is for (`steer`, `respond`, `resume`).
+async fn request_config(app: &AppHandle, thread_id: &str, action: &str) -> Result<RunConfig, String> {
+    let state = app.state::<AppState>();
+    if !state.runs.has_windows() {
+        return Err("The host's app isn't open.".into());
+    }
+    let request_id = new_id();
+    let (tx, rx) = oneshot::channel();
+    state.runs.shares.configs.lock().unwrap().insert(request_id.clone(), tx);
+    state.runs.send(RunFrame::ShareConfig { request_id: request_id.clone(), thread_id: thread_id.to_string(), action: action.to_string() });
+    let answer = tokio::time::timeout(CONFIG_TIMEOUT, rx).await;
+    state.runs.shares.configs.lock().unwrap().remove(&request_id);
+    match answer {
+        Ok(Ok(config)) => config,
+        _ => Err("The host's app didn't answer.".into()),
+    }
+}
+
+/// The UI's answer to a `share-config` frame: the config, or why there is none (a budget, no model).
+#[tauri::command]
+pub fn share_config_result(state: State<'_, AppState>, request_id: String, config: Option<RunConfig>, error: Option<String>) -> AppResult<()> {
+    let Some(reply) = state.runs.shares.configs.lock().unwrap().remove(&request_id) else { return Ok(()) };
+    let _ = reply.send(match (config, error) {
+        (_, Some(error)) => Err(error),
+        (Some(config), None) => Ok(config),
+        (None, None) => Err("The host's app couldn't start a run.".into()),
+    });
+    Ok(())
+}
+
+/// A thread's metadata: its live run's copy, or as saved.
+async fn thread_meta(app: &AppHandle, thread_id: &str) -> Result<ThreadMeta, String> {
+    let state = app.state::<AppState>();
+    if let Some(meta) = state.runs.live_meta(thread_id) {
+        return Ok(meta);
+    }
+    let (store, id) = (state.store.clone(), thread_id.to_string());
+    blocking(move || Ok(store.thread_meta(&id)?))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "This session is gone.".into())
+}
+
+/// Whether bytes start the way an image of this type does.
+fn looks_like(media_type: &str, bytes: &[u8]) -> bool {
+    match media_type {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(&[0xFF, 0xD8, 0xFF]),
+        "image/gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "image/webp" => bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP",
+        _ => false,
+    }
+}
+
+/// A guest's images, checked (type, size, and that the bytes are that kind of
+/// image) and stored as blobs: the file parts of their message.
+async fn store_images(app: &AppHandle, images: Vec<Image>) -> Result<Vec<Value>, String> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+    let store = app.state::<AppState>().store.clone();
+    blocking(move || {
+        images
+            .into_iter()
+            .map(|image| {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(image.data.as_bytes())
+                    .map_err(|_| AppError::Invalid("An image couldn't be read.".into()))?;
+                if bytes.len() > policy::MAX_IMAGE_BYTES || !looks_like(&image.media_type, &bytes) {
+                    return Err(AppError::Invalid("An image is too big, or isn't the kind of image it says.".into()));
+                }
+                let url = store.put_blob(&image.media_type, &bytes)?;
+                let mut part = json!({ "type": "file", "mediaType": image.media_type, "url": url });
+                if let Some(name) = image.filename {
+                    part["filename"] = json!(name.chars().filter(|c| !c.is_control()).take(120).collect::<String>());
+                }
+                Ok(part)
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// A message someone in the share wrote, credited to them. It's built here, so
+/// whatever author a guest might claim never counts.
+fn user_message(text: &str, files: Vec<Value>, author: &Author, accepted_by: Option<&Author>) -> Value {
+    let mut parts = files;
+    if !text.trim().is_empty() {
+        parts.push(json!({ "type": "text", "text": text }));
+    }
+    let mut metadata = json!({ "author": author });
+    if let Some(by) = accepted_by {
+        metadata["acceptedBy"] = json!(by);
+    }
+    json!({ "id": new_id(), "role": "user", "parts": parts, "metadata": metadata })
+}
+
+/// Send a message into the session's run, as the owner's composer does: it
+/// joins at the next step, or starts a run. Returns its id.
+async fn steer(app: &AppHandle, share: &HostShare, message: Value, config: Option<RunConfig>) -> Result<String, String> {
+    let id = message.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
+    start_with_config(app, &share.thread_id, RunAction::Steer { message }, config).await?;
+    Ok(id)
+}
+
+/// Start (or feed) a run on one of the shared session's threads, as the
+/// owner's own action would. `config`: the owner's, if their app sent one;
+/// otherwise their app is asked for it.
+async fn start_with_config(app: &AppHandle, thread_id: &str, action: RunAction, config: Option<RunConfig>) -> Result<(), String> {
+    let config = match config {
+        Some(config) => config,
+        None => {
+            let what = match &action {
+                RunAction::Steer { .. } => "steer",
+                RunAction::Respond { .. } => "respond",
+                _ => "resume",
+            };
+            request_config(app, thread_id, what).await?
+        }
     };
-    result.map_err(|e| e.to_string())
+    let meta = thread_meta(app, thread_id).await?;
+    runs::start_run(app, meta, action, config).await.map_err(|e| e.to_string())
+}
+
+/// A collaborator's message, waiting for the driver (or the owner).
+async fn suggest(app: &AppHandle, share: &HostShare, author: &Author, text: String, images: Vec<Image>) -> Result<Value, String> {
+    if share.inner.lock().unwrap().suggestions.len() >= MAX_SUGGESTIONS {
+        return Err("Too many suggestions are waiting. Try again once some are sent.".into());
+    }
+    let files = store_images(app, images).await?;
+    let suggestion = Suggestion { id: new_id(), author: author.clone(), text, files, at: now_ms() };
+    let (id, preview) = (suggestion.id.clone(), audit::preview(&suggestion.text));
+    share.inner.lock().unwrap().suggestions.push(suggestion);
+    share.queue_changed(app);
+    share.record(app, author, Kind::Suggested, json!({ "suggestionId": id, "preview": preview }));
+    Ok(json!({ "suggestionId": id }))
+}
+
+/// Send a suggestion (with `text` in place of its own, if edited), credited to
+/// whoever wrote it and noting who sent it. `config`: the owner's, from their app.
+async fn accept(app: &AppHandle, share: &HostShare, id: &str, text: Option<String>, by: &Author, config: Option<RunConfig>) -> Result<Value, String> {
+    let suggestion = {
+        let mut i = share.inner.lock().unwrap();
+        let at = i.suggestions.iter().position(|s| s.id == id).ok_or("That suggestion is gone.")?;
+        i.suggestions.remove(at)
+    };
+    share.queue_changed(app);
+    let sent = text.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| suggestion.text.clone());
+    let message = user_message(&sent, suggestion.files.clone(), &suggestion.author, Some(by));
+    match steer(app, share, message, config).await {
+        Ok(message_id) => {
+            let detail = json!({
+                "suggestionId": id,
+                "messageId": message_id,
+                "from": suggestion.author.name,
+                "preview": audit::preview(&sent),
+                "edited": sent != suggestion.text,
+            });
+            share.record(app, by, Kind::Accepted, detail);
+            Ok(json!({ "messageId": message_id }))
+        }
+        Err(e) => {
+            // It stays waiting, first in line.
+            share.inner.lock().unwrap().suggestions.insert(0, suggestion);
+            share.queue_changed(app);
+            Err(e)
+        }
+    }
+}
+
+fn drop_suggestion(app: &AppHandle, share: &HostShare, id: &str, by: &Author) -> Result<(), String> {
+    let suggestion = {
+        let mut i = share.inner.lock().unwrap();
+        let at = i.suggestions.iter().position(|s| s.id == id).ok_or("That suggestion is gone.")?;
+        i.suggestions.remove(at)
+    };
+    share.queue_changed(app);
+    let detail = json!({ "suggestionId": id, "from": suggestion.author.name, "preview": audit::preview(&suggestion.text) });
+    share.record(app, by, Kind::Dropped, detail);
+    Ok(())
+}
+
+/// Answer a waiting tool call for the owner. First wins: anyone later is told who answered.
+#[allow(clippy::too_many_arguments)]
+async fn respond(
+    app: &AppHandle,
+    share: &HostShare,
+    by: &Author,
+    child: Option<String>,
+    call_id: String,
+    class: ApprovalClass,
+    decision: Decision,
+    answer: Option<Value>,
+) -> Result<Value, String> {
+    let thread_id = child_thread(&share.thread_id, &child);
+    let (response, kind) = match (decision, answer) {
+        (Decision::Approve, Some(output)) => (ToolResponse::Output { output }, Kind::Answered),
+        (Decision::Approve, None) => (ToolResponse::Approve, Kind::Approved),
+        (Decision::Deny, _) => {
+            let error_text = if class == ApprovalClass::AskUser { DISMISSED } else { DENIED };
+            (ToolResponse::Error { error_text: error_text.into() }, Kind::Denied)
+        }
+    };
+    share.claim(&call_id, &by.name)?;
+    let action = RunAction::Respond { call_id: call_id.clone(), response, by: Some(by.clone()) };
+    if let Err(e) = start_with_config(app, &thread_id, action, None).await {
+        share.release(&call_id);
+        return Err(e);
+    }
+    share.record(app, by, kind, json!({ "callId": call_id, "child": child }));
+    Ok(Value::Null)
+}
+
+/// A remark beside the session, for everyone in it. Never sent to the model.
+fn comment(app: &AppHandle, share: &HostShare, author: &Author, text: &str, message_id: Option<String>) -> Value {
+    let comment = Comment { id: new_id(), author: author.clone(), text: text.trim().to_string(), message_id, at: now_ms() };
+    share.append(
+        |i| {
+            i.comments.push(comment.clone());
+            if i.comments.len() > MAX_COMMENTS {
+                i.comments.remove(0);
+            }
+        },
+        Event::Comment { comment: comment.clone() },
+    );
+    let detail = json!({ "commentId": comment.id, "text": comment.text, "messageId": comment.message_id });
+    share.record(app, author, Kind::Commented, detail);
+    json!({ "commentId": comment.id })
 }
 
 #[derive(Serialize)]
@@ -1017,13 +1559,21 @@ pub struct InviteLink {
 
 /// A new invite link to a share (viewers only, in this phase).
 #[tauri::command]
-pub async fn share_invite_create(state: State<'_, AppState>, thread_id: String, ttl_hours: Option<u32>, max_uses: Option<u32>) -> AppResult<InviteLink> {
+pub async fn share_invite_create(
+    state: State<'_, AppState>,
+    thread_id: String,
+    ttl_hours: Option<u32>,
+    max_uses: Option<u32>,
+    role_cap: Option<Role>,
+) -> AppResult<InviteLink> {
     let share = state.runs.shares.host(&thread_id)?;
+    // A link lets people watch or suggest; driving is only handed over in the session.
+    let role_cap = if role_cap == Some(Role::Collaborator) { "collaborator" } else { "viewer" };
     let resp = state
         .http
         .post(format!("{}/api/shares/{}/invites", share.account.relay_url, share.share_id))
         .bearer_auth(&share.account.token)
-        .json(&json!({ "ttlHours": ttl_hours, "maxUses": max_uses }))
+        .json(&json!({ "ttlHours": ttl_hours, "maxUses": max_uses, "roleCap": role_cap }))
         .send()
         .await
         .map_err(net)?;
@@ -1091,18 +1641,89 @@ pub async fn share_kick(app: AppHandle, state: State<'_, AppState>, thread_id: S
         .await
         .map_err(net)?;
     relay_json(resp).await?;
-    share.inner.lock().unwrap().members.remove(&user_id);
+    let removed = share.inner.lock().unwrap().members.remove(&user_id);
     share.members_changed();
+    if let Some(m) = removed {
+        share.record(&app, &share.owner, Kind::Kicked, json!({ "userId": user_id, "name": m.name }));
+    }
+    // Their role may have been the last that could steer: standing permissions apply again.
+    state.runs.recheck_family(&thread_id);
     emit_view(&app, share.view());
     Ok(())
 }
 
+/// What the owner lets guests do. A change to what the driver may approve goes in the audit log.
 #[tauri::command]
 pub fn share_set_policy(app: AppHandle, state: State<'_, AppState>, thread_id: String, policy: SharePolicy) -> AppResult<()> {
     let share = state.runs.shares.host(&thread_id)?;
-    share.inner.lock().unwrap().policy = policy;
+    let before = std::mem::replace(&mut share.inner.lock().unwrap().policy, policy.clone());
     share.members_changed();
+    if before.delegation != policy.delegation {
+        share.record(&app, &share.owner, Kind::Role, json!({ "delegation": policy.delegation }));
+    }
     emit_view(&app, share.view());
+    Ok(())
+}
+
+/// Give someone in the share another role. There's one driver at a time: a
+/// new one makes the old one a collaborator. Only the owner does this, here.
+#[tauri::command]
+pub fn share_set_role(app: AppHandle, state: State<'_, AppState>, thread_id: String, user_id: String, role: Role) -> AppResult<()> {
+    if role == Role::Owner {
+        return Err(AppError::Invalid("A share has one owner.".into()));
+    }
+    let share = state.runs.shares.host(&thread_id)?;
+    let name = {
+        let mut i = share.inner.lock().unwrap();
+        if !i.members.contains_key(&user_id) {
+            return Err(AppError::NotFound("They're no longer in this share.".into()));
+        }
+        if role == Role::Driver {
+            for m in i.members.values_mut().filter(|m| m.role == Role::Driver) {
+                m.role = Role::Collaborator;
+            }
+        }
+        let member = i.members.get_mut(&user_id).expect("checked above");
+        member.role = role;
+        member.name.clone()
+    };
+    share.members_changed();
+    share.record(&app, &share.owner, Kind::Role, json!({ "userId": user_id, "name": name, "role": role }));
+    // Nobody else may be able to steer now: calls held only for that start.
+    state.runs.recheck_family(&thread_id);
+    emit_view(&app, share.view());
+    Ok(())
+}
+
+/// The owner sends a suggestion from their own app, with the config their UI built.
+#[tauri::command]
+pub async fn share_suggestion_accept(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread_id: String,
+    suggestion_id: String,
+    text: Option<String>,
+    config: RunConfig,
+) -> AppResult<()> {
+    let share = state.runs.shares.host(&thread_id)?;
+    accept(&app, &share, &suggestion_id, text, &share.owner, Some(config)).await.map_err(AppError::Invalid)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn share_suggestion_drop(app: AppHandle, state: State<'_, AppState>, thread_id: String, suggestion_id: String) -> AppResult<()> {
+    let share = state.runs.shares.host(&thread_id)?;
+    drop_suggestion(&app, &share, &suggestion_id, &share.owner).map_err(AppError::Invalid)
+}
+
+/// The owner's comment on their shared session.
+#[tauri::command]
+pub fn share_comment(app: AppHandle, state: State<'_, AppState>, thread_id: String, text: String, message_id: Option<String>) -> AppResult<()> {
+    let share = state.runs.shares.host(&thread_id)?;
+    if text.trim().is_empty() || text.len() > policy::MAX_COMMENT {
+        return Err(AppError::Invalid("A comment is between 1 and 4,096 characters.".into()));
+    }
+    comment(&app, &share, &share.owner, &text, message_id);
     Ok(())
 }
 
@@ -1120,6 +1741,7 @@ pub async fn share_end(app: AppHandle, state: State<'_, AppState>, thread_id: St
     if let Ok(resp) = resp {
         let _ = relay_json(resp).await;
     }
+    share.record(&app, &share.owner, Kind::Ended, json!({}));
     finish_host(&app, &share, "You ended the share.".into());
     Ok(())
 }
@@ -1178,6 +1800,7 @@ pub async fn share_join(app: AppHandle, state: State<'_, AppState>, link: String
             replica: Replica::default(),
             info: ThreadInfo { title: text("title"), kind: ThreadKind::Chat, workspace_name: None, host_name: text("hostName") },
             host_user: None,
+            me: None,
             status: LinkStatus::Connecting,
             host_online: false,
             admitted: false,
@@ -1325,9 +1948,12 @@ fn on_guest_frame(app: &AppHandle, guest: &GuestShare, text: &str) -> bool {
     {
         let mut i = guest.inner.lock().unwrap();
         match frame {
-            RelayIn::Welcome { peers, host_online, admitted, .. } => {
+            RelayIn::Welcome { you, peers, host_online, admitted, .. } => {
                 i.host_online = host_online;
                 i.admitted = admitted;
+                if let Some(you) = you {
+                    i.me = Some(you.user_id);
+                }
                 if let Some(host) = peers.iter().find(|p| p.is_host) {
                     i.host_user = Some(host.user_id.clone());
                 }
@@ -1370,7 +1996,10 @@ fn on_guest_frame(app: &AppHandle, guest: &GuestShare, text: &str) -> bool {
                     }
                     Ok(msg) => match i.replica.apply(msg) {
                         Applied::Changed(change) => {
-                            let only_frames = !matches!(change, Change::Snapshot | Change::Members | Change::Thread);
+                            let only_frames = !matches!(
+                                change,
+                                Change::Snapshot | Change::Members | Change::Thread | Change::Queue | Change::Comment | Change::Audit
+                            );
                             frames = frames_for(&guest.thread_id, &mut i, change);
                             if only_frames {
                                 drop(i);
@@ -1437,7 +2066,8 @@ fn frames_for(thread_id: &str, i: &mut GuestInner, change: Change) -> Vec<RunFra
         Change::Status { child, status, error } => vec![RunFrame::Status { thread_id: id(&child), status, error }],
         Change::ToolRunning { call_id, running } => vec![RunFrame::ToolRunning { thread_id: thread_id.to_string(), call_id, running }],
         Change::FilesChanged => vec![RunFrame::FilesChanged { thread_id: thread_id.to_string(), workspace_id: SHARED_WORKSPACE.into() }],
-        Change::Members => Vec::new(),
+        // Shown through the share's view, which goes out after these.
+        Change::Members | Change::Queue | Change::Comment | Change::Audit => Vec::new(),
         Change::Thread => {
             if let Some(info) = i.replica.thread.clone() {
                 i.info = info;

@@ -41,7 +41,9 @@ import { UsageHeatmap } from "@/components/usage-heatmap";
 import { CoworkPanel } from "@/components/workspace-panel";
 import { Mascot } from "@/components/mascot";
 import { SharedFilesPanel } from "@/components/shared-files-panel";
-import { WatchingBar } from "@/components/shared-sessions";
+import { GuestComposer, WatchingBar } from "@/components/shared-sessions";
+import { SuggestionQueue } from "@/components/suggestion-queue";
+import { UserAvatar } from "@/components/user-avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -83,7 +85,7 @@ import {
   useThread,
 } from "@/lib/sessions";
 import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
-import { WatchingHost } from "@/lib/share";
+import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
 import { errorMessage, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { formatTokens, formatTokensExact } from "@/lib/usage";
@@ -96,7 +98,11 @@ interface ChatViewProps {
   /** Whether any provider is configured; `null` while that's still loading. */
   hasProviders: boolean | null;
   onOpenSettings: () => void;
-  /** A session someone shared with this app: shown to watch, with nothing to send or answer. */
+  /**
+   * A session someone shared with this app. A viewer only watches; a driver
+   * sends messages, stops, resumes and answers what the host delegated; a
+   * collaborator suggests messages. The host checks each.
+   */
   watching?: ShareView;
 }
 
@@ -104,6 +110,15 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const id = conversation.id;
   // The run lives in Rust, so it keeps going when another chat is opened.
   const { messages, status: runStatus, error } = useThread(id);
+  // This session shared from here, or the one being watched: for its suggestions.
+  const hosted = useShare(watching ? undefined : id);
+  const share = watching ?? hosted;
+  // Driving someone's session: messages, stop, resume and the approvals handed over.
+  const drives = watching?.role === "driver" && watching.status === "live";
+  const watchingContext = useMemo<Watching | null>(
+    () => (watching ? { hostName: watching.thread.hostName, mayAnswer: (part) => mayAnswer(watching, part) } : null),
+    [watching],
+  );
 
   const [target, setLocalTarget] = useState<ModelTarget | null>(() => sessionTarget(id));
   const pickModel = (t: ModelTarget) => {
@@ -235,12 +250,17 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const waiting = busy && (last?.role !== "assistant" || !hasVisibleContent(last) || endsWithToolResult(last));
   // A reply that was stopped, or a message the app closed on before answering, can carry on.
   const resumable =
-    !watching && !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
+    (!watching || drives) && !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
 
   // An incognito chat's composer has a dashed outline, as in a private window.
-  // Someone watching a shared session can't send anything: they see whose it is instead.
+  // In someone's shared session, a driver or collaborator writes to the host;
+  // a viewer sees whose session it is instead.
   const composer = watching ? (
-    <WatchingBar share={watching} />
+    canWrite(watching.role) && watching.status === "live" ? (
+      <GuestComposer share={watching} status={runStatus} />
+    ) : (
+      <WatchingBar share={watching} />
+    )
   ) : (
     <div className={cn(incognito && "[&_[data-slot=input-group]]:border-dashed [&_[data-slot=input-group]]:border-foreground/30")}>
       <Composer
@@ -379,8 +399,9 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               canEdit={!watching && !busy}
               onEdit={(text) => edit(message, text)}
               onRestore={watching ? undefined : () => restoreRef.current(message)}
-              // Only the latest turn's questions can still be answered, and only by whoever runs the session.
-              canAnswer={!watching && !busy && message.id === last?.id}
+              // Only the latest turn's questions can still be answered, by whoever runs the session
+              // (or its driver, for what the host handed over; the cards check which).
+              canAnswer={(!watching || drives) && !busy && message.id === last?.id}
               onToolResult={(callId, result) => respond(id, callId, toResponse(result))}
               onApprove={(callId) => respond(id, callId, { type: "approve" })}
               artifacts={artifacts}
@@ -424,7 +445,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
 
       <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
         {workspaceId && branchCall && <BranchChip workspaceId={workspaceId} part={branchCall.part} />}
-        {!watching && <QueuedMessages threadId={id} status={runStatus} />}
+        {share && <SuggestionQueue share={share} />}
+        {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
         {composer}
       </div>
 
@@ -456,7 +478,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     </div>
   );
   return (
-    <WatchingHost.Provider value={watching ? watching.thread.hostName : null}>
+    <WatchingHost.Provider value={watchingContext}>
       <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
         {chat}
       </WorkspaceFrame>
@@ -829,6 +851,7 @@ const ChatMessage = memo(function ChatMessage({
             canAnswer={canAnswer}
             onResult={(result) => onToolResult(part.toolCallId, result)}
             onApprove={() => onApprove(part.toolCallId)}
+            answer={message.metadata?.sushAnswers?.[part.toolCallId]}
           />
         );
       case "data-web":
@@ -851,9 +874,19 @@ const ChatMessage = memo(function ChatMessage({
     }
   };
 
+  // In a shared session: who wrote a message, when it wasn't the host (and who sent a suggestion on).
+  const author = message.role === "user" ? message.metadata?.author : undefined;
+
   return (
     <SourcesProvider defaultExpanded={false}>
       <Message from={message.role}>
+        {author && (
+          <p className="flex items-center justify-end gap-1.5 text-xs text-muted-foreground">
+            <UserAvatar image={safeImage(author.image)} name={author.name} className="size-4 text-[9px]" />
+            {author.name}
+            {message.metadata?.acceptedBy && <span>· sent by {message.metadata.acceptedBy.name}</span>}
+          </p>
+        )}
         {withTeams(groupParts(message.parts, branchCall), message.parts).map((item) =>
           Array.isArray(item) ? (
             <ActivityGroup key={`${message.id}-g${item[0]}`} parts={item.map((i) => message.parts[i])}>

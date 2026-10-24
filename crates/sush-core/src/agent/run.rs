@@ -41,8 +41,14 @@ pub enum RunAction {
     Send { message: Value, replace: Option<String> },
     /// Ask again: drops the given assistant message (default: the last one) and what follows it.
     Regenerate { message_id: Option<String> },
-    /// Answer a tool call that is waiting for the user.
-    Respond { call_id: String, response: ToolResponse },
+    /// Answer a tool call that is waiting for the user. `by`: who answered, in
+    /// a shared session (recorded on the reply, see [`ANSWERS`]).
+    Respond {
+        call_id: String,
+        response: ToolResponse,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        by: Option<Author>,
+    },
     /// Add a user message to a live run at its next step boundary (with no
     /// live run, the same as `Send`).
     Steer { message: Value },
@@ -54,9 +60,23 @@ pub enum RunAction {
 pub const PAUSED: &str = "paused";
 /// Metadata key on the user message `Resume` adds when the reply stopped mid-text.
 pub const RESUMED: &str = "resumed";
+/// Metadata key on a reply: who answered its tool calls in a shared session,
+/// by call id (`{ by, decision, at }`). Only answers that carry an author are recorded.
+pub const ANSWERS: &str = "sushAnswers";
 /// The result of a tool call that `Inbox::Interrupt` cut short.
 pub const INTERRUPTED: &str = "Interrupted: the user sent a message.";
 const RESUME_PROMPT: &str = "Continue from where you left off.";
+
+/// Someone in a shared session (`crate::share`), as the host knows them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Author {
+    pub user_id: String,
+    pub name: String,
+    /// A `data:` image or a built-in avatar id; never a URL to fetch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
@@ -147,8 +167,8 @@ pub enum RunEvent {
 /// "Always allow" changed a tool's approval.
 #[derive(Debug, Clone)]
 pub enum Inbox {
-    /// An answer to a tool call waiting for the user.
-    Respond { call_id: String, response: ToolResponse, config: Option<RunConfig> },
+    /// An answer to a tool call waiting for the user, and who gave it in a shared session.
+    Respond { call_id: String, response: ToolResponse, config: Option<RunConfig>, by: Option<Author> },
     /// A user message, added at the next step boundary.
     Steer { message: Value, config: Option<RunConfig> },
     /// Add the steering messages now: end the current step or tool calls
@@ -225,8 +245,8 @@ pub async fn run(
             }
             false
         }
-        RunAction::Respond { call_id, response } => {
-            r.answers.push_back((call_id, response));
+        RunAction::Respond { call_id, response, by } => {
+            r.answers.push_back((call_id, response, by));
             true
         }
         RunAction::Resume => r.prepare_resume(),
@@ -260,8 +280,8 @@ struct Runner<'a> {
     config: RunConfig,
     cancel: CancellationToken,
     status: Option<RunStatus>,
-    /// Answers to calls waiting for the user, for the next `resolve`.
-    answers: VecDeque<(String, ToolResponse)>,
+    /// Answers to calls waiting for the user (and who gave them), for the next `resolve`.
+    answers: VecDeque<(String, ToolResponse, Option<Author>)>,
     /// User messages sent while the run worked, for the next step boundary.
     steers: Vec<Value>,
     /// The user asked for `steers` to join now.
@@ -332,8 +352,8 @@ impl Runner<'_> {
 
     fn receive(&mut self, msg: Inbox) {
         let config = match msg {
-            Inbox::Respond { call_id, response, config } => {
-                self.answers.push_back((call_id, response));
+            Inbox::Respond { call_id, response, config, by } => {
+                self.answers.push_back((call_id, response, by));
                 config
             }
             Inbox::Steer { message, config } => {
@@ -550,8 +570,12 @@ impl Runner<'_> {
         let mut inbox_open = true;
         loop {
             // Answers first, so a resume applies its response before anything else.
-            while let Some((call_id, response)) = self.answers.pop_front() {
+            while let Some((call_id, response, by)) = self.answers.pop_front() {
+                // The first answer wins; a later one finds nothing waiting.
                 let Some((index, call)) = waiting.remove(&call_id) else { continue };
+                if let Some(by) = by {
+                    self.record_answer(&call_id, &response, by);
+                }
                 match response {
                     ToolResponse::Approve => match self.tool(&call.name).map(|t| t.exec.clone()) {
                         Some(exec) => {
@@ -647,6 +671,28 @@ impl Runner<'_> {
                 },
             }
         }
+    }
+
+    /// Note on the reply who answered a call, so everyone sees it (`ANSWERS`).
+    /// The reply is the last message: answers are taken between steps.
+    fn record_answer(&mut self, call_id: &str, response: &ToolResponse, by: Author) {
+        let decision = match response {
+            ToolResponse::Approve => "approve",
+            ToolResponse::Output { .. } => "answer",
+            ToolResponse::Error { .. } => "deny",
+        };
+        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        // Metadata merges shallowly, so the whole record goes each time.
+        let mut answers = self
+            .messages
+            .last()
+            .and_then(|m| m.get("metadata"))
+            .and_then(|m| m.get(ANSWERS))
+            .filter(|a| a.is_object())
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        answers[call_id] = json!({ "by": by, "decision": decision, "at": at });
+        self.op(Op::SetMetadata { metadata: json!({ ANSWERS: answers }) });
     }
 
     fn tool(&self, name: &str) -> Option<&RunTool> {
@@ -815,7 +861,7 @@ mod tests {
         while !host.statuses().contains(&RunStatus::Awaiting) {
             tokio::task::yield_now().await;
         }
-        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None, by: None }).unwrap();
         let messages = runner.await.unwrap();
 
         assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
@@ -837,7 +883,7 @@ mod tests {
         host.allow_all.store(true, std::sync::atomic::Ordering::SeqCst);
         tx.send(Inbox::Recheck).unwrap();
         // An approval that arrives too late is ignored, not run twice.
-        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None, by: None }).unwrap();
         let messages = runner.await.unwrap();
 
         assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
@@ -861,7 +907,7 @@ mod tests {
         }
         // Sent while the call waits; it must not land between the call and its result.
         tx.send(steer("also this")).unwrap();
-        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        tx.send(Inbox::Respond { call_id: "id-ask_tool".into(), response: ToolResponse::Approve, config: None, by: None }).unwrap();
         let messages = runner.await.unwrap();
 
         let roles: Vec<_> = messages.iter().map(|m| ui::role(m).unwrap()).collect();
@@ -1048,7 +1094,7 @@ mod tests {
             tokio::task::yield_now().await;
         }
         assert!(host.requests.lock().unwrap().is_empty(), "no step before the answer");
-        tx.send(Inbox::Respond { call_id: "c1".into(), response: ToolResponse::Approve, config: None }).unwrap();
+        tx.send(Inbox::Respond { call_id: "c1".into(), response: ToolResponse::Approve, config: None, by: None }).unwrap();
         let messages = runner.await.unwrap();
         assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
         assert_eq!(ui::parts(&messages[1])[3]["text"], "thanks");
@@ -1076,7 +1122,7 @@ mod tests {
         ];
         let host = FakeHost::new(vec![vec![text("ok")]]);
         let (_tx, mut rx) = mpsc::unbounded_channel();
-        let action = RunAction::Respond { call_id: "c1".into(), response: ToolResponse::Error { error_text: "denied".into() } };
+        let action = RunAction::Respond { call_id: "c1".into(), response: ToolResponse::Error { error_text: "denied".into() }, by: None };
         let messages = run(&*host, saved, action, config(), &mut rx, &CancellationToken::new()).await;
 
         let parts = ui::parts(&messages[1]);
@@ -1090,7 +1136,7 @@ mod tests {
     async fn respond_to_nothing_does_not_call_the_model() {
         let host = FakeHost::new(vec![]);
         let (_tx, mut rx) = mpsc::unbounded_channel();
-        let action = RunAction::Respond { call_id: "gone".into(), response: ToolResponse::Approve };
+        let action = RunAction::Respond { call_id: "gone".into(), response: ToolResponse::Approve, by: None };
         let saved = vec![json!({ "id": "u", "role": "user", "parts": [{ "type": "text", "text": "hi" }] })];
         run(&*host, saved, action, config(), &mut rx, &CancellationToken::new()).await;
         assert!(host.requests.lock().unwrap().is_empty());
@@ -1132,6 +1178,57 @@ mod tests {
         let last = host.events.lock().unwrap().last().cloned();
         assert_eq!(last, Some(RunEvent::Status { status: RunStatus::Error, error: Some("overloaded".into()) }));
         assert_eq!(ui::parts(&messages[1])[1], json!({ "type": "text", "text": "par", "state": "done" }));
+    }
+
+    fn author(name: &str) -> Author {
+        Author { user_id: format!("u-{name}"), name: name.into(), image: None }
+    }
+
+    #[tokio::test]
+    async fn the_first_answer_wins_and_is_recorded_on_the_reply() {
+        let host = FakeHost::new(vec![vec![call("ask_tool")], vec![text("thanks")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        let respond = |response, by| Inbox::Respond { call_id: "id-ask_tool".into(), response, config: None, by: Some(by) };
+        tx.send(respond(ToolResponse::Approve, author("Shruti"))).unwrap();
+        tx.send(respond(ToolResponse::Error { error_text: "no".into() }, author("Suraj"))).unwrap();
+        let messages = runner.await.unwrap();
+
+        assert_eq!(*host.executed.lock().unwrap(), ["ask_tool"]);
+        let answer = &messages[1]["metadata"][ANSWERS]["id-ask_tool"];
+        assert_eq!(answer["by"]["name"], "Shruti");
+        assert_eq!(answer["decision"], "approve");
+        assert_eq!(messages[1]["metadata"][ANSWERS].as_object().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn answers_without_an_author_leave_no_record() {
+        let saved = vec![
+            json!({ "id": "u", "role": "user", "parts": [{ "type": "text", "text": "hi" }] }),
+            json!({ "id": "a", "role": "assistant", "parts": [
+                { "type": "dynamic-tool", "toolName": "ask_tool", "toolCallId": "c1", "state": "input-available", "input": {} },
+                { "type": "dynamic-tool", "toolName": "ask_tool", "toolCallId": "c2", "state": "input-available", "input": {} },
+            ], "metadata": { ANSWERS: { "old": { "decision": "deny" } } }}),
+        ];
+        let host = FakeHost::new(vec![vec![text("ok")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let deny = ToolResponse::Error { error_text: "x".into() };
+        tx.send(Inbox::Respond { call_id: "c2".into(), response: deny, config: None, by: Some(author("Shruti")) }).unwrap();
+        let action = RunAction::Respond { call_id: "c1".into(), response: ToolResponse::Approve, by: None };
+        let messages = run(&*host, saved, action, config(), &mut rx, &CancellationToken::new()).await;
+
+        let answers = messages[1]["metadata"][ANSWERS].as_object().unwrap();
+        assert!(answers.get("c1").is_none());
+        assert_eq!(answers["c2"]["decision"], "deny");
+        assert_eq!(answers["c2"]["by"]["name"], "Shruti");
+        // Earlier answers stay: the whole record goes with each one.
+        assert!(answers.contains_key("old"));
     }
 
     #[tokio::test]

@@ -6,5 +6,7 @@ pub mod run;
 pub mod subagents;
 pub mod ui;
 
-pub use run::{run, Approval, Inbox, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec, ToolResponse, PAUSED, RESUMED};
+pub use run::{
+    run, Approval, Author, Inbox, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec, ToolResponse, ANSWERS, PAUSED, RESUMED,
+};
 pub use ui::{Op, ToolCall};

@@ -1,6 +1,6 @@
 # Sush Multiplayer: shared, live agent sessions
 
-Status: **approved 2026-10-25; phase 1 built** (watch live, LAN relay). Phases 2–4 not started.
+Status: **approved 2026-10-25; phases 1 and 2 built** (watch live, LAN relay; redirect together). Phases 3–4 not started.
 Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1); decisions below updated 2026-10-25.
 
 ## Decisions (2026-10-25)
@@ -19,6 +19,19 @@ Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1); decisions below updated
 | Guest attachments (phase 2) | Images too: the host stores guest blobs with type and size checks. |
 | Dev profiles | `SUSH_PROFILE`. Separate webview storage on Windows only; on macOS, use two machines. |
 | Defaults | Share 12 h, invite 24 h (max 72), 10 uses (max 25), 10 guests. |
+
+### Phase 2 as built (2026-10-25)
+
+| Question | Choice |
+|---|---|
+| Who becomes driver | Only the owner, in the share dialog (`share_set_role`). One at a time: a new driver makes the old one a collaborator. A link is "to watch" (viewer) or "to suggest" (collaborator); the relay passes the invite's `roleCap` to the host on `peer-joined`, and the host sets the first role from it. |
+| Delegation | Built now rather than in phase 3, because without it a driver could answer nothing but questions. `SharePolicy.delegation` (`edits`, `shell`, `escalated`, `connectors`, `browser`, all off), switches in the share dialog once there's a driver. Secret reads are never delegated. |
+| Approval floor | On while any member is a driver or collaborator (not for viewers yet: handing control to a viewer is phase 3). `Host::approval` asks again for workspace, browser-navigate and connector calls of a floored class; read-only tools stay automatic. A role change, a kick or the share ending sends `Inbox::Recheck`. |
+| Owner's answers | Go through the same first-wins claim (`run_start` → `Shares::claim_local`) and are credited to the owner in `sushAnswers`, so guests see "Approved by Suraj". |
+| Guest images | Up to 3 images of 2 MB each (PNG, JPEG, GIF, WebP), checked by type, size and magic bytes, stored as host blobs. The relay's guest frame cap went from 64 KB to 8 MB to carry them. |
+| Denials | A guest's deny uses the same tool result as the owner's card (`DENIED`, or `DISMISSED` for questions), so cards read the same; who answered is in `sushAnswers`. Approving a question needs its answer. |
+| Comments | Kept in memory on the host (200) and as `commented` entries (full text, ≤ 4 KB) in `share_events`. |
+| Audit log | `share::audit` + `share_events` (store migration 6). The latest 100 go in the snapshot and in `ShareView.audit`; kinds `undid` and `control` wait for phase 3; `role` also covers delegation changes. |
 
 A team watches an agent's Cowork session live, redirects it, and hands it off.
 The run, the workspace, the sandbox, API keys and connector tokens stay on the

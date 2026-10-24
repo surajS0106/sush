@@ -1,17 +1,22 @@
-// "Share live…": let others watch a session as it runs. Setting up the relay
-// account (also on Settings → Sharing and in the join dialog), starting the
-// share, copying invite links, letting people in from the lobby, removing
-// them, revoking links and ending the share. The work itself is `lib/share.ts`.
+// "Share live…": let others watch a session as it runs, and redirect it.
+// Setting up the relay account (also on Settings → Sharing and in the join
+// dialog), starting the share, copying invite links (to watch, or to suggest
+// too), letting people in from the lobby, giving each a role (one driver at a
+// time), choosing which approvals the driver may answer, removing people,
+// revoking links, the activity log and ending the share. The work itself is
+// `lib/share.ts`.
 
-import { CheckIcon, CopyIcon, LinkIcon, RadioIcon, UserXIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, RadioIcon, ShieldCheckIcon, UserXIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
 import { Mascot } from "@/components/mascot";
+import { ActivityLog } from "@/components/share-activity";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
 import {
@@ -22,10 +27,13 @@ import {
   isLive,
   kick,
   listInvites,
+  othersCanSteer,
   refreshShareAccount,
   revokeInvite,
   safeImage,
   setBrowseFiles,
+  setDelegation,
+  setRole,
   shareWithAppAccount,
   signInToRelay,
   startShare,
@@ -33,7 +41,7 @@ import {
   useShareAccount,
 } from "@/lib/share";
 import { getConversations } from "@/lib/store";
-import { errorMessage, type InviteInfo, type ShareView } from "@/lib/tauri";
+import { errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 /** The relay account: who's signed in, or the form to set it up. `onReady` once someone is. */
@@ -142,7 +150,7 @@ export function ShareDialog({ threadId, onClose }: { threadId: string | null; on
           </DialogTitle>
           <DialogDescription>
             Others watch “{title}” as it runs: the messages, tool calls and the files it changes. It keeps running on this
-            computer, with your keys; they can’t run anything.
+            computer, with your keys. You choose who may suggest messages and who drives.
           </DialogDescription>
         </DialogHeader>
         {threadId &&
@@ -178,7 +186,8 @@ function Start({ threadId, ended }: { threadId: string; ended: string | null }) 
       {ended && <p className="text-sm text-muted-foreground">{ended}</p>}
       <ul className="max-w-sm text-left text-sm text-muted-foreground [&>li]:mt-1 [&>li]:list-disc [&>li]:ml-4">
         <li>Secret files (.env, keys), your memory and past chats are hidden from them.</li>
-        <li>You let each person in, and can remove them or end the share at any time.</li>
+        <li>You let each person in, give them a role, and can remove them or end the share at any time.</li>
+        <li>While anyone else can steer, edits, commands, connectors and new sites ask you first.</li>
         <li>The relay can see what’s shared. Use one you trust.</li>
       </ul>
       <Button onClick={() => void start()} disabled={busy}>
@@ -196,21 +205,37 @@ const STATUS: Record<ShareView["status"], string> = {
   ended: "Ended",
 };
 
+const ROLES: { value: Exclude<ShareRole, "owner">; label: string; hint: string }[] = [
+  { value: "viewer", label: "Watches", hint: "Sees everything, sends nothing" },
+  { value: "collaborator", label: "Suggests", hint: "Suggests messages for the driver or you, and comments" },
+  { value: "driver", label: "Drives", hint: "Sends messages, pauses and resumes, answers what you hand over" },
+];
+
+const DELEGATIONS: { key: keyof ShareDelegation; label: string; hint: string; risky?: boolean }[] = [
+  { key: "edits", label: "File changes", hint: "Writing, editing, moving and deleting files, and commits" },
+  { key: "shell", label: "Sandboxed commands", hint: "Commands that can only change this folder, without network" },
+  { key: "browser", label: "Opening sites", hint: "New sites in the built-in browser" },
+  { key: "escalated", label: "Commands with network or outside the sandbox", hint: "They run as you, on your computer", risky: true },
+  { key: "connectors", label: "Connector tools", hint: "They act with your accounts (GitHub, Slack, …)", risky: true },
+];
+
 function Sharing({ share }: { share: ShareView }) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"viewer" | "collaborator" | null>(null);
   const [invites, setInvites] = useState<InviteInfo[] | null>(null);
   const threadId = share.threadId;
   const guests = share.members.filter((m) => m.role !== "owner");
+  const driver = guests.find((m) => m.role === "driver");
+  const steerable = othersCanSteer(share);
 
   const loadInvites = () =>
     void listInvites(threadId).then(setInvites, (e) => toast.error("Couldn’t load the links", { description: errorMessage(e) }));
   useEffect(loadInvites, [threadId]);
 
-  const copy = async () => {
+  const copy = async (roleCap: "viewer" | "collaborator") => {
     try {
-      await copyInvite(threadId);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      await copyInvite(threadId, roleCap);
+      setCopied(roleCap);
+      setTimeout(() => setCopied(null), 1500);
       loadInvites();
     } catch (e) {
       toast.error("Couldn’t make a link", { description: errorMessage(e) });
@@ -228,9 +253,14 @@ function Sharing({ share }: { share: ShareView }) {
         <span className="ml-auto text-xs text-muted-foreground">Ends {new Date(share.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
       </div>
 
-      <Button onClick={() => void copy()} variant="outline" className="justify-center">
-        {copied ? <CheckIcon /> : <CopyIcon />} {copied ? "Copied" : "Copy a new invite link"}
-      </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button onClick={() => void copy("viewer")} variant="outline" className="justify-center">
+          {copied === "viewer" ? <CheckIcon /> : <CopyIcon />} {copied === "viewer" ? "Copied" : "Link to watch"}
+        </Button>
+        <Button onClick={() => void copy("collaborator")} variant="outline" className="justify-center">
+          {copied === "collaborator" ? <CheckIcon /> : <CopyIcon />} {copied === "collaborator" ? "Copied" : "Link to suggest"}
+        </Button>
+      </div>
 
       {share.lobby.length > 0 && (
         <section className="flex flex-col gap-2">
@@ -254,25 +284,75 @@ function Sharing({ share }: { share: ShareView }) {
       )}
 
       <section className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium">Watching</h3>
-        {guests.length === 0 && <p className="text-sm text-muted-foreground">Nobody yet. Send someone the link.</p>}
+        <h3 className="text-sm font-medium">People</h3>
+        {guests.length === 0 && <p className="text-sm text-muted-foreground">Nobody yet. Send someone a link.</p>}
         {guests.map((m) => (
           <div key={m.userId} className="flex items-center gap-3">
             <UserAvatar image={safeImage(m.image)} name={m.name} className={cn("size-7 text-xs", !m.online && "opacity-50")} />
             <p className="min-w-0 flex-1 truncate text-sm">
               {m.name} {!m.online && <span className="text-muted-foreground">· away</span>}
             </p>
+            <Select
+              value={m.role}
+              onValueChange={(role) => act(() => setRole(threadId, m.userId, role as Exclude<ShareRole, "owner">), "Couldn’t change their role")}
+            >
+              <SelectTrigger size="sm" className="w-28" aria-label={`${m.name}’s role`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLES.map((r) => (
+                  <SelectItem key={r.value} value={r.value} title={r.hint}>
+                    {r.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
-              size="sm"
+              size="icon"
               variant="ghost"
               aria-label={`Remove ${m.name}`}
               onClick={() => act(() => kick(threadId, m.userId), "Couldn’t remove them")}
             >
-              <UserXIcon /> Remove
+              <UserXIcon />
             </Button>
           </div>
         ))}
+        {guests.length > 0 && (
+          <p className="text-xs text-muted-foreground">One person drives at a time. Links never make anyone a driver; only you do, here.</p>
+        )}
       </section>
+
+      {steerable && (
+        <p className="flex gap-2 rounded-lg bg-muted/60 p-2.5 text-xs text-muted-foreground">
+          <ShieldCheckIcon className="size-4 shrink-0 text-foreground" />
+          <span>
+            While someone else can steer, file changes, commands, connector tools and new sites ask you each time, even ones
+            you’d normally allow{driver ? ", unless you hand them to the driver below" : ""}. Anyone who can steer could ask the
+            agent to repeat what your memory or past chats hold.
+          </span>
+        </p>
+      )}
+
+      {driver && (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-medium">{driver.name} may approve</h3>
+          {DELEGATIONS.map((d) => (
+            <label key={d.key} className="flex items-start justify-between gap-4">
+              <span>
+                <span className={cn("block text-sm", d.risky && "text-destructive")}>{d.label}</span>
+                <span className="block text-xs text-muted-foreground">{d.hint}</span>
+              </span>
+              <Switch
+                checked={share.policy.delegation[d.key]}
+                onCheckedChange={(on) =>
+                  act(() => setDelegation(share, { ...share.policy.delegation, [d.key]: on }), "Couldn’t change that")
+                }
+              />
+            </label>
+          ))}
+          <p className="text-xs text-muted-foreground">They always answer the agent’s questions. Reading secret files stays yours.</p>
+        </section>
+      )}
 
       {share.thread.kind === "cowork" && (
         <label className="flex items-start justify-between gap-4">
@@ -284,7 +364,7 @@ function Sharing({ share }: { share: ShareView }) {
           </span>
           <Switch
             checked={share.policy.browseFiles}
-            onCheckedChange={(on) => act(() => setBrowseFiles(threadId, on), "Couldn’t change that")}
+            onCheckedChange={(on) => act(() => setBrowseFiles(share, on), "Couldn’t change that")}
           />
         </label>
       )}
@@ -298,7 +378,8 @@ function Sharing({ share }: { share: ShareView }) {
               <div key={i.inviteId} className="flex items-center gap-2 text-sm">
                 <LinkIcon className="size-3.5 text-muted-foreground" />
                 <span className="flex-1 text-muted-foreground">
-                  Made {new Date(i.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · used {i.uses} of {i.maxUses}
+                  {i.roleCap === "collaborator" ? "To suggest" : "To watch"} · made{" "}
+                  {new Date(i.createdAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} · used {i.uses} of {i.maxUses}
                 </span>
                 <Button
                   size="sm"
@@ -315,6 +396,13 @@ function Sharing({ share }: { share: ShareView }) {
               </div>
             ))}
         </section>
+      )}
+
+      {share.audit.length > 0 && (
+        <details className="group/log">
+          <summary className="cursor-pointer text-sm font-medium select-none">Activity</summary>
+          <ActivityLog entries={share.audit} className="mt-2 max-h-48 overflow-y-auto" />
+        </details>
       )}
 
       <DialogFooter className="items-center sm:justify-between">
