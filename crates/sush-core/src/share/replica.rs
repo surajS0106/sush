@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{audit, Comment, HostMsg, Member, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
+use super::{audit, Comment, ControlRequest, HostMsg, Member, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
 use crate::agent::ui::{self, Op};
 use crate::agent::RunStatus;
 
@@ -57,6 +57,9 @@ pub struct Replica {
     pub suggestions: Vec<Suggestion>,
     pub comments: Vec<Comment>,
     pub audit: Vec<audit::Entry>,
+    pub requests: Vec<ControlRequest>,
+    /// Since when the host is away, if they are.
+    pub owner_away: Option<i64>,
 }
 
 impl Replica {
@@ -70,7 +73,11 @@ impl Replica {
     }
 
     pub fn apply(&mut self, msg: HostMsg) -> Applied {
-        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy, suggestions, comments, audit } = msg {
+        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy, suggestions, comments, audit, requests, owner_away } =
+            msg
+        {
+            self.requests = requests;
+            self.owner_away = owner_away;
             self.suggestions = suggestions;
             self.comments = comments;
             self.audit = audit;
@@ -126,9 +133,11 @@ impl Replica {
                 self.turns = turns;
                 Change::FilesChanged
             }
-            HostMsg::Members { members, policy, .. } => {
+            HostMsg::Members { members, policy, requests, owner_away, .. } => {
                 self.members = members;
                 self.policy = policy;
+                self.requests = requests;
+                self.owner_away = owner_away;
                 Change::Members
             }
             HostMsg::Thread { thread, .. } => {
@@ -150,7 +159,7 @@ impl Replica {
                 audit::push(&mut self.audit, entry);
                 Change::Audit
             }
-            HostMsg::Snapshot { .. } | HostMsg::Reply { .. } | HostMsg::Incompatible { .. } => return Applied::Ignored,
+            HostMsg::Snapshot { .. } | HostMsg::Reply { .. } | HostMsg::Incompatible { .. } | HostMsg::Rekey { .. } => return Applied::Ignored,
         };
         Applied::Changed(change)
     }

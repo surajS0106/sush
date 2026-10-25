@@ -12,7 +12,9 @@
 //! its last step instead of ending. `Interrupt` ("Send now") has them join
 //! at once: it ends the step or tool calls in progress, and the calls it cuts
 //! short get an [`INTERRUPTED`] result. A stopped run marks its reply `paused`;
-//! `Resume` carries on from there.
+//! `Resume` carries on from there. `Pause` is the gentle stop: the step and
+//! the tool calls already running finish, then the run ends `paused` before
+//! the next step, leaving calls that wait for the user waiting.
 //!
 //! Sub-agents (`ToolExec::Agent`) are the exception: a steer doesn't wait for
 //! them, and an interrupt doesn't cut them short. The host moves them to the
@@ -65,6 +67,8 @@ pub const RESUMED: &str = "resumed";
 pub const ANSWERS: &str = "sushAnswers";
 /// The result of a tool call that `Inbox::Interrupt` cut short.
 pub const INTERRUPTED: &str = "Interrupted: the user sent a message.";
+/// The result of a call left waiting when a pause let messages join (`Inbox::Pause`).
+pub const PAUSED_CALL: &str = "Not run: the session was paused before anyone answered, and new messages arrived.";
 const RESUME_PROMPT: &str = "Continue from where you left off.";
 
 /// Someone in a shared session (`crate::share`), as the host knows them.
@@ -177,6 +181,12 @@ pub enum Inbox {
     /// The host's approval rules changed (e.g. the user let edits run without
     /// asking): calls waiting for the user that no longer need to, start.
     Recheck,
+    /// End at the next step boundary, marked `paused`: nothing running is cut
+    /// short, calls still waiting for the user stay waiting, and messages sent
+    /// meanwhile join the thread for `Resume` to answer (calls left waiting
+    /// then get a [`PAUSED_CALL`] result, since a message can't come between a
+    /// call and its result).
+    Pause,
 }
 
 /// What the run needs from the app.
@@ -220,6 +230,7 @@ pub async fn run(
         steers: Vec::new(),
         interrupt: false,
         recheck: false,
+        pause: false,
     };
     let resolve_first = match action {
         RunAction::Send { mut message, replace } => {
@@ -272,6 +283,8 @@ enum Resolved {
     /// There was nothing to resolve.
     Nothing,
     Cancelled,
+    /// A pause came while only calls waiting for the user were left.
+    Paused,
 }
 
 struct Runner<'a> {
@@ -288,6 +301,8 @@ struct Runner<'a> {
     interrupt: bool,
     /// The approval rules changed; waiting calls are looked at again.
     recheck: bool,
+    /// End at the next step boundary (`Inbox::Pause`).
+    pause: bool,
 }
 
 impl Runner<'_> {
@@ -368,6 +383,10 @@ impl Runner<'_> {
                 self.recheck = true;
                 None
             }
+            Inbox::Pause => {
+                self.pause = true;
+                None
+            }
         };
         if let Some(config) = config {
             self.config = config;
@@ -405,8 +424,17 @@ impl Runner<'_> {
                 self.host.save(&self.messages).await;
                 match resolved {
                     Resolved::Done => {}
+                    Resolved::Paused => {
+                        self.end_paused(inbox);
+                        return Ok(());
+                    }
                     Resolved::Nothing | Resolved::Cancelled => return Ok(()),
                 }
+            }
+            self.drain(inbox);
+            if self.pause {
+                self.end_paused(inbox);
+                return Ok(());
             }
             self.join_steers(inbox);
             let Some(calls) = self.step(inbox).await? else { return Ok(()) };
@@ -426,6 +454,21 @@ impl Runner<'_> {
             if self.steers.is_empty() || self.cancel.is_cancelled() {
                 return Ok(());
             }
+        }
+    }
+
+    /// Stop at a step boundary for `Inbox::Pause`: messages sent meanwhile join
+    /// (so `Resume` answers them), otherwise the reply is marked `paused`.
+    fn end_paused(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>) {
+        self.drain(inbox);
+        if !self.steers.is_empty() {
+            for (index, call) in ui::unresolved_calls(&self.messages) {
+                self.set_result(index, &call, Err(PAUSED_CALL.into()));
+            }
+        }
+        self.join_steers(inbox);
+        if self.messages.last().and_then(ui::role) == Some("assistant") {
+            self.op(Op::SetMetadata { metadata: json!({ PAUSED: true }) });
         }
     }
 
@@ -645,6 +688,10 @@ impl Runner<'_> {
             // Calls moved to the background may still be in `running`; they're dropped here.
             if waiting.is_empty() && in_flight.is_empty() {
                 return Resolved::Done;
+            }
+            // Pausing: what runs finishes, but nobody is waited for.
+            if self.pause && in_flight.is_empty() {
+                return Resolved::Paused;
             }
             if in_flight.is_empty() {
                 if !inbox_open {
@@ -1042,6 +1089,61 @@ mod tests {
         cancel.cancel();
         let messages = runner.await.unwrap();
         assert_eq!(messages[1]["metadata"][PAUSED], true);
+    }
+
+    #[tokio::test]
+    async fn a_pause_lets_the_step_and_its_tools_finish_then_ends_paused() {
+        let host = FakeHost::new(vec![vec![text("working"), call("auto_tool")], vec![text("never asked")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        host.during.lock().unwrap().insert(1, vec![Inbox::Pause]);
+        *host.tx.lock().unwrap() = Some(tx);
+        let messages = run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await;
+
+        assert_eq!(host.requests.lock().unwrap().len(), 1, "no step after the pause");
+        assert_eq!(*host.executed.lock().unwrap(), ["auto_tool"]);
+        assert_eq!(ui::parts(&messages[1])[2]["output"], "ran auto_tool");
+        assert_eq!(messages[1]["metadata"][PAUSED], true);
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
+    }
+
+    #[tokio::test]
+    async fn a_pause_while_awaiting_leaves_the_call_waiting_for_resume() {
+        let host = FakeHost::new(vec![vec![call("ask_tool")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        tx.send(Inbox::Pause).unwrap();
+        let messages = runner.await.unwrap();
+
+        assert!(host.executed.lock().unwrap().is_empty());
+        assert_eq!(ui::parts(&messages[1])[1]["state"], "input-available", "still waiting");
+        assert_eq!(messages[1]["metadata"][PAUSED], true);
+    }
+
+    #[tokio::test]
+    async fn a_pause_keeps_messages_sent_meanwhile() {
+        let host = FakeHost::new(vec![vec![call("ask_tool")]]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let runner = {
+            let host = host.clone();
+            tokio::spawn(async move { run(&*host, vec![], user("hi"), config(), &mut rx, &CancellationToken::new()).await })
+        };
+        while !host.statuses().contains(&RunStatus::Awaiting) {
+            tokio::task::yield_now().await;
+        }
+        tx.send(steer("later")).unwrap();
+        tx.send(Inbox::Pause).unwrap();
+        let messages = runner.await.unwrap();
+
+        // The waiting call gives way, so the message can follow it for a resume to answer.
+        assert_eq!(ui::parts(&messages[1])[1]["errorText"], PAUSED_CALL);
+        assert_eq!(messages.last().unwrap()["id"], "later");
+        assert_eq!(host.requests.lock().unwrap().len(), 1);
     }
 
     fn paused(parts: Value) -> Vec<Value> {

@@ -8,7 +8,7 @@
 
 use serde_json::Value;
 
-use super::{audit, redact, Comment, HostMsg, Member, Room, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
+use super::{audit, redact, Comment, ControlRequest, HostMsg, Member, Room, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
 use crate::agent::{Op, RunStatus};
 
 /// Merged text deltas stop growing past this, so one message stays small.
@@ -21,7 +21,7 @@ pub enum Event {
     Status { child: Option<String>, status: RunStatus, error: Option<String> },
     ToolRunning { call_id: String, running: bool },
     FilesChanged { turns: Vec<TurnFiles> },
-    Members { members: Vec<Member>, policy: SharePolicy },
+    Members { members: Vec<Member>, policy: SharePolicy, requests: Vec<ControlRequest>, owner_away: Option<i64> },
     Thread { thread: ThreadInfo },
     Queue { suggestions: Vec<Suggestion> },
     Comment { comment: Comment },
@@ -88,7 +88,9 @@ impl Outbox {
                     Event::Status { child, status, error } => HostMsg::Status { epoch, seq, child, status, error },
                     Event::ToolRunning { call_id, running } => HostMsg::ToolRunning { epoch, seq, call_id, running },
                     Event::FilesChanged { turns } => HostMsg::FilesChanged { epoch, seq, turns },
-                    Event::Members { members, policy } => HostMsg::Members { epoch, seq, members, policy },
+                    Event::Members { members, policy, requests, owner_away } => {
+                        HostMsg::Members { epoch, seq, members, policy, requests, owner_away }
+                    }
                     Event::Thread { thread } => HostMsg::Thread { epoch, seq, thread },
                     Event::Queue { suggestions } => HostMsg::Queue { epoch, seq, suggestions },
                     Event::Comment { comment } => HostMsg::Comment { epoch, seq, comment },
@@ -106,8 +108,22 @@ impl Outbox {
             .into_iter()
             .map(|t| ThreadState { messages: redact::messages(&t.messages), ..t })
             .collect();
-        let Room { members, policy, suggestions, comments, audit } = room;
-        HostMsg::Snapshot { epoch: self.epoch, seq: self.seq, thread, threads, running, turns, members, policy, suggestions, comments, audit }
+        let Room { members, policy, suggestions, comments, audit, requests, owner_away } = room;
+        HostMsg::Snapshot {
+            epoch: self.epoch,
+            seq: self.seq,
+            thread,
+            threads,
+            running,
+            turns,
+            members,
+            policy,
+            suggestions,
+            comments,
+            audit,
+            requests,
+            owner_away,
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 # Sush Multiplayer: shared, live agent sessions
 
-Status: **approved 2026-10-25; phases 1 and 2 built** (watch live, LAN relay; redirect together). Phases 3–4 not started.
+Status: **approved 2026-10-25; phases 1 and 2 built and tested by hand; phases 3 and 4 built, tested by hand and pushed 2026-10-25** (see "Phase 3 as built" and "Phase 4 as built" below). Cross-machine hand-off stays design only.
 Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1); decisions below updated 2026-10-25.
 
 ## Decisions (2026-10-25)
@@ -32,6 +32,25 @@ Written 2026-10-20 against `main` at `0c15f9e` (v2.1.1); decisions below updated
 | Denials | A guest's deny uses the same tool result as the owner's card (`DENIED`, or `DISMISSED` for questions), so cards read the same; who answered is in `sushAnswers`. Approving a question needs its answer. |
 | Comments | Kept in memory on the host (200) and as `commented` entries (full text, ≤ 4 KB) in `share_events`. |
 | Audit log | `share::audit` + `share_events` (store migration 6). The latest 100 go in the snapshot and in `ShareView.audit`; kinds `undid` and `control` wait for phase 3; `role` also covers delegation changes. |
+
+### Phase 3 as built (2026-10-25)
+
+| Question | Choice |
+|---|---|
+| Control | `share/control.rs`: one pure `apply(members, requests, actor, change)` for request / accept / decline / pass / release / take, run on the host one change at a time (two racing passes: the second sender is no longer the driver). Intents `request-control`, `accept-control`, `decline-control`, `pass-control`, `release-control`; the owner uses `share_control` (`accept`, `decline`, `pass`, `take`). Requests travel in the `members` message and the snapshot (`requests`, serde default, so phase 2 apps still read them). A removed member's request and wheel go with them (`control::forget`). Every move rechecks held approvals. |
+| Who can ask | Collaborators and viewers. A viewer handed control becomes the driver directly; the approval floor applies from that moment, because the role change rechecks held calls. |
+| Pause | `Inbox::Pause`: the current step and the tool calls already running finish (sub-agents included), then the run ends with the reply marked `paused`. Calls waiting for approval stay waiting, unless messages were queued meanwhile: then those calls get `PAUSED_CALL` so the messages can follow them, and `Resume` answers the messages. Tests next to the interrupt tests. `Runs::pause_family` sends it to a thread and its sub-agents. |
+| Away | Option A is the default (`AwayPolicy { mode: pause }`): "Step away" (`share_step_away`) pauses the run and takes control back to the owner, so no one else's message can start more. Option B (`keep-going`, opt-in with a warning in red) lets the driver go on with what's delegated for `minutes` (default 30, at most 480), then behaves like A. Owner presence is `ownerAway` (since when) in `members` and the snapshot. **Triggers built: the button only.** The relay dropping isn't a trigger (no guest can act then), and the app closing ends the share anyway. There's no OS notification for owner-only approvals while away (the app has no notification plugin). |
+| Undo | `undo { turnId, path? }` intent for a driver when `delegation.undo` is on; never a secret path. It runs `workspaces::restore_since` like the owner's Undo and sends `files-changed`. The owner's own Undo on a shared thread is logged too. Audit kinds `undid`, `control`, `away`. |
+
+### Phase 4 as built (2026-10-25)
+
+| Question | Choice |
+|---|---|
+| Encryption | `share/crypto.rs`, **on by default** for new shares (a switch in the share dialog). Bodies are `e2e1.<gen>.<nonce>.<ct>`, XChaCha20-Poly1305, associated data `sush-share|<share>|<gen>|h2g/g2h`. The link carries the first key (`#t=<token>&k=<key>`); links from unencrypted shares (token only) still work. Each guest makes a device per join (Ed25519 + X25519); its hello carries the public keys, the host binds them to the user id (rebinding only once the old connection is gone), and every later guest message must be `{ m, s }` signed by that device. The host refuses repeated guest nonces. On a kick: a new key, sealed for each remaining device (X25519 + HKDF-SHA256), sent under the link key, and resent to anyone who comes back (`rekey` message). **Deviation:** the inner bodies stay protocol `v: 1`. The envelope's `e2e1.` prefix versions the encryption instead, because nothing inside changed. |
+| Browser viewer | `apps/viewer` (Vite + React, its own small renderer rather than a shared `@sush/thread-view` package, to keep the desktop app untouched). The relay serves it at `/join/:id` (from `apps/viewer/dist`, or `SUSH_VIEWER_DIR`) with a strict CSP, and falls back to the old "open Sush" page without a build. It signs in to the relay with cookies (same origin: `trustedOrigins` now includes the server's own origin), joins, waits in the lobby, then watches and comments. It speaks the same encryption with `@noble` (ciphers, curves, hashes). It doesn't steer or approve, and it doesn't show sub-agents' threads. The link fragment is moved to `sessionStorage` and out of the address bar. Named sign-in only: there is no anonymous "anyone with the link". |
+| Usage counts | `apps/server/src/share/metrics.ts`. Off unless the owner turns it on (Settings → Sharing), per share. Weekly buckets only (`shares_created`, `guests_per_share`, `steers_per_share`), with no user or share ids; the host sends the steer count with `DELETE /api/shares/:id` when the share ends. `GET /api/metrics/weekly` is for `SUSH_ADMIN_EMAILS` only. |
+| Plans | `apps/server/src/share/plans.ts`: `planFor(user)`. **Off unless `SUSH_PLANS=on`** (everyone is "team", today's limits). With plans on, `SUSH_TEAM_EMAILS` are "team" (10 guests, all roles, 24 h) and everyone else "free" (1 guest, viewer and collaborator, 12 h). Checked at `POST /api/shares` (TTL), invites (role cap), join and admit (guest count), and on the host from `GET /api/shares/limits` (driving: `share_set_role`, accepting and passing control). No billing. |
 
 A team watches an agent's Cowork session live, redirects it, and hands it off.
 The run, the workspace, the sandbox, API keys and connector tokens stay on the

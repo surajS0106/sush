@@ -386,6 +386,7 @@ pub(crate) fn turn_diff_files(store: &Store, thread_id: &str, turn_id: &str) -> 
 /// between.
 #[tauri::command]
 pub async fn undo_turn(
+    app: AppHandle,
     state: State<'_, AppState>,
     thread_id: String,
     turn_id: String,
@@ -393,7 +394,10 @@ pub async fn undo_turn(
 ) -> AppResult<UndoResult> {
     state.runs.stop(&thread_id).await;
     let store = state.store.clone();
-    blocking(move || restore_since(&store, &thread_id, &turn_id, path.as_deref())).await
+    let (id, turn, only) = (thread_id.clone(), turn_id.clone(), path.clone());
+    let result = blocking(move || restore_since(&store, &id, &turn, only.as_deref())).await?;
+    crate::share::note_local_undo(&app, &thread_id, &turn_id, path.as_deref(), result.restored.len());
+    Ok(result)
 }
 
 /// Put every file changed since `turn_id` began (or just `only`) back as it

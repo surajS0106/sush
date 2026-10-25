@@ -37,6 +37,12 @@ pub enum Kind {
     /// The host refused something a guest asked for.
     DeniedIntent,
     Ended,
+    /// Files a turn changed were put back.
+    Undid,
+    /// Control was asked for, handed over, declined or taken back.
+    Control,
+    /// The owner stepped away, or came back.
+    Away,
 }
 
 impl Kind {
@@ -59,6 +65,9 @@ impl Kind {
             Kind::Kicked => "kicked",
             Kind::DeniedIntent => "denied-intent",
             Kind::Ended => "ended",
+            Kind::Undid => "undid",
+            Kind::Control => "control",
+            Kind::Away => "away",
         }
     }
 

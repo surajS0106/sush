@@ -245,6 +245,50 @@ pub fn authorize(ctx: &Ctx, intent: Intent) -> Result<Allowed, String> {
             }
             Intent::Comment { text, message_id }
         }
+        // Who holds control now, and whether the request is still there, is
+        // checked when the host applies the change (`control::apply`).
+        Intent::RequestControl => {
+            if role == Role::Driver {
+                return Err("You're driving already.".into());
+            }
+            Intent::RequestControl
+        }
+        Intent::AcceptControl { user_id } => {
+            driver()?;
+            Intent::AcceptControl { user_id }
+        }
+        Intent::DeclineControl { user_id } => {
+            driver()?;
+            Intent::DeclineControl { user_id }
+        }
+        Intent::PassControl { user_id } => {
+            driver()?;
+            Intent::PassControl { user_id }
+        }
+        Intent::ReleaseControl => {
+            driver()?;
+            Intent::ReleaseControl
+        }
+        Intent::Undo { turn_id, path } => {
+            driver()?;
+            if !ctx.policy.delegation.undo {
+                return Err("Only the host can undo changes.".into());
+            }
+            if !ctx.turns.contains(&turn_id) {
+                return Err("That turn didn't change any files.".into());
+            }
+            let path = match path {
+                Some(path) => {
+                    let path = normalize(&path).filter(|p| !p.is_empty()).ok_or("That isn't a file in this session's folder.")?;
+                    if looks_secret(&path) {
+                        return Err("Only the host can undo changes to secret files.".into());
+                    }
+                    Some(path)
+                }
+                None => None,
+            };
+            Intent::Undo { turn_id, path }
+        }
     };
     Ok(Allowed::Do(intent))
 }
@@ -324,7 +368,7 @@ mod tests {
 
     fn fixture(browse: bool) -> Fixture {
         Fixture {
-            policy: SharePolicy { browse_files: browse, delegation: Delegation::default() },
+            policy: SharePolicy { browse_files: browse, ..SharePolicy::default() },
             touched: ["src/a.rs".to_string(), ".env".to_string()].into(),
             turns: ["t1".to_string()].into(),
             blobs: ["f".repeat(64)].into(),
@@ -452,7 +496,7 @@ mod tests {
         assert!(check(&f, driver, respond(None, "ask")).is_err(), "approving a question needs its answer");
         assert!(check(&f, driver, respond(None, "edit")).is_err());
         assert!(check(&f, driver, respond(Some("agent"), "shell")).is_err());
-        f.policy.delegation = Delegation { edits: true, shell: true, escalated: true, connectors: true, browser: true };
+        f.policy.delegation = Delegation { edits: true, shell: true, escalated: true, connectors: true, browser: true, undo: true };
         assert!(check(&f, driver, respond(None, "edit")).is_ok());
         assert!(check(&f, driver, respond(Some("agent"), "shell")).is_ok());
         // The same call id on another thread isn't the one waiting.
@@ -486,6 +530,39 @@ mod tests {
         assert!(check(&f, Some(Role::Viewer), comment("looks good")).is_err());
         assert!(check(&f, Some(Role::Driver), comment("")).is_err());
         assert!(check(&f, Some(Role::Driver), comment(&"x".repeat(MAX_COMMENT + 1))).is_err());
+    }
+
+    #[test]
+    fn control_changes_need_the_right_role() {
+        let f = fixture(false);
+        assert!(check(&f, Some(Role::Viewer), Intent::RequestControl).is_ok());
+        assert!(check(&f, Some(Role::Collaborator), Intent::RequestControl).is_ok());
+        assert!(check(&f, Some(Role::Driver), Intent::RequestControl).is_err());
+        for intent in [
+            Intent::AcceptControl { user_id: "u".into() },
+            Intent::DeclineControl { user_id: "u".into() },
+            Intent::PassControl { user_id: "u".into() },
+            Intent::ReleaseControl,
+        ] {
+            assert!(check(&f, Some(Role::Driver), intent.clone()).is_ok(), "{intent:?}");
+            assert!(check(&f, Some(Role::Collaborator), intent.clone()).is_err(), "{intent:?}");
+            assert!(check(&f, Some(Role::Owner), intent.clone()).is_err(), "{intent:?}");
+            assert!(check(&f, None, intent).is_err());
+        }
+    }
+
+    #[test]
+    fn undo_is_the_owners_unless_delegated() {
+        let mut f = fixture(false);
+        let undo = |turn: &str, path: Option<&str>| Intent::Undo { turn_id: turn.into(), path: path.map(str::to_owned) };
+        assert!(check(&f, Some(Role::Driver), undo("t1", None)).is_err());
+        f.policy.delegation.undo = true;
+        assert_eq!(check(&f, Some(Role::Driver), undo("t1", Some("./src\\a.rs"))), Ok(Allowed::Do(undo("t1", Some("src/a.rs")))));
+        assert!(check(&f, Some(Role::Driver), undo("t1", None)).is_ok());
+        assert!(check(&f, Some(Role::Driver), undo("other", None)).is_err());
+        assert!(check(&f, Some(Role::Driver), undo("t1", Some(".env"))).is_err());
+        assert!(check(&f, Some(Role::Driver), undo("t1", Some("../x"))).is_err());
+        assert!(check(&f, Some(Role::Collaborator), undo("t1", None)).is_err());
     }
 
     #[test]

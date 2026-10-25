@@ -164,13 +164,36 @@ function describe(e: ShareAuditEntry): string {
     case "commented":
       return "commented";
     case "role":
-      return d.delegation ? "changed what the driver may approve" : `made ${s("name")} ${ROLE[s("role")] ?? s("role")}`;
+      return d.delegation
+        ? "changed what the driver may approve"
+        : d.away
+          ? "changed what happens when they step away"
+          : `made ${s("name")} ${ROLE[s("role")] ?? s("role")}`;
     case "kicked":
       return `removed ${s("name")}`;
     case "denied-intent":
       return `was refused (${s("intent")}): ${s("error")}`;
     case "ended":
       return "ended the share";
+    case "undid":
+      return d.path ? `undid the changes to ${s("path")}` : `undid a turn’s changes (${s("restored")} files)`;
+    case "control":
+      switch (s("action")) {
+        case "requested":
+          return "asked to drive";
+        case "accepted":
+          return `let ${s("name")} drive`;
+        case "declined":
+          return `turned down ${s("name")}’s request to drive`;
+        case "passed":
+          return `passed control to ${s("name")}`;
+        case "released":
+          return "gave control back";
+        default:
+          return "took control back";
+      }
+    case "away":
+      return d.away ? (d.mode === "pause" ? "stepped away (the agent pauses)" : `stepped away (the driver carries on for ${s("minutes")} min)`) : "came back";
   }
 }
 

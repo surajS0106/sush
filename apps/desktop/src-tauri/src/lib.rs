@@ -93,6 +93,8 @@ pub fn run() {
             share::share_kick,
             share::share_set_policy,
             share::share_set_role,
+            share::share_control,
+            share::share_step_away,
             share::share_suggestion_accept,
             share::share_suggestion_drop,
             share::share_comment,

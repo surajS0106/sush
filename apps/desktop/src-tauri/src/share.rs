@@ -15,6 +15,13 @@
 //! again (`Shares::steerable`, used by `runs.rs`' `Host::approval`). Answers
 //! are first-wins (`HostShare::claim`), the owner's own included.
 //!
+//! Control changes hands on the host, one change at a time
+//! (`sush_core::share::control`): a guest asks, the driver or the owner
+//! accepts, the driver passes it on or gives it back, the owner takes it back.
+//! When the owner steps away, the share's away policy decides: by default the
+//! run pauses at its next step boundary (`Inbox::Pause`) and the owner drives
+//! again; or the driver keeps going for a set time, then it pauses.
+//!
 //! Everything goes through a relay (`apps/server`, `/api/shares`): a room per
 //! share that forwards messages without reading them. Both ends of the socket
 //! are here, in Rust, so the relay account's token goes in a header and never
@@ -45,6 +52,8 @@ use serde_json::{json, Value};
 use sush_core::agent::ui::{self, new_id};
 use sush_core::agent::{Op, RunAction, RunConfig, RunStatus, ToolResponse};
 use sush_core::share::audit::{self, Kind};
+use sush_core::share::control::{self, Actor, AwayMode, ControlRequest};
+use sush_core::share::crypto::{self, Device, DeviceKeys, Direction, Seen, ShareKey};
 use sush_core::share::outbox::{self, Event, Outbox};
 use sush_core::share::policy::{Allowed, ApprovalClass};
 use sush_core::share::replica::{Applied, Change, Replica};
@@ -355,6 +364,14 @@ pub struct ShareView {
     comments: Vec<Comment>,
     /// The latest entries of the audit log, oldest first.
     audit: Vec<audit::Entry>,
+    /// People asking for control, oldest first.
+    requests: Vec<ControlRequest>,
+    /// Since when the owner is away, if they are.
+    owner_away: Option<i64>,
+    /// Whether the relay sees only ciphertext.
+    e2e: bool,
+    /// What the relay's plan lets the owner do (the host's view; guests see the defaults).
+    limits: Limits,
 }
 
 /// A joined share's threads, for a page that reloads.
@@ -382,9 +399,10 @@ fn emit_view(app: &AppHandle, share: ShareView) {
 // --- the shares ---------------------------------------------------------------------
 
 /// Shares hosted here (by thread) and joined (by the thread they show as).
-/// Lock order: the runs' channels, then `hosts`, then a share's own locks.
-/// A share's `outbox` may be held while taking its `inner` (`HostShare::append`,
-/// snapshots), never the other way round.
+/// Lock order: the runs' channels, then `hosts`, then a share's own locks:
+/// `outbox`, then `e2e`, then `inner`. A share's `outbox` may be held while
+/// taking its `inner` (`HostShare::append`, snapshots) or its `e2e` (sealing),
+/// never the other way round.
 #[derive(Default)]
 pub struct Shares {
     hosts: Mutex<HashMap<String, Arc<HostShare>>>,
@@ -409,7 +427,61 @@ pub(crate) struct HostShare {
     files_dirty: AtomicBool,
     out: mpsc::UnboundedSender<String>,
     inner: Mutex<HostInner>,
+    /// End-to-end encryption, if the share uses it: the relay then forwards only ciphertext.
+    e2e: Option<Mutex<HostE2e>>,
+    /// Whether the owner agreed to report anonymous counts to the relay when the share ends.
+    metrics: bool,
+    /// Messages guests sent into the run (steers and accepted suggestions), for those counts.
+    steers: std::sync::atomic::AtomicU32,
+    /// What the relay's plan allows this owner (`GET /api/shares/limits`).
+    limits: Limits,
     cancel: CancellationToken,
+}
+
+/// A share's keys and its guests' devices (`sush_core::share::crypto`).
+struct HostE2e {
+    /// Every key so far, the current one last. The link carries the first.
+    keys: Vec<ShareKey>,
+    /// Each guest connection's device keys, by peer id, with its user id. A
+    /// reload is a new connection with a new device, often before the old one
+    /// has left, so devices are bound per connection, never per person.
+    devices: HashMap<String, (String, DeviceKeys)>,
+    seen: Seen,
+}
+
+impl HostE2e {
+    fn key_for(&self, generation: u32) -> Option<[u8; 32]> {
+        self.keys.iter().find(|k| k.generation == generation).map(|k| k.key)
+    }
+}
+
+/// What the relay's plan lets an owner do (`apps/server/src/share/plans.ts`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Limits {
+    #[serde(default = "Limits::default_guests")]
+    max_guests: u32,
+    /// Roles guests may have: `viewer`, `collaborator`, `driver`.
+    #[serde(default = "Limits::default_roles")]
+    roles: Vec<Role>,
+}
+
+impl Limits {
+    fn default_guests() -> u32 {
+        10
+    }
+    fn default_roles() -> Vec<Role> {
+        vec![Role::Viewer, Role::Collaborator, Role::Driver]
+    }
+    fn allows(&self, role: Role) -> bool {
+        self.roles.contains(&role)
+    }
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self { max_guests: Self::default_guests(), roles: Self::default_roles() }
+    }
 }
 
 struct HostInner {
@@ -427,6 +499,11 @@ struct HostInner {
     comments: Vec<Comment>,
     /// The latest audit entries; all of them are in the store.
     audit: Vec<audit::Entry>,
+    requests: Vec<ControlRequest>,
+    /// Since when the owner is away, if they are.
+    away: Option<i64>,
+    /// Ends a driver's time alone with the run (`AwayMode::KeepGoing`).
+    away_timer: Option<CancellationToken>,
     ended: Option<String>,
     error: Option<String>,
 }
@@ -450,6 +527,10 @@ impl HostShare {
             suggestions: i.suggestions.clone(),
             comments: i.comments.clone(),
             audit: i.audit.clone(),
+            requests: i.requests.clone(),
+            owner_away: i.away,
+            e2e: self.e2e.is_some(),
+            limits: self.limits.clone(),
         }
     }
 
@@ -461,6 +542,8 @@ impl HostShare {
             suggestions: i.suggestions.clone(),
             comments: i.comments.clone(),
             audit: i.audit.clone(),
+            requests: i.requests.clone(),
+            owner_away: i.away,
         }
     }
 
@@ -507,16 +590,107 @@ impl HostShare {
         emit_view(app, self.view());
     }
 
+    /// What the relay may count when the share ends, if the owner agreed: how
+    /// many messages guests sent into the run. Never content, never who.
+    fn end_stats(&self) -> Value {
+        if self.metrics {
+            json!({ "steers": self.steers.load(Ordering::Relaxed) })
+        } else {
+            json!({})
+        }
+    }
+
+    /// A message as it goes on the wire: sealed with the current key in an encrypted share.
+    fn wire(&self, msg: HostMsg) -> String {
+        let text = Body::encode(msg);
+        match &self.e2e {
+            Some(e2e) => {
+                let e2e = e2e.lock().unwrap();
+                crypto::seal(e2e.keys.last().expect("a share has a key"), &self.share_id, Direction::ToGuests, &text)
+            }
+            None => text,
+        }
+    }
+
     fn send_to(&self, peer_id: &str, msg: HostMsg) {
-        let _ = self.out.send(relay_send(peer_id, &Body::encode(msg)));
+        let _ = self.out.send(relay_send(peer_id, &self.wire(msg)));
     }
 
     /// Number what's waiting and send it, holding the outbox so nothing overtakes it.
     fn flush_now(&self) {
         let mut outbox = self.outbox.lock().unwrap();
         for msg in outbox.flush() {
-            let _ = self.out.send(relay_send("all", &Body::encode(msg)));
+            let _ = self.out.send(relay_send("all", &self.wire(msg)));
         }
+    }
+
+    /// Give one guest's connection the current key, sealed for its device, if
+    /// it's past the one their link carries. The outer layer uses the link's
+    /// key, which every member has; only their device can open what's inside.
+    fn send_current_key(&self, peer_id: &str) {
+        let Some(e2e) = &self.e2e else { return };
+        let e2e = e2e.lock().unwrap();
+        let current = e2e.keys.last().expect("a share has a key");
+        if current.generation == 1 {
+            return;
+        }
+        let Some((_, device)) = e2e.devices.get(peer_id) else { return };
+        let Ok(sealed) = crypto::seal_for(&device.kx_pub, &self.share_id, current) else { return };
+        let msg = Body::encode(HostMsg::Rekey { generation: current.generation, sealed });
+        let _ = self.out.send(relay_send(peer_id, &crypto::seal(&e2e.keys[0], &self.share_id, Direction::ToGuests, &msg)));
+    }
+
+    /// Someone was removed: a new key for everyone else, sealed for each of
+    /// their devices, so what follows is unreadable to the one removed even if
+    /// a compromised relay kept forwarding to them.
+    fn rekey(&self) {
+        let Some(e2e) = &self.e2e else { return };
+        // The outbox is held so nothing goes out under the old key once the new one is sent.
+        let mut outbox = self.outbox.lock().unwrap();
+        for msg in outbox.flush() {
+            let _ = self.out.send(relay_send("all", &self.wire(msg)));
+        }
+        let peers: Vec<String> = self.inner.lock().unwrap().peers.keys().cloned().collect();
+        {
+            let mut e2e = e2e.lock().unwrap();
+            let next = ShareKey::generate(e2e.keys.last().map_or(1, |k| k.generation + 1));
+            e2e.keys.push(next);
+        }
+        drop(outbox);
+        for peer_id in peers {
+            self.send_current_key(&peer_id);
+        }
+    }
+
+    /// A guest's message as the host reads it: opened and its signature checked
+    /// in an encrypted share (with the device bound on its first `hello`).
+    fn read_guest(&self, from: &Peer, body: &str) -> Option<String> {
+        let Some(e2e) = &self.e2e else { return Some(body.to_string()) };
+        // Plain text where ciphertext belongs: not from a member's app.
+        let (_, nonce) = crypto::header(body)?;
+        let mut e2e = e2e.lock().unwrap();
+        if !e2e.seen.first(&format!("{}:{nonce}", from.user_id)) {
+            return None;
+        }
+        let signed = crypto::open(|g| e2e.key_for(g), &self.share_id, Direction::ToHost, body).ok()?;
+        let text = crypto::unsigned_text(&signed)?;
+        // A hello brings the device keys that sign everything after it.
+        if let Ok(GuestMsg::Hello { device: Some(device), .. }) = proto::decode::<GuestMsg>(&text) {
+            let message = crypto::verify(&device.sign_pub, &signed).ok()?;
+            // A connection keeps the device it first said hello with.
+            if let Some((user, keys)) = e2e.devices.get(&from.peer_id) {
+                if user != &from.user_id || keys != &device {
+                    return None;
+                }
+            }
+            e2e.devices.insert(from.peer_id.clone(), (from.user_id.clone(), device));
+            return Some(message);
+        }
+        let (user, device) = e2e.devices.get(&from.peer_id)?;
+        if user != &from.user_id {
+            return None;
+        }
+        crypto::verify(&device.sign_pub, &signed).ok()
     }
 
     fn push(&self, event: Event) {
@@ -536,13 +710,51 @@ impl HostShare {
         self.flush.notify_one();
     }
 
-    /// Tell guests who's in the share now.
+    /// Tell guests who's in the share now, who asks for control, and whether the owner is away.
     fn members_changed(&self) {
-        let (members, policy) = {
+        let event = {
             let i = self.inner.lock().unwrap();
-            (i.members.values().cloned().collect(), i.policy.clone())
+            Event::Members { members: i.members.values().cloned().collect(), policy: i.policy.clone(), requests: i.requests.clone(), owner_away: i.away }
         };
-        self.push(Event::Members { members, policy });
+        self.push(event);
+    }
+
+    /// Change who drives. Everyone hears of it, it goes in the log, and the
+    /// run looks again at the calls it holds: the floor may no longer apply.
+    fn change_control(&self, app: &AppHandle, actor: &Actor, change: control::Change) -> Result<(), String> {
+        let what = match &change {
+            control::Change::Request => "requested",
+            control::Change::Accept { .. } => "accepted",
+            control::Change::Decline { .. } => "declined",
+            control::Change::Pass { .. } => "passed",
+            control::Change::Release => "released",
+            control::Change::Take => "took",
+        };
+        let target = match &change {
+            control::Change::Accept { user_id } | control::Change::Decline { user_id } | control::Change::Pass { user_id } => Some(user_id.clone()),
+            _ => None,
+        };
+        if matches!(change, control::Change::Accept { .. } | control::Change::Pass { .. }) && !self.limits.allows(Role::Driver) {
+            return Err("The relay's plan for this account doesn't let guests drive.".into());
+        }
+        let (outcome, author, target_name) = {
+            let mut i = self.inner.lock().unwrap();
+            let HostInner { members, requests, .. } = &mut *i;
+            let outcome = control::apply(members, requests, actor, change, now_ms())?;
+            let author = match actor {
+                Actor::Owner => self.owner.clone(),
+                Actor::Member(id) => i.members.get(id).map(Member::author).unwrap_or_else(|| self.owner.clone()),
+            };
+            let target_name = target.as_ref().and_then(|id| i.members.get(id)).map(|m| m.name.clone());
+            (outcome, author, target_name)
+        };
+        self.members_changed();
+        let detail = json!({ "action": what, "userId": target, "name": target_name, "driver": outcome.driver_after });
+        self.record(app, &author, Kind::Control, detail);
+        if outcome.moved() {
+            app.state::<AppState>().runs.recheck_family(&self.thread_id);
+        }
+        Ok(())
     }
 }
 
@@ -556,7 +768,14 @@ pub(crate) struct GuestShare {
     replies: Mutex<HashMap<String, oneshot::Sender<Result<Value, String>>>>,
     /// Attachments fetched from the host for the webview, never written to disk.
     blobs: Mutex<HashMap<String, (String, Vec<u8>)>>,
+    /// In an encrypted share: the keys so far (from the link, then rekeys) and this join's device.
+    e2e: Option<Mutex<GuestE2e>>,
     cancel: CancellationToken,
+}
+
+struct GuestE2e {
+    keys: Vec<ShareKey>,
+    device: Device,
 }
 
 struct GuestInner {
@@ -604,11 +823,51 @@ impl GuestShare {
             suggestions: i.replica.suggestions.clone(),
             comments: i.replica.comments.clone(),
             audit: i.replica.audit.clone(),
+            requests: i.replica.requests.clone(),
+            owner_away: i.replica.owner_away,
+            e2e: self.e2e.is_some(),
+            limits: Limits::default(),
         }
     }
 
     fn send_host(&self, msg: GuestMsg) {
-        let _ = self.out.send(relay_send("host", &Body::encode(msg)));
+        let text = Body::encode(msg);
+        let body = match &self.e2e {
+            // Signed by this join's device, then sealed with the newest key.
+            Some(e2e) => {
+                let e2e = e2e.lock().unwrap();
+                crypto::seal(e2e.keys.last().expect("a share has a key"), &self.share_id, Direction::ToHost, &e2e.device.sign(&text))
+            }
+            None => text,
+        };
+        let _ = self.out.send(relay_send("host", &body));
+    }
+
+    /// A body from the host as the guest reads it: opened in an encrypted share
+    /// (anything not sealed with one of its keys is dropped).
+    fn read_host(&self, body: &str) -> Option<String> {
+        let Some(e2e) = &self.e2e else { return Some(body.to_string()) };
+        let e2e = e2e.lock().unwrap();
+        crypto::open(|g| e2e.keys.iter().find(|k| k.generation == g).map(|k| k.key), &self.share_id, Direction::ToGuests, body).ok()
+    }
+
+    /// A new key the host sealed for this device.
+    fn take_key(&self, generation: u32, sealed: &str) {
+        let Some(e2e) = &self.e2e else { return };
+        let mut e2e = e2e.lock().unwrap();
+        if e2e.keys.iter().any(|k| k.generation == generation) {
+            return;
+        }
+        if let Ok(key) = e2e.device.open_sealed(&self.share_id, generation, sealed) {
+            e2e.keys.push(key);
+            e2e.keys.sort_by_key(|k| k.generation);
+        }
+    }
+
+    /// The hello this guest sends: with its device keys in an encrypted share.
+    fn hello(&self) -> GuestMsg {
+        let device = self.e2e.as_ref().map(|e2e| e2e.lock().unwrap().device.keys());
+        GuestMsg::Hello { min_v: proto::MIN_VERSION, caps: Vec::new(), device }
     }
 
     async fn request(&self, intent: Intent) -> Result<Value, String> {
@@ -728,7 +987,7 @@ impl Shares {
         let http = app.state::<AppState>().http.clone();
         tauri::async_runtime::spawn(async move {
             let url = format!("{}/api/shares/{}", share.account.relay_url, share.share_id);
-            let _ = http.delete(url).bearer_auth(&share.account.token).send().await;
+            let _ = http.delete(url).bearer_auth(&share.account.token).json(&share.end_stats()).send().await;
         });
         app.state::<AppState>().runs.send(RunFrame::ShareGone { thread_id: thread_id.to_string() });
     }
@@ -768,9 +1027,26 @@ impl Shares {
 
 // --- hosting ------------------------------------------------------------------------
 
+/// What the relay's plan lets this account do. A relay from before plans existed allows what it always did.
+async fn fetch_limits(http: &reqwest::Client, account: &Account) -> Limits {
+    let resp = http.get(format!("{}/api/shares/limits", account.relay_url)).bearer_auth(&account.token).send().await;
+    match resp {
+        Ok(resp) if resp.status().is_success() => resp.json().await.unwrap_or_default(),
+        _ => Limits::default(),
+    }
+}
+
 /// Start sharing a session. Incognito sessions, reports and sub-agents' threads can't be shared.
+/// `e2e` (on unless turned off): the relay forwards only ciphertext. `metrics`: report
+/// anonymous counts (guests, messages; never content) to the relay when the share ends.
 #[tauri::command]
-pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: ThreadMeta) -> AppResult<ShareView> {
+pub async fn share_start(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    thread: ThreadMeta,
+    e2e: Option<bool>,
+    metrics: Option<bool>,
+) -> AppResult<ShareView> {
     if thread.incognito {
         return Err(AppError::Invalid("Incognito sessions can't be shared.".into()));
     }
@@ -802,11 +1078,12 @@ pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: Thr
         .http
         .post(format!("{}/api/shares", account.relay_url))
         .bearer_auth(&account.token)
-        .json(&json!({ "title": thread.title }))
+        .json(&json!({ "title": thread.title, "metrics": metrics.unwrap_or(false), "e2e": e2e.unwrap_or(true) }))
         .send()
         .await
         .map_err(net)?;
     let created = relay_json(resp).await?;
+    let limits = fetch_limits(&state.http, &account).await;
     let share_id = created.get("shareId").and_then(Value::as_str).ok_or_else(|| AppError::Invalid("The relay didn't start the share.".into()))?;
     let expires_at = created.get("expiresAt").and_then(Value::as_i64).unwrap_or_default();
 
@@ -840,9 +1117,18 @@ pub async fn share_start(app: AppHandle, state: State<'_, AppState>, thread: Thr
             suggestions: Vec::new(),
             comments: Vec::new(),
             audit: Vec::new(),
+            requests: Vec::new(),
+            away: None,
+            away_timer: None,
             ended: None,
             error: None,
         }),
+        e2e: e2e
+            .unwrap_or(true)
+            .then(|| Mutex::new(HostE2e { keys: vec![ShareKey::generate(1)], devices: HashMap::new(), seen: Seen::default() })),
+        metrics: metrics.unwrap_or(false),
+        steers: Default::default(),
+        limits,
         cancel: CancellationToken::new(),
     });
     state.runs.shares.hosts.lock().unwrap().insert(thread.id.clone(), share.clone());
@@ -970,7 +1256,7 @@ fn finish_host(app: &AppHandle, share: &Arc<HostShare>, reason: String) {
 }
 
 /// Someone connected: a member from now on, first with the role their invite allows
-/// (the owner can change it, and only the owner hands out driving).
+/// (the owner can change it; driving is only ever handed over in the session).
 fn upsert_member(members: &mut BTreeMap<String, Member>, peer: &Peer) {
     let member = members.entry(peer.user_id.clone()).or_insert_with(|| Member {
         user_id: peer.user_id.clone(),
@@ -1024,6 +1310,9 @@ fn on_host_frame(app: &AppHandle, share: &Arc<HostShare>, text: &str) -> bool {
             }
         }
         RelayIn::PeerLeft { peer_id } => {
+            if let Some(e2e) = &share.e2e {
+                e2e.lock().unwrap().devices.remove(&peer_id);
+            }
             let left = {
                 let mut i = share.inner.lock().unwrap();
                 i.lobby.retain(|p| p.peer_id != peer_id);
@@ -1065,11 +1354,15 @@ fn on_guest_message(app: &AppHandle, share: &Arc<HostShare>, from: Peer, body: &
     if from.is_host || !share.inner.lock().unwrap().members.contains_key(&from.user_id) {
         return;
     }
-    match proto::decode::<GuestMsg>(body) {
+    // In an encrypted share, anything that isn't sealed and signed by the sender's device is dropped.
+    let Some(body) = share.read_guest(&from, body) else { return };
+    match proto::decode::<GuestMsg>(&body) {
         Ok(GuestMsg::Hello { min_v, .. }) if min_v > proto::PROTOCOL_VERSION => {
             share.send_to(&from.peer_id, HostMsg::Incompatible { host_v: proto::PROTOCOL_VERSION, min_v: proto::MIN_VERSION });
         }
         Ok(GuestMsg::Hello { .. } | GuestMsg::Resync { .. }) => {
+            // Past a rekey, the guest needs the current key before the snapshot sealed with it.
+            share.send_current_key(&from.peer_id);
             tauri::async_runtime::spawn(send_snapshot(app.clone(), share.clone(), from.peer_id));
         }
         Ok(GuestMsg::Intent { id, intent }) => {
@@ -1126,11 +1419,11 @@ async fn send_snapshot(app: AppHandle, share: Arc<HostShare>, peer_id: String) {
         // read while the outbox is held, so it matches the messages before it (`HostShare::append`).
         let mut outbox = share.outbox.lock().unwrap();
         for msg in outbox.flush() {
-            let _ = share.out.send(relay_send("all", &Body::encode(msg)));
+            let _ = share.out.send(relay_send("all", &share.wire(msg)));
         }
         let room = share.room();
         let snapshot = outbox.snapshot(info, threads, running, turns, room);
-        let _ = share.out.send(relay_send(&peer_id, &Body::encode(snapshot)));
+        let _ = share.out.send(relay_send(&peer_id, &share.wire(snapshot)));
     });
 }
 
@@ -1150,6 +1443,12 @@ fn intent_kind(intent: &Intent) -> &'static str {
         Intent::Resume => "resume",
         Intent::Respond { .. } => "respond",
         Intent::Comment { .. } => "comment",
+        Intent::RequestControl => "request-control",
+        Intent::AcceptControl { .. } => "accept-control",
+        Intent::DeclineControl { .. } => "decline-control",
+        Intent::PassControl { .. } => "pass-control",
+        Intent::ReleaseControl => "release-control",
+        Intent::Undo { .. } => "undo",
     }
 }
 
@@ -1279,6 +1578,7 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
         Intent::Steer { text, images } => {
             let files = store_images(app, images).await?;
             let message_id = steer(app, share, user_message(&text, files, &author, None), None).await?;
+            share.steers.fetch_add(1, Ordering::Relaxed);
             share.record(app, &author, Kind::Steered, json!({ "messageId": message_id, "preview": audit::preview(&text) }));
             Ok(json!({ "messageId": message_id }))
         }
@@ -1311,7 +1611,39 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
             respond(app, share, &author, child, call_id, class, decision, answer).await
         }
         Intent::Comment { text, message_id } => Ok(comment(app, share, &author, &text, message_id)),
+        Intent::RequestControl => control_intent(app, share, &author, control::Change::Request),
+        Intent::AcceptControl { user_id } => control_intent(app, share, &author, control::Change::Accept { user_id }),
+        Intent::DeclineControl { user_id } => control_intent(app, share, &author, control::Change::Decline { user_id }),
+        Intent::PassControl { user_id } => control_intent(app, share, &author, control::Change::Pass { user_id }),
+        Intent::ReleaseControl => control_intent(app, share, &author, control::Change::Release),
+        Intent::Undo { turn_id, path } => {
+            let result = undo(app, &thread_id, &turn_id, path.as_deref()).await.map_err(failed)?;
+            share.record(app, &author, Kind::Undid, json!({ "turnId": turn_id, "path": path, "restored": result.restored.len() }));
+            Ok(json!(result))
+        }
     }
+}
+
+fn control_intent(app: &AppHandle, share: &HostShare, author: &Author, change: control::Change) -> Result<Value, String> {
+    share.change_control(app, &Actor::Member(author.user_id.clone()), change)?;
+    Ok(Value::Null)
+}
+
+/// Put back a turn's files, as the owner's own Undo does (`workspaces::undo_turn`),
+/// and tell every window the files changed.
+async fn undo(app: &AppHandle, thread_id: &str, turn_id: &str, path: Option<&str>) -> AppResult<workspaces::UndoResult> {
+    let state = app.state::<AppState>();
+    state.runs.stop(thread_id).await;
+    let (store, id, turn, only) = (state.store.clone(), thread_id.to_string(), turn_id.to_string(), path.map(str::to_owned));
+    let workspace = {
+        let (store, id) = (store.clone(), id.clone());
+        blocking(move || Ok(store.thread_workspace(&id)?)).await?
+    };
+    let result = blocking(move || workspaces::restore_since(&store, &id, &turn, only.as_deref())).await?;
+    if let Some(workspace_id) = workspace {
+        state.runs.send(RunFrame::FilesChanged { thread_id: thread_id.to_string(), workspace_id });
+    }
+    Ok(result)
 }
 
 /// Ask the leader window for the config a run of this thread gets, built as
@@ -1475,6 +1807,7 @@ async fn accept(app: &AppHandle, share: &HostShare, id: &str, text: Option<Strin
                 "preview": audit::preview(&sent),
                 "edited": sent != suggestion.text,
             });
+            share.steers.fetch_add(1, Ordering::Relaxed);
             share.record(app, by, Kind::Accepted, detail);
             Ok(json!({ "messageId": message_id }))
         }
@@ -1580,9 +1913,14 @@ pub async fn share_invite_create(
     let invite = relay_json(resp).await?;
     let field = |k: &str| invite.get(k).and_then(Value::as_str).map(str::to_owned).ok_or_else(|| AppError::Invalid("The relay didn't make an invite.".into()));
     let token = field("token")?;
+    // An encrypted share's key goes after the `#` too: never sent to the relay.
+    let fragment = match &share.e2e {
+        Some(e2e) => format!("t={token}&k={}", e2e.lock().unwrap().keys[0].to_text()),
+        None => token,
+    };
     Ok(InviteLink {
         invite_id: field("inviteId")?,
-        link: format!("{}/join/{}#{token}", share.account.relay_url, share.share_id),
+        link: format!("{}/join/{}#{fragment}", share.account.relay_url, share.share_id),
         expires_at: invite.get("expiresAt").and_then(Value::as_i64).unwrap_or_default(),
         max_uses: invite.get("maxUses").and_then(Value::as_i64).unwrap_or_default(),
     })
@@ -1641,8 +1979,18 @@ pub async fn share_kick(app: AppHandle, state: State<'_, AppState>, thread_id: S
         .await
         .map_err(net)?;
     relay_json(resp).await?;
-    let removed = share.inner.lock().unwrap().members.remove(&user_id);
+    let removed = {
+        let mut i = share.inner.lock().unwrap();
+        let HostInner { members, requests, .. } = &mut *i;
+        control::forget(members, requests, &user_id);
+        i.members.remove(&user_id)
+    };
     share.members_changed();
+    // What follows is sealed with a key the one removed never gets.
+    if let Some(e2e) = &share.e2e {
+        e2e.lock().unwrap().devices.retain(|_, (user, _)| user != &user_id);
+    }
+    share.rekey();
     if let Some(m) = removed {
         share.record(&app, &share.owner, Kind::Kicked, json!({ "userId": user_id, "name": m.name }));
     }
@@ -1656,10 +2004,14 @@ pub async fn share_kick(app: AppHandle, state: State<'_, AppState>, thread_id: S
 #[tauri::command]
 pub fn share_set_policy(app: AppHandle, state: State<'_, AppState>, thread_id: String, policy: SharePolicy) -> AppResult<()> {
     let share = state.runs.shares.host(&thread_id)?;
+    let policy = SharePolicy { away: policy.away.clamped(), ..policy };
     let before = std::mem::replace(&mut share.inner.lock().unwrap().policy, policy.clone());
     share.members_changed();
     if before.delegation != policy.delegation {
         share.record(&app, &share.owner, Kind::Role, json!({ "delegation": policy.delegation }));
+    }
+    if before.away != policy.away {
+        share.record(&app, &share.owner, Kind::Role, json!({ "away": policy.away }));
     }
     emit_view(&app, share.view());
     Ok(())
@@ -1673,6 +2025,9 @@ pub fn share_set_role(app: AppHandle, state: State<'_, AppState>, thread_id: Str
         return Err(AppError::Invalid("A share has one owner.".into()));
     }
     let share = state.runs.shares.host(&thread_id)?;
+    if !share.limits.allows(role) {
+        return Err(AppError::Invalid("The relay's plan for this account doesn't include that role for guests.".into()));
+    }
     let name = {
         let mut i = share.inner.lock().unwrap();
         if !i.members.contains_key(&user_id) {
@@ -1682,6 +2037,7 @@ pub fn share_set_role(app: AppHandle, state: State<'_, AppState>, thread_id: Str
             for m in i.members.values_mut().filter(|m| m.role == Role::Driver) {
                 m.role = Role::Collaborator;
             }
+            i.requests.retain(|r| r.user_id != user_id);
         }
         let member = i.members.get_mut(&user_id).expect("checked above");
         member.role = role;
@@ -1693,6 +2049,86 @@ pub fn share_set_role(app: AppHandle, state: State<'_, AppState>, thread_id: Str
     state.runs.recheck_family(&thread_id);
     emit_view(&app, share.view());
     Ok(())
+}
+
+/// The owner answers a request for control, passes control on, or takes it back.
+/// `action`: `accept`, `decline`, `pass` (with `userId`) or `take`.
+#[tauri::command]
+pub fn share_control(app: AppHandle, state: State<'_, AppState>, thread_id: String, action: String, user_id: Option<String>) -> AppResult<()> {
+    let share = state.runs.shares.host(&thread_id)?;
+    let user = || user_id.clone().ok_or_else(|| AppError::Invalid("Say who.".into()));
+    let change = match action.as_str() {
+        "accept" => control::Change::Accept { user_id: user()? },
+        "decline" => control::Change::Decline { user_id: user()? },
+        "pass" => control::Change::Pass { user_id: user()? },
+        "take" => control::Change::Take,
+        _ => return Err(AppError::Invalid("Unknown control action.".into())),
+    };
+    share.change_control(&app, &Actor::Owner, change).map_err(AppError::Invalid)?;
+    emit_view(&app, share.view());
+    Ok(())
+}
+
+/// The owner steps away from their shared session, or comes back. Away, the
+/// share's away policy applies: pause at the next step boundary and drive
+/// again (the default), or let the driver go on for a while first.
+#[tauri::command]
+pub fn share_step_away(app: AppHandle, state: State<'_, AppState>, thread_id: String, away: bool) -> AppResult<()> {
+    let share = state.runs.shares.host(&thread_id)?;
+    let policy = {
+        let mut i = share.inner.lock().unwrap();
+        if i.away.is_some() == away {
+            return Ok(());
+        }
+        if let Some(timer) = i.away_timer.take() {
+            timer.cancel();
+        }
+        i.away = away.then(now_ms);
+        i.policy.away
+    };
+    share.members_changed();
+    share.record(&app, &share.owner, Kind::Away, json!({ "away": away, "mode": policy.mode, "minutes": policy.minutes }));
+    if away {
+        match policy.mode {
+            AwayMode::Pause => pause_for_owner(&app, &share),
+            AwayMode::KeepGoing => {
+                let timer = share.cancel.child_token();
+                share.inner.lock().unwrap().away_timer = Some(timer.clone());
+                let (app, share) = (app.clone(), share.clone());
+                tauri::async_runtime::spawn(async move {
+                    tokio::select! {
+                        _ = timer.cancelled() => {}
+                        _ = tokio::time::sleep(Duration::from_secs(u64::from(policy.minutes) * 60)) => {
+                            if share.inner.lock().unwrap().away.is_some() {
+                                pause_for_owner(&app, &share);
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+    emit_view(&app, share.view());
+    Ok(())
+}
+
+/// Nobody on the host's side is there: the run finishes what it's doing and
+/// pauses, and the owner drives again, so no one else's message can start more.
+fn pause_for_owner(app: &AppHandle, share: &HostShare) {
+    let state = app.state::<AppState>();
+    if control::driver(&share.inner.lock().unwrap().members).is_some() {
+        let _ = share.change_control(app, &Actor::Owner, control::Change::Take);
+    }
+    state.runs.pause_family(&share.thread_id);
+    emit_view(app, share.view());
+}
+
+/// The owner undid a turn of a shared session in their own app: it goes in the log.
+pub(crate) fn note_local_undo(app: &AppHandle, thread_id: &str, turn_id: &str, path: Option<&str>, restored: usize) {
+    let shares = &app.state::<AppState>().runs.shares;
+    if let Some((share, _)) = shares.share_for(thread_id) {
+        share.record(app, &share.owner, Kind::Undid, json!({ "turnId": turn_id, "path": path, "restored": restored }));
+    }
 }
 
 /// The owner sends a suggestion from their own app, with the config their UI built.
@@ -1735,6 +2171,7 @@ pub async fn share_end(app: AppHandle, state: State<'_, AppState>, thread_id: St
         .http
         .delete(format!("{}/api/shares/{}", share.account.relay_url, share.share_id))
         .bearer_auth(&share.account.token)
+        .json(&share.end_stats())
         .send()
         .await;
     // Ended here whatever the relay said; it ends the room itself once the host is gone for long enough.
@@ -1777,7 +2214,8 @@ pub async fn share_join(app: AppHandle, state: State<'_, AppState>, link: String
             guests.remove(&thread_id);
         }
     }
-    let token = url.fragment().unwrap_or_default();
+    let (token, key) = crypto::parse_fragment(url.fragment().unwrap_or_default());
+    let key = key.map(|k| ShareKey::from_text(&k, 1)).transpose().map_err(AppError::Invalid)?;
     let resp = state
         .http
         .post(format!("{}/api/shares/{share_id}/join", account.relay_url))
@@ -1809,6 +2247,7 @@ pub async fn share_join(app: AppHandle, state: State<'_, AppState>, link: String
         }),
         replies: Mutex::default(),
         blobs: Mutex::default(),
+        e2e: key.map(|key| Mutex::new(GuestE2e { keys: vec![key], device: Device::generate() })),
         cancel: CancellationToken::new(),
     });
     state.runs.shares.guests.lock().unwrap().insert(thread_id, guest.clone());
@@ -1983,7 +2422,21 @@ fn on_guest_frame(app: &AppHandle, guest: &GuestShare, text: &str) -> bool {
             }
             RelayIn::Recv { from, body } if from.is_host => {
                 i.host_user = Some(from.user_id.clone());
+                let Some(body) = guest.read_host(&body) else {
+                    // Sealed with a key this guest missed (a rekey went by): the host sends it with a fresh snapshot.
+                    if crypto::header(&body).is_some_and(|(g, _)| guest.e2e.as_ref().is_some_and(|e| !e.lock().unwrap().keys.iter().any(|k| k.generation == g))) {
+                        let last_seq = i.replica.last_seq();
+                        drop(i);
+                        guest.send_host(GuestMsg::Resync { last_seq });
+                    }
+                    return false;
+                };
                 match proto::decode::<HostMsg>(&body) {
+                    Ok(HostMsg::Rekey { generation, sealed }) => {
+                        drop(i);
+                        guest.take_key(generation, &sealed);
+                        return false;
+                    }
                     Ok(HostMsg::Reply { re, ok, data, error }) => {
                         drop(i);
                         if let Some(tx) = guest.replies.lock().unwrap().remove(&re) {
@@ -2034,7 +2487,7 @@ fn on_guest_frame(app: &AppHandle, guest: &GuestShare, text: &str) -> bool {
         }
     }
     if hello {
-        guest.send_host(GuestMsg::Hello { min_v: proto::MIN_VERSION, caps: Vec::new() });
+        guest.send_host(guest.hello());
     }
     for frame in frames {
         app.state::<AppState>().runs.send(frame);

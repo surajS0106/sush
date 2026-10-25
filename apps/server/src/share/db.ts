@@ -34,13 +34,22 @@ db.run(`CREATE TABLE IF NOT EXISTS share_member (
   kicked_at INTEGER,
   PRIMARY KEY (share_id, user_id)
 )`);
+// Added later: whether the owner opted the share into usage counts (`metrics.ts`) and
+// whether they were taken, and whether the share is end-to-end encrypted (for the viewer).
+for (const column of ["metrics INTEGER NOT NULL DEFAULT 0", "metrics_done INTEGER NOT NULL DEFAULT 0", "e2e INTEGER NOT NULL DEFAULT 0"]) {
+  try {
+    db.run(`ALTER TABLE share ADD COLUMN ${column}`);
+  } catch {
+    // Already there.
+  }
+}
 
 export const HOUR = 60 * 60 * 1000;
-/** How long a share lasts at most. */
+/** How long a share lasts unless asked otherwise (a plan sets the most, `plans.ts`). */
 export const SHARE_TTL_HOURS = 12;
 export const INVITE_TTL_HOURS = { default: 24, max: 72 };
 export const INVITE_USES = { default: 10, max: 25 };
-/** Guests one share admits at most (seat and plan limits will hook in here). */
+/** Guests one share admits at most on the largest plan (`plans.ts`). */
 export const MAX_GUESTS = Number(process.env.SHARE_MAX_GUESTS ?? 10);
 
 export interface ShareRow {
@@ -50,6 +59,9 @@ export interface ShareRow {
   created_at: number;
   expires_at: number;
   ended_at: number | null;
+  metrics: number;
+  metrics_done: number;
+  e2e: number;
 }
 
 export interface InviteRow {

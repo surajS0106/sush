@@ -1,13 +1,15 @@
 // The files a Cowork turn changed, under its reply: one row per file with
 // its added/removed line counts and an Undo, expanding to a unified diff.
-// A session watched from another machine has no folder here: no Undo or Open.
+// A session watched from another machine has no folder here: no Open, and
+// Undo only for its driver when the host handed undo over (done on the host).
 
 import { structuredPatch } from "diff";
 import { ChevronRightIcon, FileIcon, FileMinusIcon, FilePlusIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { errorMessage, type FileDiff } from "@/lib/tauri";
+import { mayUndo, undoAsGuest, useShare } from "@/lib/share";
+import { errorMessage, isSharedThread, type FileDiff, type UndoResult } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import { openFile, undoTurn, useTurnDiff } from "@/lib/workspaces";
 
@@ -66,13 +68,18 @@ interface FileChangesProps {
 export function FileChanges({ threadId, workspaceId, turnId }: FileChangesProps) {
   const diff = useTurnDiff(threadId, turnId);
   const stats = useMemo(() => diff?.map(diffFile) ?? [], [diff]);
+  const share = useShare(isSharedThread(threadId) ? threadId : undefined);
+  const guestUndo = !!share && mayUndo(share);
   if (stats.length === 0) return null;
+  const canUndo = !!workspaceId || guestUndo;
 
   const undo = (path?: string) => {
-    if (!workspaceId) return;
+    if (!canUndo) return;
     const what = path ?? (stats.length === 1 ? stats[0].file.path : `${stats.length} files`);
-    if (!window.confirm(`Put back ${what} as before this turn? Later changes to the same files are undone too.`)) return;
-    undoTurn(threadId, workspaceId, turnId, path)
+    const where = guestUndo && share ? ` on ${share.thread.hostName}’s computer` : "";
+    if (!window.confirm(`Put back ${what}${where} as before this turn? Later changes to the same files are undone too.`)) return;
+    const work: Promise<UndoResult> = workspaceId ? undoTurn(threadId, workspaceId, turnId, path) : undoAsGuest(threadId, turnId, path);
+    work
       .then((r) => {
         if (r.failed.length > 0) toast.error(`Couldn’t restore ${r.failed.length} file(s)`, { description: r.failed.join("\n") });
         else toast.success(`Restored ${r.restored.length === 1 ? r.restored[0] : `${r.restored.length} files`}`);
@@ -88,17 +95,17 @@ export function FileChanges({ threadId, workspaceId, turnId }: FileChangesProps)
         <div className="flex items-center gap-3 border-b bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">{stats.length} files changed</span>
           <Counts added={added} removed={removed} />
-          {workspaceId && <UndoButton className="ml-auto" onClick={() => undo()} label="Undo all" />}
+          {canUndo && <UndoButton className="ml-auto" onClick={() => undo()} label="Undo all" />}
         </div>
       )}
       {stats.map((s) => (
-        <FileRow key={s.file.path} stat={s} workspaceId={workspaceId} onUndo={() => undo(s.file.path)} />
+        <FileRow key={s.file.path} stat={s} workspaceId={workspaceId} onUndo={canUndo ? () => undo(s.file.path) : undefined} />
       ))}
     </div>
   );
 }
 
-function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId?: string; onUndo: () => void }) {
+function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId?: string; onUndo?: () => void }) {
   const [open, setOpen] = useState(false);
   const { file, added, removed } = stat;
   const created = !file.binary && file.before === null;
@@ -134,7 +141,7 @@ function FileRow({ stat, workspaceId, onUndo }: { stat: FileStat; workspaceId?: 
             Open
           </button>
         )}
-        {workspaceId && <UndoButton onClick={onUndo} />}
+        {onUndo && <UndoButton onClick={onUndo} />}
         {!file.binary && <Counts added={added} removed={removed} />}
         <button
           type="button"

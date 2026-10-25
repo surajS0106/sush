@@ -34,6 +34,7 @@ import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
 import { AgentTeam, SubagentReport, withTeams } from "@/components/subagents";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
+import { ControlBanner } from "@/components/control-banner";
 import { FileChanges } from "@/components/file-changes";
 import { SessionOptions } from "@/components/session-options";
 import { DeckCard, SlidesPanel } from "@/components/slides-panel";
@@ -445,6 +446,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
 
       <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
         {workspaceId && branchCall && <BranchChip workspaceId={workspaceId} part={branchCall.part} />}
+        {share && <ControlBanner share={share} />}
         {share && <SuggestionQueue share={share} />}
         {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
         {composer}

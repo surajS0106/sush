@@ -13,6 +13,7 @@ import { createMiddleware } from "hono/factory";
 import { auth } from "../auth";
 import {
   db,
+  guestCount,
   hashToken,
   HOUR,
   INVITE_TTL_HOURS,
@@ -26,6 +27,8 @@ import {
   type ShareRow,
   type UserRow,
 } from "./db";
+import { count } from "./metrics";
+import { planFor } from "./plans";
 import { connection, endShare, kickUser } from "./relay";
 
 type Env = { Variables: { user: UserRow; share: ShareRow; isHost: boolean } };
@@ -43,14 +46,34 @@ shares.use("*", async (c, next) => {
 const clamp = (n: unknown, fallback: number, max: number) =>
   typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), max) : fallback;
 
-/** Start sharing a session. */
+/** What this account's plan allows (`plans.ts`). Before `/:id`, which would take "limits" for a share. */
+shares.get("/limits", (c) => {
+  const plan = planFor(c.get("user"));
+  return c.json({ plan: plan.name, maxGuests: plan.maxGuests, roles: plan.roles, maxTtlHours: plan.maxTtlHours, e2e: plan.e2e });
+});
+
+/** Start sharing a session. `metrics`: the owner opted it into anonymous usage counts. */
 shares.post("/", async (c) => {
-  const body = await c.req.json<{ title?: unknown }>().catch(() => ({ title: undefined }));
+  const body = await c.req
+    .json<{ title?: unknown; ttlHours?: unknown; metrics?: unknown; e2e?: unknown }>()
+    .catch(() => ({}) as Record<string, unknown>);
   const title = typeof body.title === "string" && body.title.trim() ? body.title.trim().slice(0, 200) : "Shared session";
+  const plan = planFor(c.get("user"));
+  const ttl = clamp(body.ttlHours, Math.min(SHARE_TTL_HOURS, plan.maxTtlHours), plan.maxTtlHours);
   const id = randomId();
   const now = Date.now();
-  const expiresAt = now + SHARE_TTL_HOURS * HOUR;
-  db.run("INSERT INTO share (id, owner_id, title, created_at, expires_at) VALUES (?, ?, ?, ?, ?)", [id, c.get("user").id, title, now, expiresAt]);
+  const expiresAt = now + ttl * HOUR;
+  const metrics = body.metrics === true;
+  db.run("INSERT INTO share (id, owner_id, title, created_at, expires_at, metrics, e2e) VALUES (?, ?, ?, ?, ?, ?, ?)", [
+    id,
+    c.get("user").id,
+    title,
+    now,
+    expiresAt,
+    metrics ? 1 : 0,
+    body.e2e === true ? 1 : 0,
+  ]);
+  if (metrics) count("shares_created");
   return c.json({ shareId: id, expiresAt });
 });
 
@@ -74,6 +97,7 @@ shares.post("/:id/invites", async (c) => {
   const maxUses = clamp(body.maxUses, INVITE_USES.default, INVITE_USES.max);
   // A link lets people watch, or also suggest. Driving is only ever handed over in the session.
   const roleCap = body.roleCap === "collaborator" ? "collaborator" : "viewer";
+  if (!planFor(c.get("user")).roles.includes(roleCap)) return c.json({ error: "Your plan doesn't include links to suggest." }, 403);
   const share = c.get("share");
   const token = randomId(32);
   const id = randomId(9);
@@ -132,11 +156,15 @@ shares.post("/:id/join", async (c) => {
     if (!invite || invite.revoked_at || invite.expires_at <= now || invite.uses >= invite.max_uses) {
       return c.json({ error: "This invite has expired or was revoked. Ask the host for a new link." }, 403);
     }
+    const owner = user(share.owner_id);
+    if (owner && guestCount(share.id) >= planFor(owner).maxGuests) {
+      return c.json({ error: "This session is full. Ask the host to make room." }, 403);
+    }
     db.run("UPDATE share_invite SET uses = uses + 1 WHERE id = ?", [invite.id]);
     db.run("INSERT INTO share_member (share_id, user_id, role_cap, joined_at) VALUES (?, ?, ?, ?)", [share.id, me.id, invite.role_cap, now]);
   }
   const owner = user(share.owner_id);
-  return c.json({ shareId: share.id, title: share.title, hostName: owner?.name || "The host", expiresAt: share.expires_at });
+  return c.json({ shareId: share.id, title: share.title, hostName: owner?.name || "The host", expiresAt: share.expires_at, e2e: !!share.e2e });
 });
 
 shares.get("/:id", (c) => {
@@ -155,9 +183,12 @@ shares.delete("/:id/members/:userId", (c) => {
   return c.json({ ok: true });
 });
 
-shares.delete("/:id", (c) => {
+/** End the share. A share opted into usage counts may carry how many messages guests sent (`steers`). */
+shares.delete("/:id", async (c) => {
   if (!ownerOnly(c)) return c.json({ error: "Only the host can end the session." }, 403);
-  endShare(c.get("share").id, "ended");
+  const body = await c.req.json<{ steers?: unknown }>().catch(() => ({}) as Record<string, unknown>);
+  const steers = typeof body.steers === "number" && Number.isFinite(body.steers) ? Math.min(Math.max(0, Math.floor(body.steers)), 100_000) : undefined;
+  endShare(c.get("share").id, "ended", steers);
   return c.json({ ok: true });
 });
 

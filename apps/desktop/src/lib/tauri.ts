@@ -478,6 +478,22 @@ export interface SharePolicy {
   browseFiles: boolean;
   /** Approvals the driver may answer for the owner. */
   delegation: ShareDelegation;
+  /** What happens to the run while the owner is away. */
+  away: ShareAwayPolicy;
+}
+
+/** `pause` (the default): the run finishes its step and pauses, and the owner drives again.
+ *  `keep-going`: the driver carries on with what's delegated for `minutes`, then it pauses. */
+export interface ShareAwayPolicy {
+  mode: "pause" | "keep-going";
+  minutes: number;
+}
+
+/** Someone asking for control. */
+export interface ShareControlRequest {
+  userId: string;
+  name: string;
+  at: number;
 }
 
 /** Kinds of approval the owner hands to the driver (`sush_core::share::Delegation`). Secret reads never. */
@@ -488,6 +504,8 @@ export interface ShareDelegation {
   escalated: boolean;
   connectors: boolean;
   browser: boolean;
+  /** Undoing a turn's file changes. */
+  undo: boolean;
 }
 
 /** Someone in a shared session, as messages and answers credit them (`sush_core::agent::Author`). */
@@ -532,7 +550,10 @@ export type ShareAuditKind =
   | "role"
   | "kicked"
   | "denied-intent"
-  | "ended";
+  | "ended"
+  | "undid"
+  | "control"
+  | "away";
 
 export interface ShareAuditEntry {
   at: number;
@@ -571,6 +592,14 @@ export interface ShareView {
   comments: ShareComment[];
   /** The latest entries of the audit log, oldest first. */
   audit: ShareAuditEntry[];
+  /** People asking for control, oldest first. */
+  requests: ShareControlRequest[];
+  /** Since when the owner is away (ms), if they are. */
+  ownerAway: number | null;
+  /** Whether the relay sees only ciphertext (end-to-end encrypted). */
+  e2e: boolean;
+  /** What the relay's plan lets the owner do (the host's view; guests see the defaults). */
+  limits: { maxGuests: number; roles: Exclude<ShareRole, "owner">[] };
 }
 
 export interface ShareAccount {
@@ -618,7 +647,13 @@ export type ShareIntent =
   | { kind: "stop" }
   | { kind: "resume" }
   | { kind: "respond"; child?: string | null; callId: string; decision: "approve" | "deny"; answer?: unknown }
-  | { kind: "comment"; text: string; messageId?: string | null };
+  | { kind: "comment"; text: string; messageId?: string | null }
+  | { kind: "request-control" }
+  | { kind: "accept-control"; userId: string }
+  | { kind: "decline-control"; userId: string }
+  | { kind: "pass-control"; userId: string }
+  | { kind: "release-control" }
+  | { kind: "undo"; turnId: string; path?: string | null };
 
 export interface SharesState {
   shares: ShareView[];
@@ -704,7 +739,8 @@ export const api = {
   /** Share through the server this app signs in to, with that session. */
   shareAccountUseToken: (relayUrl: string, token: string) => invoke<ShareAccount>("share_account_use_token", { relayUrl, token }),
   shareAccountSignOut: () => invoke<void>("share_account_sign_out"),
-  shareStart: (thread: ThreadMeta) => invoke<ShareView>("share_start", { thread }),
+  /** `e2e` (default on): the relay sees only ciphertext. `metrics`: report anonymous counts to the relay when it ends. */
+  shareStart: (thread: ThreadMeta, e2e = true, metrics = false) => invoke<ShareView>("share_start", { thread, e2e, metrics }),
   shareInviteCreate: (threadId: string, roleCap: "viewer" | "collaborator" = "viewer", ttlHours?: number, maxUses?: number) =>
     invoke<InviteLink>("share_invite_create", { threadId, roleCap, ttlHours: ttlHours ?? null, maxUses: maxUses ?? null }),
   shareInvitesList: (threadId: string) => invoke<InviteInfo[]>("share_invites_list", { threadId }),
@@ -715,6 +751,11 @@ export const api = {
   shareSetPolicy: (threadId: string, policy: SharePolicy) => invoke<void>("share_set_policy", { threadId, policy }),
   /** One driver at a time: a new one makes the old one a collaborator. */
   shareSetRole: (threadId: string, userId: string, role: Exclude<ShareRole, "owner">) => invoke<void>("share_set_role", { threadId, userId, role }),
+  /** The owner answers a request for control, passes it on, or takes it back. */
+  shareControl: (threadId: string, action: "accept" | "decline" | "pass" | "take", userId?: string) =>
+    invoke<void>("share_control", { threadId, action, userId: userId ?? null }),
+  /** The owner steps away from a shared session, or comes back (the share's away policy applies). */
+  shareStepAway: (threadId: string, away: boolean) => invoke<void>("share_step_away", { threadId, away }),
   /** The owner sends a suggestion, as it is or edited, with the config their UI built. */
   shareSuggestionAccept: (threadId: string, suggestionId: string, text: string | null, config: RunConfig) =>
     invoke<void>("share_suggestion_accept", { threadId, suggestionId, text, config }),

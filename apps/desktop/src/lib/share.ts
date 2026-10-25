@@ -28,6 +28,7 @@ import {
   type ShareMember,
   type ShareRole,
   type ShareView,
+  type UndoResult,
   type WorkspaceEntry,
 } from "@/lib/tauri";
 import type { SushUIMessage } from "@/lib/transport";
@@ -94,6 +95,12 @@ export function mayAnswer(share: ShareView, part: DynamicToolUIPart): boolean {
 
 /** Whether someone in this role sends messages (a driver's steer, a collaborator's are suggestions). */
 export const canWrite = (role: ShareRole) => role === "driver" || role === "collaborator";
+
+/** Whether this guest may undo a turn's file changes: the driver, if the owner handed undo over. */
+export const mayUndo = (share: ShareView) => share.role === "driver" && share.status === "live" && share.policy.delegation.undo;
+
+/** Who drives now: a guest, or null when the owner does. */
+export const driverOf = (share: ShareView) => share.members.find((m) => m.role === "driver") ?? null;
 
 /** A picture to show for someone: a `data:` image or a built-in avatar. Never a URL to fetch. */
 export function safeImage(image: string | null | undefined): string | null {
@@ -166,6 +173,27 @@ function announce(prev: ShareView | undefined, next: ShareView) {
     for (const s of next.suggestions) {
       if (!known.has(s.id) && s.author.userId !== next.me) toast(`${s.author.name} suggests`, { description: s.text.slice(0, 140) });
     }
+    // Requests for control, for whoever can hand it over.
+    const asked = new Set(prev.requests.map((r) => r.userId));
+    for (const r of next.requests) {
+      if (asked.has(r.userId) || r.userId === next.me) continue;
+      toast(`${r.name} asks to drive`, {
+        description: next.thread.title,
+        duration: 30_000,
+        action: { label: "Let them drive", onClick: () => void answerControl(next, r.userId, true) },
+        cancel: { label: "Not now", onClick: () => void answerControl(next, r.userId, false) },
+      });
+    }
+  }
+  // The host stepped away, or came back.
+  if (prev && next.role !== "owner" && prev.status === "live" && !!prev.ownerAway !== !!next.ownerAway) {
+    toast(next.ownerAway ? `${next.thread.hostName} stepped away` : `${next.thread.hostName} is back`, {
+      description: next.ownerAway
+        ? next.policy.away.mode === "pause"
+          ? "The agent pauses once it finishes what it’s doing."
+          : `The driver carries on for up to ${next.policy.away.minutes} minutes.`
+        : next.thread.title,
+    });
   }
 }
 
@@ -213,10 +241,16 @@ export function watchers(s: ShareView): ShareMember[] {
 
 // --- hosting ------------------------------------------------------------------------
 
-export async function startShare(threadId: string) {
+/** Whether to report anonymous counts (guests and messages per share, never content) to the relay. Off unless chosen. */
+const usageCounts = createStore<boolean>("sush.shareUsageCounts", false);
+export const useUsageCounts = () => useSyncExternalStore(usageCounts.subscribe, usageCounts.get);
+export const setUsageCounts = (on: boolean) => usageCounts.set(on);
+
+/** Start sharing, end-to-end encrypted unless `e2e` is false. */
+export async function startShare(threadId: string, e2e = true) {
   const thread = threadMeta(threadId);
   if (!thread) throw new Error("This session is gone.");
-  return api.shareStart(thread);
+  return api.shareStart(thread, e2e, usageCounts.get());
 }
 
 /** A fresh invite link, copied to the clipboard: to watch, or also to suggest. Each one can be revoked on its own. */
@@ -258,6 +292,48 @@ export function addComment(share: ShareView, text: string, messageId?: string) {
     ? api.shareComment(share.threadId, text, messageId)
     : api.shareRequest(share.threadId, { kind: "comment", text, messageId: messageId ?? null });
 }
+
+// --- control ------------------------------------------------------------------------
+
+const failed = (what: string) => (e: unknown) => {
+  toast.error(what, { description: errorMessage(e) });
+};
+
+/** A guest asks for control. */
+export const requestControl = (share: ShareView) =>
+  api
+    .shareRequest(share.threadId, { kind: "request-control" })
+    .then(() => toast(`Asked to drive`, { description: `${driverOf(share)?.name ?? share.thread.hostName} decides.` }), failed("Couldn’t ask"));
+
+/** Let someone who asked drive, or turn them down: the owner from here, the driver through the host. */
+export function answerControl(share: ShareView, userId: string, allow: boolean) {
+  const work =
+    share.role === "owner"
+      ? api.shareControl(share.threadId, allow ? "accept" : "decline", userId)
+      : api.shareRequest(share.threadId, allow ? { kind: "accept-control", userId } : { kind: "decline-control", userId });
+  return work.catch(failed("Couldn’t answer"));
+}
+
+/** Hand control to someone in the share. */
+export function passControl(share: ShareView, userId: string) {
+  const work = share.role === "owner" ? api.shareControl(share.threadId, "pass", userId) : api.shareRequest(share.threadId, { kind: "pass-control", userId });
+  return work.catch(failed("Couldn’t pass control"));
+}
+
+/** The driver gives control back to the owner. */
+export const releaseControl = (share: ShareView) => api.shareRequest(share.threadId, { kind: "release-control" }).catch(failed("Couldn’t give it back"));
+
+/** The owner drives again. */
+export const takeControl = (threadId: string) => api.shareControl(threadId, "take").catch(failed("Couldn’t take control"));
+
+/** The owner steps away (the share's away policy applies) or comes back. */
+export const stepAway = (threadId: string, away: boolean) => api.shareStepAway(threadId, away).catch(failed("Couldn’t change that"));
+
+export const setAwayPolicy = (share: ShareView, away: ShareView["policy"]["away"]) => api.shareSetPolicy(share.threadId, { ...share.policy, away });
+
+/** The driver undoes a turn's file changes on the host, if the owner handed undo over. */
+export const undoAsGuest = (threadId: string, turnId: string, path?: string) =>
+  api.shareRequest<UndoResult>(threadId, { kind: "undo", turnId, path: path ?? null });
 
 /** Whether anyone but the owner can steer: the owner's standing permissions then ask again. */
 export const othersCanSteer = (share: ShareView) => share.members.some((m) => m.role === "driver" || m.role === "collaborator");

@@ -2,11 +2,12 @@
 // Setting up the relay account (also on Settings → Sharing and in the join
 // dialog), starting the share, copying invite links (to watch, or to suggest
 // too), letting people in from the lobby, giving each a role (one driver at a
-// time), choosing which approvals the driver may answer, removing people,
-// revoking links, the activity log and ending the share. The work itself is
-// `lib/share.ts`.
+// time), choosing which approvals the driver may answer, what happens when the
+// owner steps away, removing people, revoking links, the activity log and
+// ending the share. Hand-offs themselves are in `control-banner.tsx`. The work
+// itself is `lib/share.ts`.
 
-import { CheckIcon, CopyIcon, LinkIcon, RadioIcon, ShieldCheckIcon, UserXIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, LockIcon, LockOpenIcon, RadioIcon, ShieldCheckIcon, UserXIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -32,6 +33,7 @@ import {
   revokeInvite,
   safeImage,
   setBrowseFiles,
+  setAwayPolicy,
   setDelegation,
   setRole,
   shareWithAppAccount,
@@ -168,10 +170,11 @@ export function ShareDialog({ threadId, onClose }: { threadId: string | null; on
 
 function Start({ threadId, ended }: { threadId: string; ended: string | null }) {
   const [busy, setBusy] = useState(false);
+  const [e2e, setE2e] = useState(true);
   const start = async () => {
     setBusy(true);
     try {
-      await startShare(threadId);
+      await startShare(threadId, e2e);
       await copyInvite(threadId);
       toast.success("Sharing. Invite link copied", { description: "Anyone who opens it waits until you let them in." });
     } catch (e) {
@@ -188,8 +191,14 @@ function Start({ threadId, ended }: { threadId: string; ended: string | null }) 
         <li>Secret files (.env, keys), your memory and past chats are hidden from them.</li>
         <li>You let each person in, give them a role, and can remove them or end the share at any time.</li>
         <li>While anyone else can steer, edits, commands, connectors and new sites ask you first.</li>
-        <li>The relay can see what’s shared. Use one you trust.</li>
+        <li>{e2e ? "End-to-end encrypted: the relay only forwards ciphertext. The key is in the link, so share links privately." : "Not encrypted: the relay can see what’s shared. Use one you trust."}</li>
       </ul>
+      <label className="flex w-full max-w-sm items-center justify-between gap-4 text-left text-sm">
+        <span className="flex items-center gap-2">
+          <LockIcon className="size-4" /> End-to-end encrypt
+        </span>
+        <Switch checked={e2e} onCheckedChange={setE2e} />
+      </label>
       <Button onClick={() => void start()} disabled={busy}>
         <LinkIcon /> Start sharing and copy link
       </Button>
@@ -215,9 +224,57 @@ const DELEGATIONS: { key: keyof ShareDelegation; label: string; hint: string; ri
   { key: "edits", label: "File changes", hint: "Writing, editing, moving and deleting files, and commits" },
   { key: "shell", label: "Sandboxed commands", hint: "Commands that can only change this folder, without network" },
   { key: "browser", label: "Opening sites", hint: "New sites in the built-in browser" },
+  { key: "undo", label: "Undoing changes", hint: "Putting back the files a turn changed (secret files stay yours)" },
   { key: "escalated", label: "Commands with network or outside the sandbox", hint: "They run as you, on your computer", risky: true },
   { key: "connectors", label: "Connector tools", hint: "They act with your accounts (GitHub, Slack, …)", risky: true },
 ];
+
+/** What happens when the owner steps away: pause (the default), or let the driver carry on for a while. */
+function AwaySetting({ share, onError }: { share: ShareView; onError: (e: unknown) => void }) {
+  const away = share.policy.away;
+  const [minutes, setMinutes] = useState(String(away.minutes));
+  useEffect(() => setMinutes(String(away.minutes)), [away.minutes]);
+  const save = (next: ShareView["policy"]["away"]) => void setAwayPolicy(share, next).catch(onError);
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="text-sm font-medium">When you step away</h3>
+      <div className="flex items-center gap-2">
+        <Select value={away.mode} onValueChange={(mode) => save({ ...away, mode: mode as typeof away.mode })}>
+          <SelectTrigger size="sm" className="flex-1" aria-label="When you step away">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pause">Pause the agent, and take back control</SelectItem>
+            <SelectItem value="keep-going">Let the driver carry on for a while</SelectItem>
+          </SelectContent>
+        </Select>
+        {away.mode === "keep-going" && (
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Input
+              type="number"
+              min={1}
+              max={480}
+              value={minutes}
+              onChange={(e) => setMinutes(e.target.value)}
+              onBlur={() => {
+                const n = Math.round(Number(minutes));
+                if (Number.isFinite(n) && n !== away.minutes) save({ ...away, minutes: n });
+              }}
+              className="h-8 w-16"
+              aria-label="Minutes"
+            />
+            min
+          </label>
+        )}
+      </div>
+      <p className={cn("text-xs", away.mode === "keep-going" ? "text-destructive" : "text-muted-foreground")}>
+        {away.mode === "pause"
+          ? "The agent finishes what it’s doing, then pauses. Nothing more happens on this computer until you’re back."
+          : "The driver keeps going with only what you’ve handed over, spending your credits on this computer while you’re gone. Secret files and anything you haven’t handed over wait for you. After the time is up, the agent pauses."}
+      </p>
+    </section>
+  );
+}
 
 function Sharing({ share }: { share: ShareView }) {
   const [copied, setCopied] = useState<"viewer" | "collaborator" | null>(null);
@@ -250,7 +307,11 @@ function Sharing({ share }: { share: ShareView }) {
         <span className={cn("size-2 rounded-full", share.status === "live" ? "bg-brand" : "bg-muted-foreground/50")} />
         <span>{STATUS[share.status]}</span>
         {share.error && share.status !== "live" && <span className="truncate text-muted-foreground">· {share.error}</span>}
-        <span className="ml-auto text-xs text-muted-foreground">Ends {new Date(share.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+        <span className="ml-auto flex items-center gap-1 text-xs text-muted-foreground" title={share.e2e ? "The relay only forwards ciphertext" : "The relay can read what’s shared"}>
+          {share.e2e ? <LockIcon className="size-3.5" /> : <LockOpenIcon className="size-3.5" />}
+          {share.e2e ? "Encrypted" : "Not encrypted"} · Ends{" "}
+          {new Date(share.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+        </span>
       </div>
 
       <div className="grid grid-cols-2 gap-2">
@@ -286,6 +347,11 @@ function Sharing({ share }: { share: ShareView }) {
       <section className="flex flex-col gap-2">
         <h3 className="text-sm font-medium">People</h3>
         {guests.length === 0 && <p className="text-sm text-muted-foreground">Nobody yet. Send someone a link.</p>}
+        {guests.length >= share.limits.maxGuests && (
+          <p className="text-xs text-muted-foreground">
+            This relay’s plan for your account lets {share.limits.maxGuests === 1 ? "one guest" : `${share.limits.maxGuests} guests`} in at a time.
+          </p>
+        )}
         {guests.map((m) => (
           <div key={m.userId} className="flex items-center gap-3">
             <UserAvatar image={safeImage(m.image)} name={m.name} className={cn("size-7 text-xs", !m.online && "opacity-50")} />
@@ -301,7 +367,7 @@ function Sharing({ share }: { share: ShareView }) {
               </SelectTrigger>
               <SelectContent>
                 {ROLES.map((r) => (
-                  <SelectItem key={r.value} value={r.value} title={r.hint}>
+                  <SelectItem key={r.value} value={r.value} title={r.hint} disabled={!share.limits.roles.includes(r.value)}>
                     {r.label}
                   </SelectItem>
                 ))}
@@ -318,9 +384,13 @@ function Sharing({ share }: { share: ShareView }) {
           </div>
         ))}
         {guests.length > 0 && (
-          <p className="text-xs text-muted-foreground">One person drives at a time. Links never make anyone a driver; only you do, here.</p>
+          <p className="text-xs text-muted-foreground">
+            One person drives at a time. Links never make anyone a driver: you do, here, or whoever drives passes it on.
+          </p>
         )}
       </section>
+
+      {guests.length > 0 && <AwaySetting share={share} onError={(e) => toast.error("Couldn’t change that", { description: errorMessage(e) })} />}
 
       {steerable && (
         <p className="flex gap-2 rounded-lg bg-muted/60 p-2.5 text-xs text-muted-foreground">

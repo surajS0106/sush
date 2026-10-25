@@ -14,7 +14,9 @@ export const auth = betterAuth({
   // Falls back to a dev-only secret; set BETTER_AUTH_SECRET in production.
   secret: process.env.BETTER_AUTH_SECRET,
   database: db,
-  trustedOrigins,
+  // The desktop app's origins, and this server's own (whatever address it's reached at on the
+  // LAN): the browser viewer it serves at /join signs in from there, same-origin, with cookies.
+  trustedOrigins: (request) => (request ? [...trustedOrigins, new URL(request.url).origin] : trustedOrigins),
   emailAndPassword: { enabled: true, minPasswordLength: 8 },
   user: { deleteUser: { enabled: true } },
   hooks: {

@@ -1,3 +1,6 @@
+import { isAbsolute, join, normalize } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { getMigrations } from "better-auth/db/migration";
 import { Hono } from "hono";
 import { websocket } from "hono/bun";
@@ -5,6 +8,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import { auth, trustedOrigins } from "./auth";
+import { isAdmin, weekly } from "./share/metrics";
 import { shares } from "./share/routes";
 
 // Create or update the auth tables before serving.
@@ -32,16 +36,47 @@ app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 app.route("/api/shares", shares);
 app.get("/health", (c) => c.text("ok"));
 
-// An invite link opened in a browser. Its token is after the `#`, which browsers never send.
-app.get("/join/:id", (c) =>
-  c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+// Weekly usage counts from shares their owners opted in (`share/metrics.ts`). Admins only.
+app.get("/api/metrics/weekly", async (c) => {
+  const session = await auth.api.getSession({ headers: c.req.raw.headers });
+  if (!session) return c.json({ error: "Sign in first." }, 401);
+  if (!isAdmin(session.user.email)) return c.json({ error: "Only admins can see usage counts." }, 403);
+  return c.json(weekly());
+});
+
+// An invite link opened in a browser: the browser viewer (`apps/viewer`), which watches
+// and comments without installing Sush. Its token and key are after the `#`, which
+// browsers never send. Without a viewer build, a page that says how to join from the app.
+const viewerDir = process.env.SUSH_VIEWER_DIR ?? fileURLToPath(new URL("../../viewer/dist/", import.meta.url));
+// Nothing it renders can load or run anything from elsewhere.
+const VIEWER_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
+app.get("/join/:id", async (c) => {
+  const page = Bun.file(join(viewerDir, "index.html"));
+  if (await page.exists()) {
+    c.header("Content-Security-Policy", VIEWER_CSP);
+    c.header("Referrer-Policy", "no-referrer");
+    return c.html(await page.text());
+  }
+  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Join a Sush session</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#222;background:#fff}
 @media (prefers-color-scheme:dark){body{color:#eee;background:#161616}}code{font-size:.9em}</style></head>
 <body><h1>Join a shared Sush session</h1>
 <p>Open Sush, choose <b>Join shared session…</b> in the sidebar, and paste this page’s link (the whole address, including the part after <code>#</code>).</p>
-<p>You need a Sharing account on this relay: Settings → Sharing.</p></body></html>`),
-);
+<p>You need a Sharing account on this relay: Settings → Sharing.</p></body></html>`);
+});
+
+// The viewer's scripts and styles (built with `base: "/viewer/"`).
+app.get("/viewer/*", async (c) => {
+  const rel = normalize(c.req.path.slice("/viewer/".length));
+  if (rel.startsWith("..") || isAbsolute(rel)) return c.notFound();
+  const file = Bun.file(join(viewerDir, rel));
+  if (!(await file.exists())) return c.notFound();
+  c.header("Cache-Control", rel.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+  return new Response(file);
+});
 
 // When bundled as the desktop app's sidecar, exit once the app is gone, even if
 // it was killed before it could stop us.

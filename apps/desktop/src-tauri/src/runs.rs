@@ -299,6 +299,17 @@ impl Runs {
         }
     }
 
+    /// Have a thread's run and its sub-agents' end at their next step boundary,
+    /// marked paused (`Inbox::Pause`): nothing running is cut short.
+    pub(crate) fn pause_family(&self, thread_id: &str) {
+        let prefix = subagents::child_thread_id(thread_id, "");
+        for (id, live) in self.live.lock().unwrap().iter() {
+            if (id == thread_id || id.starts_with(&prefix)) && !live.cancel.is_cancelled() {
+                let _ = live.inbox.send(Inbox::Pause);
+            }
+        }
+    }
+
     /// Tell every window a report changed.
     pub fn report_changed(&self, report: Report) {
         self.send(RunFrame::Report { report });

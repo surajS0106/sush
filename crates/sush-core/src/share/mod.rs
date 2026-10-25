@@ -15,9 +15,12 @@
 //! Beyond watching, a driver steers the run and answers the approvals the
 //! owner delegated; a collaborator suggests messages for the driver (or the
 //! owner) to accept, and comments. What anyone did is kept in the host's
-//! audit log ([`audit`]).
+//! audit log ([`audit`]). Control changes hands by request and acceptance,
+//! and the owner can step away ([`control`]).
 
 pub mod audit;
+pub mod control;
+pub mod crypto;
 pub mod outbox;
 pub mod policy;
 pub mod redact;
@@ -28,6 +31,7 @@ use serde_json::Value;
 
 pub use crate::agent::Author;
 use crate::agent::{Op, RunStatus};
+pub use control::{AwayMode, AwayPolicy, ControlRequest};
 
 /// The protocol's major version, carried by every body as `v`.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -76,6 +80,9 @@ pub struct SharePolicy {
     /// Approvals the driver may answer for the owner (`policy::may_answer`).
     #[serde(default)]
     pub delegation: Delegation,
+    /// What happens to the run while the owner is away.
+    #[serde(default)]
+    pub away: AwayPolicy,
 }
 
 /// Kinds of approval the owner hands to the driver. All off by default: the
@@ -99,6 +106,9 @@ pub struct Delegation {
     /// Opening a site in the built-in browser.
     #[serde(default)]
     pub browser: bool,
+    /// Undoing a turn's file changes.
+    #[serde(default)]
+    pub undo: bool,
 }
 
 /// A message a collaborator suggests, waiting for the driver (or the owner) to send it.
@@ -135,6 +145,10 @@ pub struct Room {
     pub suggestions: Vec<Suggestion>,
     pub comments: Vec<Comment>,
     pub audit: Vec<audit::Entry>,
+    /// People asking for control, oldest first.
+    pub requests: Vec<ControlRequest>,
+    /// Since when the owner is away, if they are.
+    pub owner_away: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,13 +213,27 @@ pub enum HostMsg {
         /// The latest entries of the audit log, oldest first.
         #[serde(default)]
         audit: Vec<audit::Entry>,
+        #[serde(default)]
+        requests: Vec<ControlRequest>,
+        #[serde(default)]
+        owner_away: Option<i64>,
     },
     Op { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, op: Op },
     Status { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, status: RunStatus, error: Option<String> },
     ToolRunning { epoch: u64, seq: u64, call_id: String, running: bool },
     FilesChanged { epoch: u64, seq: u64, turns: Vec<TurnFiles> },
-    /// Who is in the share and what they may do, after any change.
-    Members { epoch: u64, seq: u64, members: Vec<Member>, policy: SharePolicy },
+    /// Who is in the share and what they may do, who asks for control, and
+    /// whether the owner is away, after any change.
+    Members {
+        epoch: u64,
+        seq: u64,
+        members: Vec<Member>,
+        policy: SharePolicy,
+        #[serde(default)]
+        requests: Vec<ControlRequest>,
+        #[serde(default)]
+        owner_away: Option<i64>,
+    },
     /// The title or the like changed.
     Thread { epoch: u64, seq: u64, thread: ThreadInfo },
     /// The suggestions waiting, after any change.
@@ -225,6 +253,9 @@ pub enum HostMsg {
     },
     /// The guest's version is one the host can't speak.
     Incompatible { host_v: u32, min_v: u32 },
+    /// A new content key, sealed for this guest's device (`crypto::seal_for`):
+    /// someone was removed, or the guest came back after one was.
+    Rekey { generation: u32, sealed: String },
 }
 
 impl HostMsg {
@@ -241,7 +272,7 @@ impl HostMsg {
             | HostMsg::Queue { epoch, seq, .. }
             | HostMsg::Comment { epoch, seq, .. }
             | HostMsg::Audit { epoch, seq, .. } => Some((*epoch, *seq)),
-            HostMsg::Reply { .. } | HostMsg::Incompatible { .. } => None,
+            HostMsg::Reply { .. } | HostMsg::Incompatible { .. } | HostMsg::Rekey { .. } => None,
         }
     }
 }
@@ -255,6 +286,10 @@ pub enum GuestMsg {
         min_v: u32,
         #[serde(default)]
         caps: Vec<String>,
+        /// In an encrypted share, this join's device keys: the host binds them
+        /// to the sender and checks every later message's signature.
+        #[serde(default)]
+        device: Option<crypto::DeviceKeys>,
     },
     /// The guest lost its place (a gap, or a message it couldn't read): asks for a fresh snapshot.
     Resync {
@@ -315,6 +350,22 @@ pub enum Intent {
         text: String,
         #[serde(default)]
         message_id: Option<String>,
+    },
+    /// Ask the driver (or the owner) for control.
+    RequestControl,
+    /// The driver lets someone who asked drive.
+    AcceptControl { user_id: String },
+    /// The driver turns a request down.
+    DeclineControl { user_id: String },
+    /// The driver hands control to someone in the share.
+    PassControl { user_id: String },
+    /// The driver gives control back to the owner.
+    ReleaseControl,
+    /// Put back the files a turn changed (or one of them), if the owner lets the driver undo.
+    Undo {
+        turn_id: String,
+        #[serde(default)]
+        path: Option<String>,
     },
 }
 
@@ -402,6 +453,11 @@ mod tests {
             (json!({ "kind": "suggestion-accept", "id": "s" }), Intent::SuggestionAccept { id: "s".into(), text: None }),
             (json!({ "kind": "send-now" }), Intent::SendNow),
             (json!({ "kind": "comment", "text": "nice" }), Intent::Comment { text: "nice".into(), message_id: None }),
+            (json!({ "kind": "request-control" }), Intent::RequestControl),
+            (json!({ "kind": "pass-control", "userId": "u" }), Intent::PassControl { user_id: "u".into() }),
+            (json!({ "kind": "accept-control", "userId": "u" }), Intent::AcceptControl { user_id: "u".into() }),
+            (json!({ "kind": "release-control" }), Intent::ReleaseControl),
+            (json!({ "kind": "undo", "turnId": "t", "path": "a.rs" }), Intent::Undo { turn_id: "t".into(), path: Some("a.rs".into()) }),
         ];
         for (wire, intent) in intents {
             let text = Body::encode(GuestMsg::Intent { id: "i".into(), intent: intent.clone() });
@@ -418,8 +474,10 @@ mod tests {
         let old = json!({ "v": 1, "type": "snapshot", "epoch": 1, "seq": 0,
             "thread": { "title": "t", "kind": "chat", "hostName": "h" },
             "threads": [], "running": [], "turns": [], "members": [], "policy": { "browseFiles": true } });
-        let HostMsg::Snapshot { policy, suggestions, .. } = decode::<HostMsg>(&old.to_string()).unwrap() else { panic!() };
+        let HostMsg::Snapshot { policy, suggestions, requests, owner_away, .. } = decode::<HostMsg>(&old.to_string()).unwrap() else { panic!() };
         assert!(policy.browse_files && !policy.delegation.edits && suggestions.is_empty());
+        assert!(requests.is_empty() && owner_away.is_none() && !policy.delegation.undo);
+        assert_eq!(policy.away.mode, AwayMode::Pause);
     }
 
     #[test]

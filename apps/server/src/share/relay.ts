@@ -9,7 +9,9 @@
 
 import type { WSContext } from "hono/ws";
 
-import { db, guestCount, liveShare, MAX_GUESTS, safeImage, type UserRow } from "./db";
+import { db, guestCount, liveShare, safeImage, user, type ShareRow, type UserRow } from "./db";
+import { count } from "./metrics";
+import { planFor } from "./plans";
 
 export interface Peer {
   peerId: string;
@@ -186,7 +188,8 @@ function fromHost(shareId: string, r: Room, host: Conn, frame: { t?: string; to?
   if (frame.t === "admit" && typeof frame.userId === "string") {
     const waiting = [...r.guests.values()].filter((g) => g.peer.userId === frame.userId && !g.admitted);
     if (frame.allow) {
-      if (guestCount(shareId) >= MAX_GUESTS) return send(host, { t: "error", code: "full" });
+      const owner = user(host.peer.userId);
+      if (owner && guestCount(shareId) >= planFor(owner).maxGuests) return send(host, { t: "error", code: "full" });
       db.run("UPDATE share_member SET admitted = 1 WHERE share_id = ? AND user_id = ?", [shareId, frame.userId]);
       for (const g of waiting) {
         g.admitted = true;
@@ -208,9 +211,20 @@ export function kickUser(shareId: string, userId: string) {
   for (const g of [...r.guests.values()]) if (g.peer.userId === userId) close(g, "kicked");
 }
 
-/** End a share: everyone is told and disconnected, and its invites stop working. */
-export function endShare(shareId: string, reason: "ended" | "expired") {
+/**
+ * End a share: everyone is told and disconnected, and its invites stop working.
+ * If the owner opted it into usage counts, they're taken now, once: guests from
+ * the relay's own records, and `steers` as the host reports it (unknown when it expired).
+ */
+export function endShare(shareId: string, reason: "ended" | "expired", steers?: number) {
   db.run("UPDATE share SET ended_at = ? WHERE id = ? AND ended_at IS NULL", [Date.now(), shareId]);
+  const row = db.query<ShareRow, [string]>("SELECT * FROM share WHERE id = ?").get(shareId);
+  if (row?.metrics && !row.metrics_done) {
+    db.run("UPDATE share SET metrics_done = 1 WHERE id = ?", [shareId]);
+    const guests = db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM share_member WHERE share_id = ? AND admitted = 1").get(shareId)?.n ?? 0;
+    count("guests_per_share", guests);
+    if (typeof steers === "number") count("steers_per_share", steers);
+  }
   const r = rooms.get(shareId);
   if (!r) return;
   if (r.hostGone) clearTimeout(r.hostGone);
