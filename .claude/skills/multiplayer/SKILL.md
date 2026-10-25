@@ -5,7 +5,7 @@ description: Work on Sush Multiplayer, the live shared sessions where others wat
 
 # Sush Multiplayer
 
-Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the user chose. §2 is the wire protocol, §3 maps each intent to a permission check and a code path, §5 is the threat model, and §6 lists phases 2–4 file by file. Phase 1 (watch only, LAN relay) was built and tested by hand on 2026-10-25. Phase 2 (roles, steering, suggestions, approvals, comments, audit log) was built, tested by hand and pushed the same day; the plan's "Phase 2 as built" table records the choices made while building it.
+Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the user chose. §2 is the wire protocol, §3 maps each intent to a permission check and a code path, §5 is the threat model, and §6 lists phases 2–4 file by file. Phase 1 (watch only, LAN relay) was built and tested by hand on 2026-10-25. Phase 2 (roles, steering, suggestions, approvals, comments, audit log) was built, tested by hand and pushed the same day; the plan's "Phase 2 as built" table records the choices made while building it. Phases 3 (hand off: control, pause, step away, delegated undo) and 4 (end-to-end encryption, browser viewer, usage counts, plan hooks) were built and pushed on 2026-10-25 after a hand test with two instances and the browser viewer (encryption seen as `e2e1.` on the relay, viewer, usage counts); their "as built" tables in the plan record the choices and deviations.
 
 ## The rule that must not break
 
@@ -21,6 +21,8 @@ Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the 
 | | `share/replica.rs` | Guest: applies in order, `Resync` on any gap, rewrites blob URLs for this platform |
 | | `share/policy.rs` | `authorize(ctx, intent)` → `Allowed::Do` / `Suggest`, `ApprovalClass`, `classify`, `floored`, `may_answer`, `normalize(path)` |
 | | `share/audit.rs` | `Kind`, `Entry`, `preview`, `push` (the latest `KEEP`) |
+| | `share/control.rs` | `apply(members, requests, actor, change)` for request/accept/decline/pass/release/take, `forget`, `driver`, `AwayPolicy` (pause by default, or keep going N minutes) |
+| | `share/crypto.rs` | `seal`/`open` (`e2e1.<gen>.<nonce>.<ct>`), `Device` (Ed25519 signs, X25519 receives rekeys), `verify`, `seal_for`, `Seen` (replays), `parse_fragment` |
 | Core, outside `share/` | `agent/run.rs` | `Author`; `RunAction::Respond { by }` / `Inbox::Respond { by }` → the runner records `metadata.sushAnswers` (`ANSWERS`) |
 | | `store.rs` | `share_events` (migration 6): `add_share_event`, `share_events` |
 | Tauri | `apps/desktop/src-tauri/src/share.rs` | Relay account (keyring), host and guest socket loops, `on_frame` tap, snapshots, intent handlers (`handle_intent` → `steer`, `suggest`, `accept`, `respond`, `comment`), `request_config`, first-wins `claim`, `record` (audit), all `share_*` commands |
@@ -29,6 +31,7 @@ Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the 
 | | `store.rs` | `serve_blob` falls back to `Shares::fetch_blob` for a joined share's attachments |
 | | `paths.rs` | `SUSH_PROFILE` dev profiles |
 | Relay | `apps/server/src/share/db.ts`, `routes.ts`, `relay.ts` | Tables, REST (shares, invites with `roleCap`, join, kick, end), WebSocket rooms with the lobby (peers carry `roleCap`) |
+| Viewer | `apps/viewer/src/session.ts`, `crypto.ts`, `app.tsx` | The browser viewer: its own replica and the same encryption (`@noble`), sign-in with cookies, watch and comment |
 | UI | `apps/desktop/src/lib/share.ts` | Mirrors `share` frames, actions (roles, delegation, suggestions, comments), relay account, `WatchingHost` (`{ hostName, mayAnswer }`), `safeImage` |
 | | `lib/sessions.ts` | A guest's send/respond/stop/resume/"Send now" on `shared:` threads → intents (`askHost`); answers `share-config` frames (`answerShareConfig`) |
 | | `components/share-dialog.tsx`, `shared-sessions.tsx`, `suggestion-queue.tsx`, `share-activity.tsx`, `shared-files-panel.tsx`, `sharing-section.tsx` | Share dialog (roles, delegation, activity) and relay setup; sidebar group, join dialog, header presence, `GuestComposer` and `WatchingBar`; suggestions above the composer; comments and the log in a sheet; guest files panel; Settings → Sharing |
@@ -61,11 +64,14 @@ Read `docs/multiplayer-plan.md` first. Its **Decisions** table records what the 
 
 Add a variant to `HostMsg` and give it an `order()` arm if it's part of the ordered stream. Add a matching `Event` in `outbox.rs` (numbered in `flush`) and an arm in `Replica::apply` with a `Change`. Map that change in `share.rs` `frames_for` to run frames or a `ShareView` change. Mirror any new `ShareView` fields in `lib/tauri.ts`. A new `Op` variant needs a `caps` flag or a version bump (plan §2.5).
 
-## Phase 3 entry points (from plan §6)
+## Phases 3 and 4 (built 2026-10-25)
 
-- Core: `share/control.rs` (request/accept/pass/release, serialised on the host) and `Inbox::Pause` (finish the step and its tool calls, then end `paused`; tests next to the interrupt tests). New intents `request-control`, `accept-control-request`, `pass-control`, `release-control`, `undo` (owner, or driver with a new `delegation.undo`), and audit kinds `undid`/`control`.
-- `share.rs`: owner presence (online/away), "Step away", the "when I leave" policy (pause by default). The floor should then also cover a viewer who could be handed control.
-- UI: a "Suraj is driving / You're driving" banner, Take/Pass control, "Step away".
+- Control: intents `request-control`, `accept-control`, `decline-control`, `pass-control`, `release-control`; the owner's `share_control`. All go through `HostShare::change_control`. UI: `components/control-banner.tsx`.
+- Away: `share_step_away`; `SharePolicy.away`; `Inbox::Pause` via `Runs::pause_family`. Only the button triggers it.
+- Undo: the `undo` intent with `delegation.undo`; `file-changes.tsx` shows Undo for such a driver.
+- Encryption: `HostShare::wire` / `read_guest` / `send_current_key` / `rekey`, and `GuestShare::send_host` / `read_host` / `take_key` / `hello`. Lock order inside a host share: `outbox` → `e2e` → `inner`; inside a guest share: `inner` → `e2e`. Anything new that sends to guests must go through `wire`, never `Body::encode` alone.
+- Relay: `share/plans.ts` (`SUSH_PLANS`, `SUSH_TEAM_EMAILS`), `share/metrics.ts` (`SUSH_ADMIN_EMAILS`), the viewer at `/join/:id` (`SUSH_VIEWER_DIR`).
+- Still design only: cross-machine hand-off (plan §6, phase 3).
 
 ## Testing with two instances on one Windows machine
 
@@ -83,6 +89,9 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
    - Removing B (or ending the share) with an edit card waiting lets the edit run by itself.
    - B reloads and catches up.
 
+6. Phase 3 checks. With B driving: B's **Pass control** to C, C's **Give back**; B (as a viewer) **Ask to drive**, A lets them from the banner or the toast. A **Take control** mid-run. A **Step away** (pause): the run finishes its tool call and stops, marked paused; B is back to collaborator. Set "Let the driver carry on" for 1 minute and step away: B keeps steering, and after a minute the run pauses. Hand over **Undoing changes**: B's Undo puts files back on A's machine and the Activity log says so.
+7. Phase 4 checks. Start a share with encryption on: the link has `#t=…&k=…`; watch the relay's traffic (or log `body` in `relay.ts` for a moment) and see only `e2e1.` strings. Kick C while B stays: B keeps following (rekey), C's old key reads nothing new. Encryption off: the old token-only link still works. Browser viewer: `bun run build:viewer`, restart the relay, open the invite link in a browser, sign up, get let in, watch, and comment with a "to suggest" link. Plans: `SUSH_PLANS=on` on the relay with no `SUSH_TEAM_EMAILS`: a second guest can't join, Drives is greyed out, "Link to suggest" works but driving doesn't. Counts: turn on Settings → Sharing → Usage counts, share, end it, then `GET /api/metrics/weekly` as an admin.
+
 ## Gotchas met so far
 
 - `bun --watch` children outlive the background task that started them. After stopping a task, check ports 3000 and 1420 (`netstat -ano`) and stop the leftover `bun.exe --watch src/index.ts` or Vite. Two server processes on the same `auth.sqlite` give `SQLITE_BUSY` at startup.
@@ -93,6 +102,8 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
 - A `String` moved into a `blocking(move || …)` closure can't be printed afterwards in the same task (E0382). Clone it for the closure first.
 - The relay drops guest frames over its cap (8 MB) with `too-large`. Anything bigger a guest sends needs chunking, not a higher cap.
 - After a Rust fix, instance B keeps the old binary until restarted by hand.
+- Devices are bound per connection (`HostE2e.devices` by peer id), never per person: a reloaded browser page connects again before its old connection has left, and a per-person binding silently dropped its hello (an empty viewer).
+- In the viewer, an effect must not return a value: newer Chrome's `scrollIntoView` returns a promise, which React then calls as a cleanup (`l is not a function`). Use braces.
 
 ## Verify
 
