@@ -4153,7 +4153,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sush"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -4184,7 +4184,7 @@ dependencies = [
 
 [[package]]
 name = "sush-core"
-version = "2.1.1"
+version = "2.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
