@@ -1,8 +1,13 @@
 # Account Profile — Design Notes
 
-Last updated: 2026-10-12
+Last updated: 2026-10-29
 
 ## What changed
+
+### 2026-10-29 (Sign in with Sush, Connected apps)
+- `apps/server/src/oauth.ts`: the auth server is also a small OAuth 2.1 server for Sush's own apps (client `plinth`): a script-free authorize page (sign in, Allow/Cancel, "Use another account"), PKCE S256, loopback `/callback` redirects only, hashed tokens in `oauth_grant`, rotating refresh tokens, userinfo, revoke, and one-time "same account" assertions the Sush app mints for Plinth.
+- Settings → Account → Connected apps lists linked apps with Disconnect (`settings-dialog.tsx` `ConnectedAppsGroup`, `lib/auth.ts`). Connecting the Plinth connector passes an assertion so Plinth skips its pairing prompt for the same account (`library.ts` `signIn`, `connector_auth.rs`).
+- Why: Plinth links to the person's existing Sush account instead of a second account. Details: `../plinth/docs/design-notes/sush-account.md`.
 
 ### 2026-10-12 (latest)
 - Email is shown as read-only text again; the email-change helper and the server's `changeEmail` setting were removed (`settings-dialog.tsx`, `lib/auth.ts`, `apps/server/src/auth.ts`).

@@ -4,6 +4,7 @@
 
 import { useSyncExternalStore } from "react";
 
+import { assertionFor } from "@/lib/auth";
 import { createStore } from "@/lib/store";
 import {
   api,
@@ -226,11 +227,19 @@ export async function signIn(c: Connector) {
   if (c.server.type !== "http") return;
   setStatus(c.id, { state: "authorizing" });
   try {
-    await api.connectorAuthorize(c.id, c.server.url, c.server.oauthClientId, (code) => {
-      setStatus(c.id, { state: "authorizing", code });
-      // Ready to paste on the page that just opened.
-      void navigator.clipboard.writeText(code.userCode).catch(() => {});
-    });
+    // Signed in to Plinth as this same account? Then Plinth lets Sush in without its pairing prompt.
+    const assertion = c.id === "plinth" ? await assertionFor("plinth") : null;
+    await api.connectorAuthorize(
+      c.id,
+      c.server.url,
+      c.server.oauthClientId,
+      (code) => {
+        setStatus(c.id, { state: "authorizing", code });
+        // Ready to paste on the page that just opened.
+        void navigator.clipboard.writeText(code.userCode).catch(() => {});
+      },
+      assertion,
+    );
   } catch (e) {
     const error = errorMessage(e);
     // Cancelling isn't an error worth showing; go back to "Sign in".

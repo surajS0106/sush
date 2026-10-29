@@ -869,11 +869,12 @@ export const api = {
   /** Disconnect and delete the connector's stored credentials. */
   connectorForget: (id: string) => invoke<void>("connector_forget", { id }),
   /** Sign in through the browser; resolves when the browser comes back. Servers
-   *  that sign in with a typed code (GitHub) call `onCode` with it first. */
-  connectorAuthorize: (id: string, url: string, clientId: string | null | undefined, onCode: (code: DeviceCode) => void) => {
+   *  that sign in with a typed code (GitHub) call `onCode` with it first.
+   *  `assertion` is the one-time "same account" proof Plinth checks (`lib/auth.ts` `assertionFor`); it goes to Plinth only. */
+  connectorAuthorize: (id: string, url: string, clientId: string | null | undefined, onCode: (code: DeviceCode) => void, assertion?: string | null) => {
     const channel = new Channel<DeviceCode>();
     channel.onmessage = onCode;
-    return invoke<void>("connector_authorize", { id, url, clientId: clientId || null, onCode: channel });
+    return invoke<void>("connector_authorize", { id, url, clientId: clientId || null, assertion: assertion || null, onCode: channel });
   },
   connectorCancelAuthorize: (id: string) => invoke<void>("connector_cancel_authorize", { id }),
   /** `undefined` keeps a stored value, `""` clears it. */

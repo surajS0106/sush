@@ -79,3 +79,46 @@ export async function deleteAccount(password: string) {
   check(await authClient.deleteUser({ password }));
   await clearSession();
 }
+
+// --- apps signed in with this account (apps/server/src/oauth.ts) ---------------------
+
+/** An app linked to this account with "Sign in with Sush" (Plinth). */
+export interface ConnectedApp {
+  id: string;
+  name: string;
+  linkedAt: number;
+  lastUsedAt: number;
+  /** How many sign-ins (devices) it holds. */
+  devices: number;
+}
+
+async function oauthApi<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${AUTH_URL}/api/oauth${path}`, {
+    ...init,
+    headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), Authorization: `Bearer ${readToken()}` },
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error || `Request failed (${res.status})`);
+  }
+  return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
+export const connectedApps = () => oauthApi<ConnectedApp[]>("/apps");
+
+/** Disconnects an app on every device: its tokens stop working and it has to sign in again. */
+export const disconnectApp = (id: string) => oauthApi<void>(`/apps/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/**
+ * A one-time proof that this is the signed-in account, for `audience` (an app id). Plinth checks it
+ * with this server and, when it's signed in as the same account, lets Sush connect without asking.
+ * Null when signed out or the server can't be reached; the app then just asks as usual.
+ */
+export async function assertionFor(audience: string): Promise<string | null> {
+  if (!readToken()) return null;
+  try {
+    return (await oauthApi<{ assertion: string }>("/assertion", { method: "POST", body: JSON.stringify({ audience }) })).assertion;
+  } catch {
+    return null;
+  }
+}

@@ -8,6 +8,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
 import { auth, trustedOrigins } from "./auth";
+import { oauth, oauthAccount } from "./oauth";
 import { isAdmin, weekly } from "./share/metrics";
 import { shares } from "./share/routes";
 
@@ -32,6 +33,14 @@ app.use(
   }),
 );
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
+// "Sign in with Sush" for Sush's own apps (Plinth): the browser pages and the endpoints the apps
+// call from their native side (`oauth.ts`), and the Sush app's own view of its connected apps.
+app.use(
+  "/api/oauth/*",
+  cors({ origin: trustedOrigins, allowHeaders: ["Content-Type", "Authorization"], allowMethods: ["GET", "POST", "DELETE", "OPTIONS"], maxAge: 600 }),
+);
+app.route("/api/oauth", oauthAccount);
+app.route("/", oauth);
 // Shared sessions: the desktop app calls these from Rust, so no CORS.
 app.route("/api/shares", shares);
 app.get("/health", (c) => c.text("ok"));

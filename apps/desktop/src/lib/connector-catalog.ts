@@ -115,6 +115,17 @@ const ICONS: Record<string, string> = Object.fromEntries(
 export const CATALOG: CatalogEntry[] = [
   // Productivity
   {
+    // Plinth, Sush's design app, on this computer: Plinth asks you before it lets Sush connect, and
+    // only Plinth is told which thread is calling (connectors.rs).
+    id: "plinth",
+    name: "Plinth",
+    description: "Design live in the file open in Plinth: read layers, build frames with auto layout, bind variables",
+    publisher: "Sush",
+    url: "http://127.0.0.1:47440/mcp",
+    auth: "oauth",
+    category: "Productivity",
+  },
+  {
     id: "notion",
     name: "Notion",
     description: "Search, read and update pages and databases in your workspace",

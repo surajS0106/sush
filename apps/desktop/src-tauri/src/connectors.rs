@@ -23,6 +23,24 @@ pub enum ConnectOutcome {
     NeedsAuth { rejected: Option<String> },
 }
 
+/// Plinth's MCP server: the design app on this computer (its catalog entry). It's the one connector
+/// told which thread is calling, so Plinth can name the undo steps and show who's editing.
+const PLINTH_PORT: u16 = 47440;
+
+pub(crate) fn is_plinth(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|u| {
+        matches!(u.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")) && u.port() == Some(PLINTH_PORT)
+    })
+}
+
+/// "Connection refused" from Plinth means it isn't running: say so plainly.
+fn plinth_closed(e: McpError, url: &str) -> AppError {
+    match &e {
+        McpError::Request(r) if r.is_connect() && is_plinth(url) => AppError::NotFound("Plinth isn't open. Open Plinth and try again.".into()),
+        _ => e.into(),
+    }
+}
+
 fn ready(client: &McpClient) -> ConnectOutcome {
     ConnectOutcome::Ready { server_name: client.server_name.clone(), tools: client.tools.clone() }
 }
@@ -48,7 +66,7 @@ pub async fn connector_connect(state: State<'_, AppState>, id: String, server: S
                         .then(|| challenge.reason.unwrap_or_else(|| "the server turned down the saved sign-in".into()));
                     return Ok(ConnectOutcome::NeedsAuth { rejected });
                 }
-                result => result?,
+                result => result.map_err(|e| plinth_closed(e, &remote.url))?,
             }
         }
     };
@@ -57,23 +75,41 @@ pub async fn connector_connect(state: State<'_, AppState>, id: String, server: S
     Ok(outcome)
 }
 
-/// Call a tool on a running connector (agent runs do, see `runs.rs`).
-pub(crate) async fn call(state: &AppState, id: String, tool: String, arguments: Value) -> AppResult<ToolOutput> {
+/// Call a tool on a running connector (agent runs do, see `runs.rs`). `thread` (id and title) goes
+/// along only to Plinth.
+pub(crate) async fn call(state: &AppState, id: String, tool: String, arguments: Value, thread: Option<(String, String)>) -> AppResult<ToolOutput> {
     // Don't hold the map lock across a long tool call.
-    let client = state
+    let (spec, client) = state
         .connectors
         .lock()
         .await
         .get(&id)
-        .map(|(_, c)| c.clone())
+        .map(|(spec, c)| (spec.clone(), c.clone()))
         .ok_or_else(|| AppError::NotFound("connector isn't running; reconnect it in Customize → Connectors".into()))?;
-    match client.call_tool(&tool, arguments).await {
+    let plinth = match &spec {
+        ServerSpec::Http(remote) if is_plinth(&remote.url) => Some(remote.url.clone()),
+        _ => None,
+    };
+    let result = match (&plinth, thread) {
+        (Some(_), Some((thread_id, title))) => {
+            client.call_tool_with_meta(&tool, arguments, serde_json::json!({ "sush/thread": { "id": thread_id, "title": title } })).await
+        }
+        _ => client.call_tool(&tool, arguments).await,
+    };
+    match result {
         // Signed out or revoked mid-session: drop it so the next connect asks to sign in.
         Err(e @ McpError::Unauthorized(_)) => {
             state.connectors.lock().await.remove(&id);
             Err(e.into())
         }
-        result => Ok(result?),
+        Err(e) => {
+            if plinth.is_some() && matches!(&e, McpError::Request(r) if r.is_connect()) {
+                // A closed Plinth leaves a dead client behind; drop it so the next connect starts fresh.
+                state.connectors.lock().await.remove(&id);
+            }
+            Err(plinth_closed(e, plinth.as_deref().unwrap_or("")))
+        }
+        Ok(out) => Ok(out),
     }
 }
 

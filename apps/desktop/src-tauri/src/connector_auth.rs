@@ -157,6 +157,7 @@ pub async fn connector_authorize(
     id: String,
     url: String,
     client_id: Option<String>,
+    assertion: Option<String>,
     on_code: Channel<DeviceCode>,
 ) -> AppResult<()> {
     let cancel = CancellationToken::new();
@@ -164,7 +165,7 @@ pub async fn connector_authorize(
         previous.cancel();
     }
     let result = tokio::select! {
-        r = authorize(&app, &state.http, &id, &url, client_id, &on_code) => r,
+        r = authorize(&app, &state.http, &id, &url, client_id, assertion, &on_code) => r,
         _ = cancel.cancelled() => Err(AppError::Invalid("Sign-in cancelled".into())),
         _ = tokio::time::sleep(SIGN_IN_TIMEOUT) => Err(AppError::Invalid("Sign-in timed out. Try again.".into())),
     };
@@ -188,6 +189,7 @@ async fn authorize(
     id: &str,
     url: &str,
     client_id: Option<String>,
+    assertion: Option<String>,
     on_code: &Channel<DeviceCode>,
 ) -> AppResult<()> {
     let challenge = oauth::challenge(http, url).await?;
@@ -230,7 +232,15 @@ async fn authorize(
 
     let pkce = Pkce::new();
     let state = oauth::random_token();
-    let authorize_url = oauth::authorize_url(&server, &client, &redirect_uri, &pkce, &state)?;
+    let mut authorize_url = oauth::authorize_url(&server, &client, &redirect_uri, &pkce, &state)?;
+    // Plinth skips its pairing prompt when this one-time "same account" proof checks out with
+    // Sush's auth server (apps/server/src/oauth.ts). It goes to Plinth and nowhere else.
+    if let Some(assertion) = assertion.filter(|_| crate::connectors::is_plinth(url)) {
+        if let Ok(mut u) = url::Url::parse(&authorize_url) {
+            u.query_pairs_mut().append_pair("sush_assertion", &assertion);
+            authorize_url = u.into();
+        }
+    }
     app.opener()
         .open_url(authorize_url, None::<&str>)
         .map_err(|e| AppError::Invalid(format!("couldn't open the browser: {e}")))?;

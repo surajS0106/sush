@@ -50,7 +50,7 @@ import { Input } from "@/components/ui/input";
 import { HoverHighlight, MotionHighlight } from "@/components/ui/motion-highlight";
 import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
-import { changePassword, deleteAccount, signOut, updateProfile, useSession } from "@/lib/auth";
+import { changePassword, connectedApps, deleteAccount, disconnectApp, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import type { ProviderView } from "@/lib/tauri";
@@ -524,6 +524,7 @@ function AccountSection() {
           </Button>
         </Setting>
       </Group>
+      <ConnectedAppsGroup />
       <AvatarPicker
         open={pickerOpen}
         onOpenChange={setPickerOpen}
@@ -540,6 +541,48 @@ function AccountSection() {
 }
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Apps linked with "Sign in with Sush" (Plinth), each with Disconnect. Read when the section opens. */
+function ConnectedAppsGroup() {
+  const [apps, setApps] = useState<ConnectedApp[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    connectedApps()
+      .then(setApps)
+      .catch((e) => setError(errorMessage(e)));
+  }, []);
+  const disconnect = async (app: ConnectedApp) => {
+    try {
+      await disconnectApp(app.id);
+      setApps((list) => list?.filter((a) => a.id !== app.id) ?? null);
+      toast.success(`${app.name} disconnected`);
+    } catch (e) {
+      toast.error(`Couldn't disconnect ${app.name}: ${errorMessage(e)}`);
+    }
+  };
+  const when = (ms: number) => new Date(ms).toLocaleDateString(undefined, { dateStyle: "medium" });
+  return (
+    <Group title="Connected apps">
+      {error ? (
+        <p className="py-3 text-sm text-muted-foreground">Couldn't list connected apps: {error}</p>
+      ) : apps?.length === 0 ? (
+        <p className="py-3 text-sm text-muted-foreground">No apps use your Sush account. In Plinth, choose Sign in with Sush in Settings → Account.</p>
+      ) : (
+        apps?.map((app) => (
+          <Setting
+            key={app.id}
+            title={app.name}
+            description={`Linked ${when(app.linkedAt)} · last used ${when(app.lastUsedAt)}${app.devices > 1 ? ` · ${app.devices} devices` : ""}`}
+          >
+            <Button variant="outline" size="sm" onClick={() => void disconnect(app)}>
+              <LogOutIcon /> Disconnect
+            </Button>
+          </Setting>
+        ))
+      )}
+    </Group>
+  );
+}
 
 /**
  * A text field that saves when it loses focus or on Enter. `onSave` returns

@@ -346,6 +346,14 @@ struct Host {
     live: Arc<Live>,
 }
 
+impl Host {
+    /// This run's thread id and title, for a connector that's told who's calling (Plinth).
+    fn thread_label(&self) -> (String, String) {
+        let title = self.live.state.lock().unwrap().thread.title.clone();
+        (self.thread_id.clone(), title)
+    }
+}
+
 #[async_trait]
 impl RunHost for Host {
     async fn stream(&self, provider_id: &str, request: ChatRequest) -> Result<EventStream, String> {
@@ -371,7 +379,7 @@ impl RunHost for Host {
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => Err(STOPPED.into()),
-                    result = connectors::call(&state, connector_id.clone(), tool.clone(), call.input.clone()) => match result {
+                    result = connectors::call(&state, connector_id.clone(), tool.clone(), call.input.clone(), Some(self.thread_label())) => match result {
                         Ok(out) if out.is_error => Err(if out.text.is_empty() { "The tool reported an error.".into() } else { out.text }),
                         Ok(out) => Ok(Value::String(out.text)),
                         Err(e) => Err(e.to_string()),

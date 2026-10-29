@@ -323,6 +323,13 @@ impl McpClient {
         Ok(flatten_result(&result))
     }
 
+    /// `call_tool` with request `_meta` for a server that reads it (Plinth wants to know which thread is
+    /// calling). Only send it to the server it's meant for.
+    pub async fn call_tool_with_meta(&self, name: &str, arguments: Value, meta: Value) -> Result<ToolOutput, McpError> {
+        let result = self.request("tools/call", json!({ "name": name, "arguments": arguments, "_meta": meta }), CALL_TIMEOUT).await?;
+        Ok(flatten_result(&result))
+    }
+
     async fn request(&self, method: &str, params: Value, timeout: Duration) -> Result<Value, McpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
