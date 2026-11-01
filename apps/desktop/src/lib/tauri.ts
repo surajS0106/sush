@@ -155,6 +155,8 @@ export type ThreadMeta = Omit<StoredThread, "messages">;
 export type WorkspaceAccess = "read-only" | "workspace-write";
 /** When file changes need approval; shell commands always do. */
 export type EditApproval = "ask" | "auto-edits";
+/** Where the agent's shell commands run (`sush_core::workspace::Commands`): the OS sandbox, or straight on this computer (each one asks). */
+export type WorkspaceCommands = "sandbox" | "desktop";
 
 /** A folder the user granted for Cowork (`sush_core::workspace::Workspace`). */
 export interface Workspace {
@@ -163,6 +165,7 @@ export interface Workspace {
   root: string;
   access: WorkspaceAccess;
   approval: EditApproval;
+  commands: WorkspaceCommands;
   createdAt: number;
 }
 
@@ -833,8 +836,8 @@ export const api = {
   workspacesList: () => invoke<Workspace[]>("workspaces_list"),
   /** Opens a folder picker (in Rust); null if cancelled. */
   workspaceAdd: () => invoke<Workspace | null>("workspace_add"),
-  workspaceUpdate: (id: string, access: WorkspaceAccess, approval: EditApproval) =>
-    invoke<Workspace>("workspace_update", { id, access, approval }),
+  workspaceUpdate: (id: string, access: WorkspaceAccess, approval: EditApproval, commands: WorkspaceCommands) =>
+    invoke<Workspace>("workspace_update", { id, access, approval, commands }),
   workspaceRemove: (id: string) => invoke<void>("workspace_remove", { id }),
   workspaceTree: (id: string, path: string) => invoke<WorkspaceEntry[]>("workspace_tree", { id, path }),
   turnChanges: (threadId: string) => invoke<TurnChanges[]>("turn_changes", { threadId }),

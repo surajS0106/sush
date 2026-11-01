@@ -1607,7 +1607,7 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
     let turn_ids: HashSet<String> = turns.iter().map(|t| t.turn_id.clone()).collect();
     // Calls waiting for an answer (not ones already running), with who may give it.
     let sandbox = state.sandbox.status().await;
-    let contained = sandbox.available && sandbox.network_blocked;
+    let contained = workspace.as_ref().is_some_and(|w| sush_core::workspace::tools::contained(w, Some(&sandbox)));
     let mut waiting = HashMap::new();
     for (child, messages, _) in &threads {
         for (_, call) in ui::unresolved_calls(messages) {

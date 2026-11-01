@@ -30,6 +30,9 @@ pub struct Workspace {
     pub root: String,
     pub access: Access,
     pub approval: EditApproval,
+    /// Where the agent's shell commands run.
+    #[serde(default)]
+    pub commands: Commands,
     pub created_at: i64,
 }
 
@@ -78,6 +81,35 @@ impl EditApproval {
         match s {
             "ask" => Some(EditApproval::Ask),
             "auto-edits" => Some(EditApproval::AutoEdits),
+            _ => None,
+        }
+    }
+}
+
+/// Where the agent's shell commands run: in the OS sandbox (writes confined to
+/// the folder, no network), or straight on the user's machine, like their own
+/// terminal, so servers can listen and packages install. On the machine every
+/// command asks first.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Commands {
+    #[default]
+    Sandbox,
+    Desktop,
+}
+
+impl Commands {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Commands::Sandbox => "sandbox",
+            Commands::Desktop => "desktop",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "sandbox" => Some(Commands::Sandbox),
+            "desktop" => Some(Commands::Desktop),
             _ => None,
         }
     }

@@ -528,12 +528,12 @@ function WorkspacePart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
           ? () => {
               setApproved(true);
               // Later edits in this folder run without asking; this one goes ahead now.
-              void updateWorkspace(workspace.id, workspace.access, "auto-edits").finally(onApprove);
+              void updateWorkspace(workspace, { approval: "auto-edits" }).finally(onApprove);
             }
           : undefined;
       return (
         <WorkspaceApprovalCard
-          {...workspaceRequest(part.toolName, input, sandbox)}
+          {...workspaceRequest(part.toolName, input, workspace?.commands === "desktop" ? null : sandbox)}
           onAllow={allow}
           onAllowAll={allowAll}
           onDeny={() => onResult({ errorText: DENIED })}
@@ -544,7 +544,7 @@ function WorkspacePart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
 }
 
 /** The approval card's question and preview for a Cowork call. */
-/** How a command will run, for its approval card. */
+/** How a command will run, for its approval card. `sandbox` is null when it won't be used. */
 function commandNote(input: WorkspaceInput, sandbox: SandboxStatus | null): string {
   const where = `In ${input.cwd || "the workspace folder"}. `;
   const why = input.justification ? ` Why: ${input.justification}` : "";

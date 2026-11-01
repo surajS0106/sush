@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 
 use crate::message::{ChatRequest, Part};
 use crate::reports::Report;
-use crate::workspace::{Access, EditApproval, Workspace};
+use crate::workspace::{Access, Commands, EditApproval, Workspace};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -150,6 +150,8 @@ const MIGRATIONS: &[&str] = &[r#"
         detail_json TEXT NOT NULL
     );
     CREATE INDEX share_events_share ON share_events (share_id, seq);
+"#, r#"
+    ALTER TABLE workspaces ADD COLUMN commands TEXT NOT NULL DEFAULT 'sandbox';
 "#];
 
 pub struct Store {
@@ -436,7 +438,7 @@ pub struct Original {
 impl Store {
     pub fn workspaces(&self) -> StoreResult<Vec<Workspace>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, name, root, access, approval, created_at FROM workspaces ORDER BY created_at")?;
+        let mut stmt = conn.prepare("SELECT id, name, root, access, approval, created_at, commands FROM workspaces ORDER BY created_at")?;
         let rows = stmt.query_map([], workspace_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
@@ -444,15 +446,15 @@ impl Store {
     pub fn workspace(&self, id: &str) -> StoreResult<Option<Workspace>> {
         let conn = self.conn.lock().unwrap();
         Ok(conn
-            .query_row("SELECT id, name, root, access, approval, created_at FROM workspaces WHERE id = ?1", [id], workspace_row)
+            .query_row("SELECT id, name, root, access, approval, created_at, commands FROM workspaces WHERE id = ?1", [id], workspace_row)
             .optional()?)
     }
 
     pub fn save_workspace(&self, w: &Workspace) -> StoreResult<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO workspaces (id, name, root, access, approval, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-             ON CONFLICT (id) DO UPDATE SET name = ?2, access = ?4, approval = ?5",
-            params![w.id, w.name, w.root, w.access.as_str(), w.approval.as_str(), w.created_at],
+            "INSERT INTO workspaces (id, name, root, access, approval, created_at, commands) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT (id) DO UPDATE SET name = ?2, access = ?4, approval = ?5, commands = ?7",
+            params![w.id, w.name, w.root, w.access.as_str(), w.approval.as_str(), w.created_at, w.commands.as_str()],
         )?;
         Ok(())
     }
@@ -699,12 +701,14 @@ fn meta_row(r: &rusqlite::Row) -> rusqlite::Result<ThreadMeta> {
 fn workspace_row(r: &rusqlite::Row) -> rusqlite::Result<Workspace> {
     let access: String = r.get(3)?;
     let approval: String = r.get(4)?;
+    let commands: String = r.get(6)?;
     Ok(Workspace {
         id: r.get(0)?,
         name: r.get(1)?,
         root: r.get(2)?,
         access: Access::parse(&access).unwrap_or(Access::ReadOnly),
         approval: EditApproval::parse(&approval).unwrap_or(EditApproval::Ask),
+        commands: Commands::parse(&commands).unwrap_or_default(),
         created_at: r.get(5)?,
     })
 }
@@ -1049,6 +1053,7 @@ mod tests {
             root: "/tmp/proj".into(),
             access: Access::WorkspaceWrite,
             approval: EditApproval::Ask,
+            commands: Commands::Desktop,
             created_at: 1,
         };
         store.save_workspace(&w).unwrap();

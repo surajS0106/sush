@@ -9,6 +9,8 @@ mod dock_icon;
 mod error;
 mod images;
 mod library;
+#[cfg(unix)]
+mod login_env;
 mod paths;
 mod reports;
 mod runs;
@@ -27,6 +29,8 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(unix)]
+    login_env::init();
     paths::init();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

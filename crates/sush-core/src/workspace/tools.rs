@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::git::{self, GitInfo};
 use super::sandbox::{Sandbox, SandboxStatus};
-use super::{shell, Access, EditApproval, Workspace, WorkspaceFs, DEFAULT_READ_LINES};
+use super::{shell, Access, Commands, EditApproval, Workspace, WorkspaceFs, DEFAULT_READ_LINES};
 use crate::agent::run::Approval;
 use crate::message::ToolSpec;
 
@@ -87,7 +87,7 @@ pub fn specs(access: Access, git: bool) -> Vec<ToolSpec> {
             spec(FS_DELETE, "Delete a file (it goes to the trash).",
                 json!({ "type": "object", "properties": { "path": path }, "required": ["path"] })),
             spec(SHELL_RUN, &format!(
-                "Run a {} command in the workspace, e.g. to build or test. It runs in a sandbox that can change files only in the workspace and has no network. Not interactive: no prompts, no editors.",
+                "Run a {} command in the workspace, e.g. to build or test. It runs in a sandbox that can change files only in the workspace and has no network, unless the user set commands to run on their machine. Not interactive: no prompts, no editors.",
                 shell::shell_name()
             ),
                 json!({ "type": "object", "properties": {
@@ -142,15 +142,21 @@ fn flag(input: &Value, key: &str) -> bool {
     input.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// Whether this workspace's commands run in a sandbox that is known to work
+/// and blocks the network, so they can neither change files elsewhere nor
+/// send anything out.
+pub fn contained(ws: &Workspace, sandbox: Option<&SandboxStatus>) -> bool {
+    ws.commands == Commands::Sandbox && sandbox.is_some_and(|s| s.available && s.network_blocked)
+}
+
 /// Whether this call needs the user first. Decided here, not by the UI.
 ///
-/// A shell command runs without asking only when the sandbox is known to work
-/// and blocks the network (so it can neither change files elsewhere nor send
-/// anything out), the command doesn't ask to leave it, and the workspace edits
-/// without asking anyway.
+/// A shell command runs without asking only when it's `contained`, doesn't ask
+/// to leave the sandbox, and the workspace edits without asking anyway; so on
+/// the user's machine every command asks.
 pub fn approval(ws: &Workspace, name: &str, input: &Value, sandbox: Option<&SandboxStatus>) -> Approval {
     if name == SHELL_RUN {
-        let contained = sandbox.is_some_and(|s| s.available && s.network_blocked);
+        let contained = contained(ws, sandbox);
         let escalated = flag(input, "network") || flag(input, "unsandboxed");
         return if contained && !escalated && ws.approval == EditApproval::AutoEdits { Approval::Auto } else { Approval::Ask };
     }
@@ -208,8 +214,9 @@ pub async fn execute(
             .unwrap_or(shell::DEFAULT_TIMEOUT)
             .min(shell::MAX_TIMEOUT);
         let dir = fs.root().join(&cwd);
-        // Sandboxed unless the user approved running without it, or it doesn't work here.
-        let available = sandbox.known_status().is_some_and(|s| s.available);
+        // Sandboxed unless the workspace runs commands on the machine, the user
+        // approved running without it, or it doesn't work here.
+        let available = ws.commands == Commands::Sandbox && sandbox.known_status().is_some_and(|s| s.available);
         let policy = (available && !flag(&input, "unsandboxed")).then(|| sandbox.policy(fs.root(), flag(&input, "network")));
         let output = shell::run(&dir, &command, timeout, cancel, policy.as_ref()).await?;
         let note = if policy.is_some() { "" } else { "\n(ran without the sandbox)" };
@@ -337,7 +344,11 @@ pub fn system_section(ws: &Workspace, fs: &WorkspaceFs, sandbox: &SandboxStatus,
     });
     if ws.access == Access::WorkspaceWrite {
         s.push_str(&format!("shell_run runs a {} command. ", shell::shell_name()));
-        s.push_str(if !sandbox.available {
+        s.push_str(if ws.commands == Commands::Desktop {
+            "The user chose to run commands directly on their machine, not in a sandbox: they have the network and the user's permissions, and the user approves each one, \
+             so leave network and unsandboxed unset. A command that keeps running, such as a dev server, would hold the call until it times out: \
+             start it in the background with its output redirected to a log file so the call returns, then read the log to check it came up. "
+        } else if !sandbox.available {
             "There's no sandbox on this machine, so the user approves each command and it runs with their permissions; keep commands focused on the task. "
         } else if sandbox.network_blocked {
             "Commands run in a sandbox: they can change files only in this folder and have no network. If one needs the network (e.g. to install packages), set network: true; if it must write outside the folder, set unsandboxed: true. Either needs the user's approval, so say why in justification. "
@@ -395,6 +406,7 @@ mod tests {
             root: root.to_string_lossy().into(),
             access,
             approval,
+            commands: Commands::Sandbox,
             created_at: 0,
         };
         (dir, Arc::new(WorkspaceFs::open(&root).unwrap()), ws)
@@ -437,6 +449,11 @@ mod tests {
         // Asking for the network or to leave the sandbox always asks.
         assert_eq!(approval(&auto, SHELL_RUN, &json!({ "command": "npm i", "network": true }), Some(&sealed)), Approval::Ask);
         assert_eq!(approval(&auto, SHELL_RUN, &json!({ "command": "x", "unsandboxed": true }), Some(&sealed)), Approval::Ask);
+        // On the user's machine every command asks, sandbox or not.
+        let desktop = Workspace { commands: Commands::Desktop, ..auto.clone() };
+        assert!(!contained(&desktop, Some(&sealed)));
+        assert_eq!(approval(&desktop, SHELL_RUN, &ls, Some(&sealed)), Approval::Ask);
+        assert_eq!(approval(&desktop, FS_EDIT, &edit, Some(&sealed)), Approval::Auto);
     }
 
     #[tokio::test]
@@ -480,5 +497,7 @@ mod tests {
         let s = system_section(&ws, &fs, &none, None);
         assert!(s.contains("Run `make test`"));
         assert!(s.contains("approves each change"));
+        let desktop = Workspace { commands: Commands::Desktop, ..ws };
+        assert!(system_section(&desktop, &fs, &none, None).contains("directly on their machine"));
     }
 }

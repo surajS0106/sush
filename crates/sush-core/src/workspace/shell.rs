@@ -1,6 +1,7 @@
 //! Shell commands in a workspace. By default they run in the OS sandbox
 //! (`sandbox`), which confines writes to the workspace and (macOS, Linux)
-//! blocks the network; when the sandbox isn't available, or the model asks to
+//! blocks the network; when the sandbox isn't available, the workspace runs
+//! commands on the user's machine (`Commands::Desktop`), or the model asks to
 //! go without it, the command needs the user's approval (see
 //! `tools::approval`). Either way: the working directory is inside the
 //! workspace, credentials Sush knows about aren't in the environment, output

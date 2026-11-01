@@ -12,7 +12,7 @@ use sush_core::agent::ui::new_id;
 use sush_core::store::{Store, TurnChanges};
 use sush_core::workspace::git::{self, BranchStatus, CommitDetail, GitInfo, GitLog};
 use sush_core::workspace::sandbox::SandboxStatus;
-use sush_core::workspace::{Access, EditApproval, Entry, Workspace, WorkspaceFs};
+use sush_core::workspace::{Access, Commands, EditApproval, Entry, Workspace, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
@@ -64,6 +64,7 @@ pub async fn workspace_add(app: AppHandle, state: State<'_, AppState>) -> AppRes
             // Changes are allowed but each one asks first, like Codex's default.
             access: Access::WorkspaceWrite,
             approval: EditApproval::Ask,
+            commands: Commands::Sandbox,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as i64),
@@ -78,12 +79,19 @@ pub async fn workspace_add(app: AppHandle, state: State<'_, AppState>) -> AppRes
 /// Change what the agent may do in a workspace. Applies at once, also to
 /// calls a live run holds for approval.
 #[tauri::command]
-pub async fn workspace_update(state: State<'_, AppState>, id: String, access: Access, approval: EditApproval) -> AppResult<Workspace> {
+pub async fn workspace_update(
+    state: State<'_, AppState>,
+    id: String,
+    access: Access,
+    approval: EditApproval,
+    commands: Commands,
+) -> AppResult<Workspace> {
     let store = state.store.clone();
     let workspace = blocking(move || {
         let mut workspace = store.workspace(&id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))?;
         workspace.access = access;
         workspace.approval = approval;
+        workspace.commands = commands;
         store.save_workspace(&workspace)?;
         Ok(workspace)
     })
@@ -267,6 +275,7 @@ pub async fn worktree_create(app: AppHandle, state: State<'_, AppState>, id: Str
             root: root.to_string_lossy().into_owned(),
             access: parent.access,
             approval: parent.approval,
+            commands: parent.commands,
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as i64),

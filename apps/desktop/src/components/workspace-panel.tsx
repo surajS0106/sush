@@ -36,6 +36,7 @@ import {
   SearchIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
+  ShieldOffIcon,
   SquareTerminalIcon,
   Trash2Icon,
   XIcon,
@@ -67,7 +68,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useBrowserPage } from "@/lib/browser";
-import { api, errorMessage, type Workspace, type WorkspaceEntry } from "@/lib/tauri";
+import { api, errorMessage, type Workspace, type WorkspaceCommands, type WorkspaceEntry } from "@/lib/tauri";
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { createStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
@@ -102,6 +103,11 @@ const MODES: { value: Mode; label: string; hint: string }[] = [
 
 const modeOf = (w: Workspace): Mode => (w.access === "read-only" ? "read-only" : w.approval);
 
+const COMMANDS: { value: WorkspaceCommands; label: string; hint: string }[] = [
+  { value: "sandbox", label: "In the sandbox", hint: "Changes only this folder, no network" },
+  { value: "desktop", label: "On this computer", hint: "Network and your permissions, so servers and installs work; each command asks" },
+];
+
 /** The folder a Cowork session works in, with what Sush may do there. */
 export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
   const workspace = useWorkspace(workspaceId);
@@ -114,9 +120,13 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
     );
   }
   const setMode = (mode: Mode) => {
-    const [access, approval] = mode === "read-only" ? (["read-only", workspace.approval] as const) : (["workspace-write", mode] as const);
-    void updateWorkspace(workspace.id, access, approval).catch((e) => toast.error(errorMessage(e)));
+    const patch = mode === "read-only" ? ({ access: "read-only" } as const) : ({ access: "workspace-write", approval: mode } as const);
+    void updateWorkspace(workspace, patch).catch((e) => toast.error(errorMessage(e)));
   };
+  const setCommands = (commands: WorkspaceCommands) => {
+    void updateWorkspace(workspace, { commands }).catch((e) => toast.error(errorMessage(e)));
+  };
+  const onDesktop = workspace.commands === "desktop";
   const remove = () => {
     if (!window.confirm(`Remove ${workspace.name} from Cowork? Its sessions stay, but Sush won't be able to use its files.`)) return;
     void removeWorkspace(workspace.id).catch((e) => toast.error(errorMessage(e)));
@@ -133,6 +143,9 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
           <FolderOpenIcon className="size-3.5 shrink-0" />
           <span className="truncate">{workspace.name}</span>
           <span className="shrink-0 opacity-70">· {mode.label}</span>
+          {onDesktop && workspace.access !== "read-only" && (
+            <ShieldOffIcon className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" aria-label="Commands run on this computer" />
+          )}
           <ChevronDownIcon className="size-3 shrink-0" />
         </button>
       </DropdownMenuTrigger>
@@ -147,14 +160,32 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
           ))}
         </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Commands run</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={workspace.commands} onValueChange={(v) => setCommands(v as WorkspaceCommands)}>
+          {COMMANDS.map((c) => (
+            <DropdownMenuRadioItem key={c.value} value={c.value} className="flex-col items-start gap-0">
+              <span>{c.label}</span>
+              <span className="text-xs text-muted-foreground">{c.hint}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
         <div className="flex gap-2 px-2 py-1.5 text-xs text-muted-foreground">
-          {sandbox?.available ? (
+          {onDesktop ? (
+            <ShieldOffIcon className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+          ) : sandbox?.available ? (
             <ShieldCheckIcon className="mt-0.5 size-3.5 shrink-0 text-green-600 dark:text-green-400" />
           ) : (
             <ShieldAlertIcon className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
           )}
           <span>
-            {sandbox ? (
+            {onDesktop ? (
+              <>
+                <span className="font-medium text-foreground">Not sandboxed</span>
+                {" · "}
+                Commands run on this computer with your permissions and the network. Each one asks first.
+              </>
+            ) : sandbox ? (
               <>
                 <span className="font-medium text-foreground">
                   {sandbox.available ? `Sandboxed (${sandbox.mechanism})` : "No sandbox"}

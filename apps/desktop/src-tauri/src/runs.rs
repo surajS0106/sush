@@ -170,6 +170,7 @@ impl Runs {
                     continue;
                 }
                 current.approval = workspace.approval;
+                current.commands = workspace.commands;
                 if live.report.is_none() {
                     current.access = workspace.access;
                 }
@@ -473,7 +474,8 @@ impl RunHost for Host {
         // owner's authority because of someone else's message.
         let standing = matches!(tool.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Connector { .. });
         if approval == Approval::Auto && standing && self.app.state::<AppState>().runs.shares.steerable(&self.thread_id) {
-            let contained = self.live.cowork.as_ref().is_some_and(|c| c.sandbox.available && c.sandbox.network_blocked);
+            let contained =
+                self.live.cowork.as_ref().is_some_and(|c| ws_tools::contained(&c.workspace.lock().unwrap(), Some(&c.sandbox)));
             if share_policy::floored(share_policy::classify(&call.name, &call.input, contained)) {
                 return Approval::Ask;
             }

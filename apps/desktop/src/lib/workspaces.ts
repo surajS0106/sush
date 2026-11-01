@@ -18,6 +18,7 @@ import {
   type TurnChanges,
   type Workspace,
   type WorkspaceAccess,
+  type WorkspaceCommands,
 } from "@/lib/tauri";
 import { broadcast, onBroadcast } from "@/lib/windows";
 
@@ -67,8 +68,14 @@ export async function addWorkspace(): Promise<Workspace | null> {
   return added;
 }
 
-export async function updateWorkspace(id: string, access: WorkspaceAccess, approval: EditApproval) {
-  const updated = await api.workspaceUpdate(id, access, approval);
+/** Change some of a workspace's settings; the rest stay as they are. */
+export async function updateWorkspace(
+  workspace: Workspace,
+  patch: Partial<{ access: WorkspaceAccess; approval: EditApproval; commands: WorkspaceCommands }>,
+) {
+  const current = workspaces.get().find((w) => w.id === workspace.id) ?? workspace;
+  const { id, access, approval, commands } = { ...current, ...patch };
+  const updated = await api.workspaceUpdate(id, access, approval, commands);
   changed(workspaces.get().map((w) => (w.id === id ? updated : w)));
   return updated;
 }
