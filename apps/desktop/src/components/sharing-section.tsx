@@ -9,8 +9,8 @@ import { ShareAccountSetup } from "@/components/share-dialog";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
-import { refreshShareAccount, safeImage, setUsageCounts, signOutOfRelay, useShareAccount, useUsageCounts } from "@/lib/share";
-import { errorMessage } from "@/lib/tauri";
+import { refreshShareAccount, safeImage, setLocalRelayOpen, setUsageCounts, signOutOfRelay, useShareAccount, useUsageCounts } from "@/lib/share";
+import { api, errorMessage, type LocalRelay } from "@/lib/tauri";
 
 export function SharingSection() {
   const account = useShareAccount();
@@ -56,6 +56,7 @@ export function SharingSection() {
           </div>
         )}
       </Group>
+      <LocalRelayGroup />
       <Group title="What guests see">
         <p className="py-3 text-sm text-muted-foreground">
           The messages, tool calls, and the files a session changes, as it runs. Never your keys, secret files (.env, keys),
@@ -75,5 +76,58 @@ export function SharingSection() {
         </Setting>
       </Group>
     </Page>
+  );
+}
+
+/**
+ * The installed app's own relay: off the network by default; one switch lets
+ * others on the same Wi-Fi join sessions shared from here (and share through it).
+ */
+function LocalRelayGroup() {
+  const [relay, setRelay] = useState<LocalRelay | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void api.localRelay().then(setRelay, () => {});
+  }, []);
+  if (!relay?.available) return null;
+  const toggle = async (open: boolean) => {
+    setBusy(true);
+    try {
+      setRelay(await setLocalRelayOpen(open));
+      await refreshShareAccount();
+    } catch (e) {
+      toast.error(open ? "Couldn’t open the relay" : "Couldn’t close the relay", { description: errorMessage(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Group title="This computer as the relay">
+      <Setting
+        title="Let others on this Wi-Fi join"
+        description="Sush’s built-in relay opens to your local network, so people on the same Wi-Fi can join the sessions you share, from the app or a browser. Shares stay end-to-end encrypted. Your Mac may ask whether Sush may accept incoming connections: allow it."
+      >
+        <Switch checked={relay.lan} disabled={busy} onCheckedChange={(on) => void toggle(on)} aria-label="Let others on this Wi-Fi join" />
+      </Setting>
+      {relay.lan && relay.url && (
+        <Setting title="Address for others" description="Guests use this as their relay. Invite links already carry it.">
+          <div className="flex items-center gap-2">
+            <code className="text-sm">{relay.url}</code>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                void navigator.clipboard.writeText(relay.url!).then(
+                  () => toast.success("Copied"),
+                  () => toast.error("Couldn’t copy"),
+                )
+              }
+            >
+              Copy
+            </Button>
+          </div>
+        </Setting>
+      )}
+    </Group>
   );
 }

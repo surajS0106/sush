@@ -62,6 +62,10 @@ jobs:
           bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
             --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
 
+      # The browser viewer for invite links, bundled for the auth server to serve (tauri.release.conf.json).
+      - name: Build browser viewer
+        run: bun run build:viewer
+
       # macOS 26 swaps the app icon with the system appearance; needs Xcode's actool.
       - name: Compile adaptive macOS icon
         if: runner.os == 'macOS'

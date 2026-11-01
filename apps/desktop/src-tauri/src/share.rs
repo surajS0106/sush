@@ -238,6 +238,59 @@ pub fn share_lan_address() -> Option<String> {
     (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
 }
 
+/// The relay built into this app: the bundled auth server, in release builds.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalRelay {
+    /// False in development, where the relay is `bun run dev:relay`.
+    available: bool,
+    /// Others on the local network can reach it.
+    lan: bool,
+    /// Its address for them, while `lan`.
+    url: Option<String>,
+}
+
+#[cfg(not(debug_assertions))]
+fn local_relay_view(app: &AppHandle) -> LocalRelay {
+    let lan = app.state::<crate::auth_server::AuthServer>().lan();
+    let url = share_lan_address()
+        .filter(|_| lan)
+        .map(|ip| if ip.contains(':') { format!("[{ip}]") } else { ip })
+        .map(|host| format!("http://{host}:{}", crate::auth_server::AUTH_PORT));
+    LocalRelay { available: true, lan, url }
+}
+
+#[tauri::command]
+pub fn local_relay(app: AppHandle) -> LocalRelay {
+    #[cfg(not(debug_assertions))]
+    let relay = local_relay_view(&app);
+    #[cfg(debug_assertions)]
+    let relay = {
+        let _ = app;
+        LocalRelay { available: false, lan: false, url: None }
+    };
+    relay
+}
+
+/// Let others on the local network reach this app's relay (or stop): restarts it.
+#[tauri::command]
+pub async fn local_relay_set_lan(app: AppHandle, on: bool) -> AppResult<LocalRelay> {
+    #[cfg(not(debug_assertions))]
+    let relay = {
+        let handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || handle.state::<crate::auth_server::AuthServer>().set_lan(on))
+            .await
+            .map_err(|e| AppError::Invalid(e.to_string()))??;
+        Ok(local_relay_view(&app))
+    };
+    #[cfg(debug_assertions)]
+    let relay = {
+        let _ = (app, on);
+        Err(AppError::Invalid("In development, run `bun run dev:relay` for a relay others can reach.".into()))
+    };
+    relay
+}
+
 #[tauri::command]
 pub async fn share_account_sign_out(state: State<'_, AppState>) -> AppResult<()> {
     if let Some(account) = load_account()? {

@@ -4,6 +4,11 @@ Last updated: 2026-10-25 (phases 3 and 4)
 
 ## What changed
 
+### 2026-11-01 (the installed app as the relay)
+- Settings → Sharing has **This computer as the relay**: a "Let others on this Wi-Fi join" switch (off by default) and, once on, the address others use with a Copy button. Turning it on restarts the built-in server open to the network and moves sharing onto it with the app's own account; turning it off moves sharing back.
+- Starting a share while the relay is this computer only: the warning in the share dialog offers the same thing in one click ("Let others on this Wi-Fi join") instead of developer instructions. Development builds keep pointing at `bun run dev:relay`.
+- Invite links opened in a browser work from the installed app too: the browser viewer ships inside it.
+
 ### 2026-11-01 (room, history, share button, guest panel)
 - A **Share** pill (radio mark) sits in the header beside the session tabs for any session that isn't shared yet; once it is, the "Live" presence pill takes its place. The session menu's "Share live…" stays.
 - The comments sheet is now the **Room**: Chat, People and Activity tabs. Everyone in the session chats, viewers too, in bubbles (yours on the right, tinted brand). People lists the host first, then who's online, each with a green or grey dot and "Host", "Driving", "Can suggest" or "Watching".

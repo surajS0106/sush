@@ -39,6 +39,7 @@ import {
   setHideBrowser,
   setAwayPolicy,
   setDelegation,
+  setLocalRelayOpen,
   setRole,
   shareWithAppAccount,
   signInToRelay,
@@ -47,7 +48,7 @@ import {
   useShareAccount,
 } from "@/lib/share";
 import { getConversations } from "@/lib/store";
-import { errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
+import { api, errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 /**
@@ -155,29 +156,36 @@ function sameOrigin(a: string, b: string) {
 
 /**
  * Before sharing through a relay at localhost: only this computer can reach it, so say so and
- * offer this machine's network address instead. The app's own session works there when the relay
- * is the server the app signs in to; otherwise sign in to it.
+ * offer a way out. The installed app opens its built-in relay to the network in one click (and
+ * shares through it with this app's own session); in development the relay is `bun run
+ * dev:relay`, at this machine's network address. A relay elsewhere needs signing in to.
  */
 function LoopbackRelayWarning({ relayUrl }: { relayUrl: string }) {
   const [lan, setLan] = useState<string | null>(null);
+  const [builtIn, setBuiltIn] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ours = sameOrigin(relayUrl, DEFAULT_RELAY);
   useEffect(() => {
     void lanRelayFor(relayUrl).then(setLan);
+    void api.localRelay().then((r) => setBuiltIn(r.available), () => {});
   }, [relayUrl]);
-  const switchToLan = async () => {
-    if (!lan) return;
-    if (!sameOrigin(relayUrl, DEFAULT_RELAY)) return setSigningIn(true);
+  const run = async (work: () => Promise<unknown>, failure: string) => {
     setBusy(true);
     setError(null);
     try {
-      await shareWithAppAccount(lan);
-    } catch {
-      setError(`Couldn’t reach ${lan}. Restart the server with “bun run dev:relay” instead of “bun run dev”, then try again.`);
+      await work();
+    } catch (e) {
+      setError(`${failure} ${errorMessage(e)}`);
     } finally {
       setBusy(false);
     }
+  };
+  const switchToLan = () => {
+    if (!lan) return;
+    if (!ours) return setSigningIn(true);
+    void run(() => shareWithAppAccount(lan), `Couldn’t reach ${lan}. Restart the server with “bun run dev:relay” instead of “bun run dev”, then try again.`);
   };
   if (signingIn && lan) return <ShareAccountSetup relay={lan} onCancel={() => setSigningIn(false)} onReady={() => setSigningIn(false)} />;
   return (
@@ -185,14 +193,34 @@ function LoopbackRelayWarning({ relayUrl }: { relayUrl: string }) {
       <p className="flex items-center gap-2 font-medium">
         <TriangleAlertIcon className="size-4 text-amber-600 dark:text-amber-400" /> Only this computer can open the link
       </p>
-      <p className="mt-1 text-muted-foreground">
-        The relay is set to <code>{relayUrl}</code>, which means this computer. To share with someone on your Wi-Fi, run{" "}
-        <code>bun run dev:relay</code> here, then use {lan ? <code>{lan}</code> : "this computer’s network address"}.
-      </p>
-      {lan && (
-        <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void switchToLan()}>
-          Use {lan}
-        </Button>
+      {builtIn && ours ? (
+        <>
+          <p className="mt-1 text-muted-foreground">
+            Sush’s relay listens only to this computer for now. Let others on your Wi-Fi join and it opens to this network
+            {lan ? (
+              <>
+                {" "}
+                at <code>{lan}</code>
+              </>
+            ) : null}
+            . Your Mac may ask whether Sush may accept incoming connections: allow it.
+          </p>
+          <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void run(() => setLocalRelayOpen(true), "Couldn’t open the relay.")}>
+            Let others on this Wi-Fi join
+          </Button>
+        </>
+      ) : (
+        <>
+          <p className="mt-1 text-muted-foreground">
+            The relay is set to <code>{relayUrl}</code>, which means this computer. To share with someone on your Wi-Fi, run{" "}
+            <code>bun run dev:relay</code> here, then use {lan ? <code>{lan}</code> : "this computer’s network address"}.
+          </p>
+          {lan && (
+            <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={switchToLan}>
+              Use {lan}
+            </Button>
+          )}
+        </>
       )}
       {error && <p className="mt-2 text-destructive">{error}</p>}
     </div>

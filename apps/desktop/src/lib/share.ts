@@ -28,6 +28,7 @@ import {
   type ShareMember,
   type ShareRole,
   type ShareView,
+  type LocalRelay,
   type ShareBrowserPage,
   type GitLog,
   type CommitDetail,
@@ -519,6 +520,28 @@ export async function lanRelayFor(relayUrl: string): Promise<string | null> {
   const u = new URL(relayUrl);
   u.hostname = ip.includes(":") ? `[${ip}]` : ip;
   return u.origin;
+}
+
+/**
+ * Let others on this Wi-Fi join through the relay built into this app (or stop),
+ * and share through it with this app's own account: the same server, so the
+ * same session works at its network address.
+ */
+export async function setLocalRelayOpen(open: boolean): Promise<LocalRelay> {
+  const relay = await api.localRelaySetLan(open);
+  const current = account.get()?.relayUrl;
+  if (open && relay.url) await shareWithAppAccount(relay.url);
+  else if (!open && current && current !== DEFAULT_RELAY && sameServer(current)) await shareWithAppAccount(DEFAULT_RELAY);
+  return relay;
+}
+
+/** Whether a relay address is this app's own relay, at whatever address (same port as the app's server). */
+function sameServer(relayUrl: string) {
+  try {
+    return new URL(relayUrl).port === new URL(DEFAULT_RELAY).port;
+  } catch {
+    return false;
+  }
 }
 
 export async function signOutOfRelay() {

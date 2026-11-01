@@ -54,7 +54,11 @@ pub fn run() {
             #[cfg(not(debug_assertions))]
             {
                 let server = auth_server::AuthServer::default();
-                server.start(&app.path().app_data_dir()?, &app.path().app_log_dir()?)?;
+                server.start(auth_server::Dirs {
+                    data: app.path().app_data_dir()?,
+                    log: app.path().app_log_dir()?,
+                    viewer: app.path().resource_dir().ok().map(|d| d.join("viewer")),
+                })?;
                 app.manage(server);
             }
             Ok(())
@@ -86,6 +90,8 @@ pub fn run() {
             share::share_account_use_token,
             share::share_account_sign_out,
             share::share_lan_address,
+            share::local_relay,
+            share::local_relay_set_lan,
             share::share_start,
             share::share_invite_create,
             share::share_invites_list,

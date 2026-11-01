@@ -615,6 +615,15 @@ export interface ShareView {
   limits: { maxGuests: number; roles: Exclude<ShareRole, "owner">[] };
 }
 
+/** The relay built into the installed app (its auth server). Not `available` in development. */
+export interface LocalRelay {
+  available: boolean;
+  /** Others on the local network can reach it. */
+  lan: boolean;
+  /** Its address for them, while `lan`. */
+  url: string | null;
+}
+
 export interface ShareAccount {
   relayUrl: string | null;
   user: { id: string; name: string; email: string; image?: string | null } | null;
@@ -756,6 +765,9 @@ export const api = {
   shareAccountSignOut: () => invoke<void>("share_account_sign_out"),
   /** This machine's address on the local network (null when there's none), for a relay others on the Wi-Fi can reach. */
   shareLanAddress: () => invoke<string | null>("share_lan_address"),
+  localRelay: () => invoke<LocalRelay>("local_relay"),
+  /** Restarts the app's relay, open to the local network or not. */
+  localRelaySetLan: (on: boolean) => invoke<LocalRelay>("local_relay_set_lan", { on }),
   /** `e2e` (default on): the relay sees only ciphertext. `metrics`: report anonymous counts to the relay when it ends. */
   shareStart: (thread: ThreadMeta, e2e = true, metrics = false) => invoke<ShareView>("share_start", { thread, e2e, metrics }),
   shareInviteCreate: (threadId: string, roleCap: "viewer" | "collaborator" = "viewer", ttlHours?: number, maxUses?: number) =>
