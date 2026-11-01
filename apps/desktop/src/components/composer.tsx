@@ -52,7 +52,7 @@ const TEXT_BOX = cn("px-4 pt-3.5 pb-2 text-base md:text-sm", "text-[15px]");
  * nothing yet, or between steps) is thinking, an unfinished tool call is
  * tools, and text is writing.
  */
-function replyStage(status: ChatStatus, messages: SushUIMessage[]): MascotStage {
+export function replyStage(status: ChatStatus, messages: SushUIMessage[]): MascotStage {
   const last = messages[messages.length - 1];
   if (status === "submitted" || last?.role !== "assistant") return "thinking";
   const part = last.parts.findLast((p) => p.type !== "step-start" && !(p.type === "text" && !p.text));

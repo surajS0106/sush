@@ -83,6 +83,25 @@ pub struct SharePolicy {
     /// What happens to the run while the owner is away.
     #[serde(default)]
     pub away: AwayPolicy,
+    /// Keep the page open in the owner's built-in browser to themselves. Off by
+    /// default: guests follow the page (its address, never its content).
+    #[serde(default)]
+    pub hide_browser: bool,
+}
+
+/// The page open in the host's built-in browser, as guests follow it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserPage {
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub loading: bool,
+    /// The host's address on its local network, so a guest can reach a page
+    /// the host serves itself (`localhost` there means the guest's own machine).
+    #[serde(default)]
+    pub lan_host: Option<String>,
 }
 
 /// Kinds of approval the owner hands to the driver. All off by default: the
@@ -149,6 +168,8 @@ pub struct Room {
     pub requests: Vec<ControlRequest>,
     /// Since when the owner is away, if they are.
     pub owner_away: Option<i64>,
+    /// The page in the owner's browser, unless they keep it to themselves.
+    pub browser: Option<BrowserPage>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -217,13 +238,15 @@ pub enum HostMsg {
         requests: Vec<ControlRequest>,
         #[serde(default)]
         owner_away: Option<i64>,
+        #[serde(default)]
+        browser: Option<BrowserPage>,
     },
     Op { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, op: Op },
     Status { epoch: u64, seq: u64, #[serde(default)] child: Option<String>, status: RunStatus, error: Option<String> },
     ToolRunning { epoch: u64, seq: u64, call_id: String, running: bool },
     FilesChanged { epoch: u64, seq: u64, turns: Vec<TurnFiles> },
-    /// Who is in the share and what they may do, who asks for control, and
-    /// whether the owner is away, after any change.
+    /// Who is in the share and what they may do, who asks for control,
+    /// whether the owner is away, and the page in the owner's browser, after any change.
     Members {
         epoch: u64,
         seq: u64,
@@ -233,6 +256,8 @@ pub enum HostMsg {
         requests: Vec<ControlRequest>,
         #[serde(default)]
         owner_away: Option<i64>,
+        #[serde(default)]
+        browser: Option<BrowserPage>,
     },
     /// The title or the like changed.
     Thread { epoch: u64, seq: u64, thread: ThreadInfo },
@@ -317,6 +342,15 @@ pub enum Intent {
     },
     /// An attachment the shared thread shows.
     GetBlob { sha: String },
+    /// The folder's git history, for the graph (a Cowork session).
+    GitLog {
+        #[serde(default)]
+        limit: usize,
+        #[serde(default)]
+        all: bool,
+    },
+    /// One commit's message and changed files.
+    GitCommit { sha: String },
     /// A message for the run: a driver's joins it, a collaborator's waits as a suggestion.
     Steer {
         #[serde(default)]
@@ -458,6 +492,8 @@ mod tests {
             (json!({ "kind": "accept-control", "userId": "u" }), Intent::AcceptControl { user_id: "u".into() }),
             (json!({ "kind": "release-control" }), Intent::ReleaseControl),
             (json!({ "kind": "undo", "turnId": "t", "path": "a.rs" }), Intent::Undo { turn_id: "t".into(), path: Some("a.rs".into()) }),
+            (json!({ "kind": "git-log", "limit": 200, "all": true }), Intent::GitLog { limit: 200, all: true }),
+            (json!({ "kind": "git-commit", "sha": "abc1234" }), Intent::GitCommit { sha: "abc1234".into() }),
         ];
         for (wire, intent) in intents {
             let text = Body::encode(GuestMsg::Intent { id: "i".into(), intent: intent.clone() });
@@ -478,6 +514,19 @@ mod tests {
         assert!(policy.browse_files && !policy.delegation.edits && suggestions.is_empty());
         assert!(requests.is_empty() && owner_away.is_none() && !policy.delegation.undo);
         assert_eq!(policy.away.mode, AwayMode::Pause);
+        assert!(!policy.hide_browser);
+    }
+
+    #[test]
+    fn members_carry_the_hosts_browser_page_and_older_ones_still_read() {
+        let page = BrowserPage { url: "http://localhost:3001/".into(), title: "App".into(), loading: false, lan_host: Some("192.168.1.11".into()) };
+        let msg = HostMsg::Members { epoch: 1, seq: 3, members: vec![], policy: SharePolicy::default(), requests: vec![], owner_away: None, browser: Some(page.clone()) };
+        let value: Value = serde_json::from_str(&Body::encode(msg.clone())).unwrap();
+        assert_eq!(value["browser"], json!({ "url": "http://localhost:3001/", "title": "App", "loading": false, "lanHost": "192.168.1.11" }));
+        assert_eq!(decode::<HostMsg>(&value.to_string()).unwrap(), msg);
+        let old = json!({ "v": 1, "type": "members", "epoch": 1, "seq": 3, "members": [], "policy": {} });
+        let HostMsg::Members { browser, .. } = decode::<HostMsg>(&old.to_string()).unwrap() else { panic!() };
+        assert!(browser.is_none());
     }
 
     #[test]

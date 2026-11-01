@@ -276,7 +276,7 @@ export function AppSidebar({
           </SidebarGroup>
           <EditSidebarDialog open={editingNav} onOpenChange={setEditingNav} />
 
-          <SharedGroup activeId={page === "shared" ? sharedId : null} onOpen={onOpenShared} />
+          <SharedGroup activeId={page === "shared" ? sharedId : null} onOpen={onOpenShared} onOpenSession={onSelect} />
 
           <SidebarGroup>
             <div className="flex items-center pr-1">

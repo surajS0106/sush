@@ -327,8 +327,8 @@ function Comments({ session, comments, members }: { session: Session; comments: 
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const role = members.find((m) => m.userId === session.get().me)?.role ?? "viewer";
-  const canComment = role === "collaborator" || role === "driver";
+  // Everyone in the share chats in the room, viewers too.
+  const canComment = members.some((m) => m.userId === session.get().me);
   const send = async (e: FormEvent) => {
     e.preventDefault();
     if (!text.trim()) return;
@@ -345,7 +345,7 @@ function Comments({ session, comments, members }: { session: Session; comments: 
   };
   return (
     <aside className="comments">
-      <h2>Comments</h2>
+      <h2>Room chat</h2>
       {comments.length === 0 && <p className="muted small">Nothing yet.</p>}
       {comments.map((c) => (
         <div key={c.id} className="comment">
@@ -360,14 +360,14 @@ function Comments({ session, comments, members }: { session: Session; comments: 
       ))}
       {canComment ? (
         <form onSubmit={(e) => void send(e)}>
-          <textarea placeholder="Comment (never sent to the agent)" maxLength={4096} value={text} onChange={(e) => setText(e.target.value)} />
+          <textarea placeholder="Message the room (never sent to the agent)" maxLength={4096} value={text} onChange={(e) => setText(e.target.value)} />
           <button type="submit" className="primary" disabled={busy || !text.trim()}>
-            Comment
+            Send
           </button>
           {error && <p className="error small">{error}</p>}
         </form>
       ) : (
-        <p className="muted small">You’re watching. The host can let you comment.</p>
+        <p className="muted small">You can chat once the host lets you in.</p>
       )}
     </aside>
   );

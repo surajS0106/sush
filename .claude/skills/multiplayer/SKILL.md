@@ -73,6 +73,14 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
 - Relay: `share/plans.ts` (`SUSH_PLANS`, `SUSH_TEAM_EMAILS`), `share/metrics.ts` (`SUSH_ADMIN_EMAILS`), the viewer at `/join/:id` (`SUSH_VIEWER_DIR`).
 - Still design only: cross-machine hand-off (plan §6, phase 3).
 
+## Room, history, git graph, browser (2026-11-01, see the plan's table)
+
+- Everyone chats (`comment` has no role check beyond membership). UI: `RoomView` in `share-activity.tsx` (header sheet, and a tab of the guest's `SharedPanel` in `shared-files-panel.tsx`).
+- Intents `git-log` / `git-commit` (Cowork shares, any member); `GitGraph` in `git-graph-pane.tsx` takes a `GitSource`.
+- `BrowserPage` rides in `members` and the snapshot (serde default). `browser.rs` `update_page` calls `Shares::browser_changed`; `SharePolicy.hide_browser` turns it off. A new field in `Room`/`Members`/`Snapshot` means updating `outbox.rs` and `replica.rs` destructurings too.
+- History: `sush.shareHistory` in `lib/share.ts` (leader writes), invite links in the keyring (`secrets::share_link_*`, `share_rejoin`, `share_forget`).
+- Hand checks: a viewer posts in the room (desktop and browser viewer); a guest's Graph tab shows the host's history and a commit's files (no email); the host opens `http://localhost:3001` in the built-in browser and the guest's Browser tab opens it at the host's network address; leave a share, then "rejoin" from History; the guest panel drags wider and remembers it.
+
 ## Testing with two instances on one Windows machine
 
 1. `bun run dev:server`, then `bun run dev:app` for instance A.

@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use super::{audit, Comment, ControlRequest, HostMsg, Member, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
+use super::{audit, BrowserPage, Comment, ControlRequest, HostMsg, Member, SharePolicy, Suggestion, ThreadInfo, ThreadState, TurnFiles};
 use crate::agent::ui::{self, Op};
 use crate::agent::RunStatus;
 
@@ -60,6 +60,8 @@ pub struct Replica {
     pub requests: Vec<ControlRequest>,
     /// Since when the host is away, if they are.
     pub owner_away: Option<i64>,
+    /// The page in the host's browser, if they show it.
+    pub browser: Option<BrowserPage>,
 }
 
 impl Replica {
@@ -73,11 +75,12 @@ impl Replica {
     }
 
     pub fn apply(&mut self, msg: HostMsg) -> Applied {
-        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy, suggestions, comments, audit, requests, owner_away } =
+        if let HostMsg::Snapshot { epoch, seq, thread, threads, running, turns, members, policy, suggestions, comments, audit, requests, owner_away, browser } =
             msg
         {
             self.requests = requests;
             self.owner_away = owner_away;
+            self.browser = browser;
             self.suggestions = suggestions;
             self.comments = comments;
             self.audit = audit;
@@ -133,11 +136,12 @@ impl Replica {
                 self.turns = turns;
                 Change::FilesChanged
             }
-            HostMsg::Members { members, policy, requests, owner_away, .. } => {
+            HostMsg::Members { members, policy, requests, owner_away, browser, .. } => {
                 self.members = members;
                 self.policy = policy;
                 self.requests = requests;
                 self.owner_away = owner_away;
+                self.browser = browser;
                 Change::Members
             }
             HostMsg::Thread { thread, .. } => {

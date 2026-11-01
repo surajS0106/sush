@@ -2,7 +2,8 @@
 // editor's source control graph, with each branch, remote and tag where it
 // points. Picking a commit shows its message and the files it changed (open
 // in the viewer on click). Re-reads git whenever files change, which includes
-// each command finishing in the terminal.
+// each command finishing in the terminal. A guest of a shared Cowork session
+// sees the host's folder the same way, read through the share (`GitSource`).
 
 import { CloudIcon, CopyIcon, GitBranchIcon, GitGraphIcon, RefreshCwIcon, TagIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -16,7 +17,7 @@ import { ago, edgePath, laneX, layout, rowY, type GraphGeometry, type GraphNode 
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type CommitDetail, type GitLog, type GitRef, type LogCommit, type Workspace } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { openFile, togglePanel, useGitLog } from "@/lib/workspaces";
+import { openFile, togglePanel, useFilesVersion, useGitLog } from "@/lib/workspaces";
 
 const G: GraphGeometry = { row: 26, lane: 14, pad: 10 };
 /** Commits read at a time; "Load more" reads this many more. */
@@ -49,12 +50,42 @@ function buildRows(log: GitLog): Row[] {
   return rows;
 }
 
+/** Where the graph reads git: a workspace here, or a shared session's folder on its host. */
+export interface GitSource {
+  /** Names the folder; keys the history and commit caches. */
+  key: string;
+  log: (limit: number, all: boolean) => Promise<GitLog>;
+  commit: (sha: string) => Promise<CommitDetail>;
+  /** Changes when the folder's files may have, so the history is read again. */
+  version: unknown;
+  /** Opens a changed file in the viewer; without it, files are listed only. */
+  openFile?: (path: string) => void;
+  onClose: () => void;
+}
+
+/** The graph of a workspace in this app. */
 export function GitGraphPane({ workspace, className }: { workspace: Workspace; className?: string }) {
+  const version = useFilesVersion(workspace.id);
+  const source = useMemo<GitSource>(
+    () => ({
+      key: workspace.id,
+      log: (limit, all) => api.workspaceGitLog(workspace.id, limit, all),
+      commit: (sha) => api.workspaceGitCommit(workspace.id, sha),
+      version,
+      openFile: (path) => openFile(workspace.id, path),
+      onClose: () => togglePanel("graph", false),
+    }),
+    [workspace.id, version],
+  );
+  return <GitGraph source={source} className={className} />;
+}
+
+export function GitGraph({ source, className }: { source: GitSource; className?: string }) {
   const all = useSyncExternalStore(showAll.subscribe, showAll.get);
   const [limit, setLimit] = useState(PAGE);
   const [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
-  const { log, error, loading } = useGitLog(workspace.id, limit, all, refresh);
+  const { log, error, loading } = useGitLog(source.key, source.log, source.version, limit, all, refresh);
 
   const rows = useMemo(() => (log ? buildRows(log) : []), [log]);
   const { cols, edges, lanes } = useMemo(() => layout(rows), [rows]);
@@ -115,7 +146,7 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
           </TooltipTrigger>
           <TooltipContent>Refresh</TooltipContent>
         </Tooltip>
-        <Button variant="ghost" size="icon" className="size-7" aria-label="Close graph" onClick={() => togglePanel("graph", false)}>
+        <Button variant="ghost" size="icon" className="size-7" aria-label="Close graph" onClick={source.onClose}>
           <XIcon className="size-4" />
         </Button>
       </div>
@@ -177,7 +208,7 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
                     you={log.you}
                     selected={selected === r.key}
                     onSelect={() => setSelected((s) => (s === r.key ? null : r.key))}
-                    onPrefetch={() => void loadCommit(workspace.id, r.key)}
+                    onPrefetch={() => void loadCommit(source, r.key)}
                   />
                 ) : (
                   <div key={r.key} className="flex items-center gap-2 pr-3 text-muted-foreground" style={{ height: G.row }}>
@@ -202,7 +233,7 @@ export function GitGraphPane({ workspace, className }: { workspace: Workspace; c
             )}
           </div>
           {selectedCommit && (
-            <CommitDetails key={selectedCommit.sha} workspace={workspace} commit={selectedCommit} onClose={() => setSelected(null)} />
+            <CommitDetails key={selectedCommit.sha} source={source} commit={selectedCommit} onClose={() => setSelected(null)} />
           )}
         </>
       )}
@@ -333,11 +364,11 @@ function RefChips({ refs, color }: { refs: GitRef[]; color: string }) {
 const details = new Map<string, Promise<CommitDetail>>();
 const loaded = new Map<string, CommitDetail>();
 
-function loadCommit(workspaceId: string, sha: string): Promise<CommitDetail> {
-  const key = `${workspaceId}:${sha}`;
+function loadCommit(source: GitSource, sha: string): Promise<CommitDetail> {
+  const key = `${source.key}:${sha}`;
   let p = details.get(key);
   if (!p) {
-    p = api.workspaceGitCommit(workspaceId, sha);
+    p = source.commit(sha);
     details.set(key, p);
     p.then(
       (d) => loaded.set(key, d),
@@ -352,22 +383,22 @@ const PREFETCH_MS = 120;
 /** A read that finishes sooner than this never shows the loader. */
 const LOADER_DELAY_MS = 150;
 
-function CommitDetails({ workspace, commit, onClose }: { workspace: Workspace; commit: LogCommit; onClose: () => void }) {
-  const [detail, setDetail] = useState(() => loaded.get(`${workspace.id}:${commit.sha}`) ?? null);
+function CommitDetails({ source, commit, onClose }: { source: GitSource; commit: LogCommit; onClose: () => void }) {
+  const [detail, setDetail] = useState(() => loaded.get(`${source.key}:${commit.sha}`) ?? null);
   const [error, setError] = useState<string | null>(null);
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     if (detail) return;
     let live = true;
     const timer = setTimeout(() => live && setSlow(true), LOADER_DELAY_MS);
-    loadCommit(workspace.id, commit.sha)
+    loadCommit(source, commit.sha)
       .then((d) => live && setDetail(d))
       .catch((e) => live && setError(errorMessage(e)));
     return () => {
       live = false;
       clearTimeout(timer);
     };
-  }, [workspace.id, commit.sha, detail]);
+  }, [source, commit.sha, detail]);
 
   // The row already has the subject, author, time and SHA: show them at once.
   const [subject, ...rest] = (detail?.message ?? commit.subject).split("\n");
@@ -385,7 +416,7 @@ function CommitDetails({ workspace, commit, onClose }: { workspace: Workspace; c
           </Button>
         </div>
         <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          <span title={detail?.email}>{detail?.author ?? commit.author}</span>·
+          <span title={detail?.email || undefined}>{detail?.author ?? commit.author}</span>·
           <span>{new Date(commit.time * 1000).toLocaleString()}</span>·
           <button
             type="button"
@@ -418,14 +449,15 @@ function CommitDetails({ workspace, commit, onClose }: { workspace: Workspace; c
           <ul className="-mx-1.5">
             {detail.files.map((f) => {
               const slash = f.path.lastIndexOf("/");
-              const local = f.local;
+              const local = source.openFile ? f.local : null;
+              const open = source.openFile;
               return (
                 <li key={f.path}>
                   <button
                     type="button"
                     disabled={!local}
-                    onClick={() => local && openFile(workspace.id, local)}
-                    title={local ? `Open ${local}` : `${f.path} is outside this folder`}
+                    onClick={() => local && open?.(local)}
+                    title={local ? `Open ${local}` : open ? `${f.path} is outside this folder` : f.path}
                     className="flex w-full items-center gap-2 rounded-md px-1.5 py-0.5 text-left enabled:hover:bg-muted/60 disabled:cursor-default"
                   >
                     <span className="min-w-0 flex-1 truncate">

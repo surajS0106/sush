@@ -7,7 +7,7 @@
 // ending the share. Hand-offs themselves are in `control-banner.tsx`. The work
 // itself is `lib/share.ts`.
 
-import { CheckIcon, CopyIcon, LinkIcon, LockIcon, LockOpenIcon, RadioIcon, ShieldCheckIcon, UserXIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, LockIcon, LockOpenIcon, RadioIcon, ShieldCheckIcon, TriangleAlertIcon, UserXIcon } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 
@@ -26,13 +26,17 @@ import {
   DEFAULT_RELAY,
   endShare,
   isLive,
+  isLoopbackRelay,
   kick,
+  lanRelayFor,
   listInvites,
+  originOf,
   othersCanSteer,
   refreshShareAccount,
   revokeInvite,
   safeImage,
   setBrowseFiles,
+  setHideBrowser,
   setAwayPolicy,
   setDelegation,
   setRole,
@@ -46,10 +50,14 @@ import { getConversations } from "@/lib/store";
 import { errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
-/** The relay account: who's signed in, or the form to set it up. `onReady` once someone is. */
-export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
+/**
+ * The form to set up the relay account: sign in to a relay, or create an account on it. Signing in
+ * replaces whatever relay was set up before. `relay` starts it at that address (an invite link's
+ * relay, this machine's network address); `onReady` once signed in here; `onCancel` adds a Cancel.
+ */
+export function ShareAccountSetup({ relay: start, onReady, onCancel }: { relay?: string; onReady?: () => void; onCancel?: () => void }) {
   const account = useShareAccount();
-  const [relay, setRelay] = useState(account?.relayUrl ?? DEFAULT_RELAY);
+  const [relay, setRelay] = useState(start ?? account?.relayUrl ?? DEFAULT_RELAY);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -61,19 +69,23 @@ export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
     void refreshShareAccount().catch((e) => setError(errorMessage(e)));
   }, []);
   useEffect(() => {
-    if (account?.relayUrl) setRelay(account.relayUrl);
-  }, [account?.relayUrl]);
-  useEffect(() => {
-    if (account?.user) onReady?.();
-  }, [account?.user, onReady]);
+    if (start) setRelay(start);
+    else if (account?.relayUrl) setRelay(account.relayUrl);
+  }, [start, account?.relayUrl]);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
     setError(null);
     try {
       await work();
+      onReady?.();
     } catch (e) {
-      setError(errorMessage(e));
+      const message = errorMessage(e);
+      setError(
+        message.startsWith("Couldn't reach the relay")
+          ? `Couldn’t reach ${originOf(relay) ?? "the relay"}. Check the address, and that the relay runs on that computer with “bun run dev:relay” (others on the Wi-Fi can’t reach “bun run dev”).`
+          : message,
+      );
     } finally {
       setBusy(false);
     }
@@ -91,8 +103,9 @@ export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
         <Label htmlFor="share-relay">Relay</Label>
         <Input id="share-relay" value={relay} onChange={(e) => setRelay(e.target.value)} placeholder="http://192.168.1.20:3000" spellCheck={false} />
         <p className="text-xs text-muted-foreground">
-          The server shared sessions pass through. On your Wi-Fi, one of you runs <code>bun run dev:relay</code> and everyone
-          uses that machine’s address.
+          The server shared sessions pass through. Everyone in a session uses the same one. On your Wi-Fi, one of you runs{" "}
+          <code>bun run dev:relay</code> and everyone uses that machine’s network address (like http://192.168.1.20:3000), not
+          localhost.
         </p>
       </div>
       {sameServer && (
@@ -123,19 +136,67 @@ export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
           <Button type="button" variant="ghost" size="sm" onClick={() => setCreating((c) => !c)}>
             {creating ? "I have an account" : "New to this relay?"}
           </Button>
+          {onCancel && (
+            <Button type="button" variant="ghost" size="sm" className="ml-auto" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
         </div>
       </form>
-      {(error || account?.error) && <p className="text-sm text-destructive">{error ?? account?.error}</p>}
+      {(error || (!onCancel && account?.error)) && <p className="text-sm text-destructive">{error ?? account?.error}</p>}
     </div>
   );
 }
 
 function sameOrigin(a: string, b: string) {
-  try {
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
+  const origin = originOf(a);
+  return origin !== null && origin === originOf(b);
+}
+
+/**
+ * Before sharing through a relay at localhost: only this computer can reach it, so say so and
+ * offer this machine's network address instead. The app's own session works there when the relay
+ * is the server the app signs in to; otherwise sign in to it.
+ */
+function LoopbackRelayWarning({ relayUrl }: { relayUrl: string }) {
+  const [lan, setLan] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void lanRelayFor(relayUrl).then(setLan);
+  }, [relayUrl]);
+  const switchToLan = async () => {
+    if (!lan) return;
+    if (!sameOrigin(relayUrl, DEFAULT_RELAY)) return setSigningIn(true);
+    setBusy(true);
+    setError(null);
+    try {
+      await shareWithAppAccount(lan);
+    } catch {
+      setError(`Couldn’t reach ${lan}. Restart the server with “bun run dev:relay” instead of “bun run dev”, then try again.`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (signingIn && lan) return <ShareAccountSetup relay={lan} onCancel={() => setSigningIn(false)} onReady={() => setSigningIn(false)} />;
+  return (
+    <div className="w-full max-w-sm rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-left text-sm">
+      <p className="flex items-center gap-2 font-medium">
+        <TriangleAlertIcon className="size-4 text-amber-600 dark:text-amber-400" /> Only this computer can open the link
+      </p>
+      <p className="mt-1 text-muted-foreground">
+        The relay is set to <code>{relayUrl}</code>, which means this computer. To share with someone on your Wi-Fi, run{" "}
+        <code>bun run dev:relay</code> here, then use {lan ? <code>{lan}</code> : "this computer’s network address"}.
+      </p>
+      {lan && (
+        <Button size="sm" variant="outline" className="mt-2" disabled={busy} onClick={() => void switchToLan()}>
+          Use {lan}
+        </Button>
+      )}
+      {error && <p className="mt-2 text-destructive">{error}</p>}
+    </div>
+  );
 }
 
 export function ShareDialog({ threadId, onClose }: { threadId: string | null; onClose: () => void }) {
@@ -159,7 +220,7 @@ export function ShareDialog({ threadId, onClose }: { threadId: string | null; on
           (live ? (
             <Sharing share={share} />
           ) : account?.user ? (
-            <Start threadId={threadId} ended={share?.ended ?? null} />
+            <Start threadId={threadId} ended={share?.ended ?? null} relayUrl={account.relayUrl} />
           ) : (
             <ShareAccountSetup />
           ))}
@@ -168,7 +229,7 @@ export function ShareDialog({ threadId, onClose }: { threadId: string | null; on
   );
 }
 
-function Start({ threadId, ended }: { threadId: string; ended: string | null }) {
+function Start({ threadId, ended, relayUrl }: { threadId: string; ended: string | null; relayUrl: string | null }) {
   const [busy, setBusy] = useState(false);
   const [e2e, setE2e] = useState(true);
   const start = async () => {
@@ -187,6 +248,7 @@ function Start({ threadId, ended }: { threadId: string; ended: string | null }) 
     <div className="flex flex-col items-center gap-4 py-2 text-center">
       <Mascot busy={false} draft="" still />
       {ended && <p className="text-sm text-muted-foreground">{ended}</p>}
+      {relayUrl && isLoopbackRelay(relayUrl) && <LoopbackRelayWarning relayUrl={relayUrl} />}
       <ul className="max-w-sm text-left text-sm text-muted-foreground [&>li]:mt-1 [&>li]:list-disc [&>li]:ml-4">
         <li>Secret files (.env, keys), your memory and past chats are hidden from them.</li>
         <li>You let each person in, give them a role, and can remove them or end the share at any time.</li>
@@ -438,6 +500,20 @@ function Sharing({ share }: { share: ShareView }) {
           />
         </label>
       )}
+
+      <label className="flex items-start justify-between gap-4">
+        <span>
+          <span className="block text-sm font-medium">Let them follow your browser</span>
+          <span className="block text-xs text-muted-foreground">
+            They see which page your built-in browser shows and open it in their own. A page you serve yourself (localhost)
+            opens at this computer’s network address.
+          </span>
+        </span>
+        <Switch
+          checked={!share.policy.hideBrowser}
+          onCheckedChange={(on) => act(() => setHideBrowser(share, !on), "Couldn’t change that")}
+        />
+      </label>
 
       {invites && invites.some((i) => !i.revoked && i.expiresAt > Date.now()) && (
         <section className="flex flex-col gap-1.5">

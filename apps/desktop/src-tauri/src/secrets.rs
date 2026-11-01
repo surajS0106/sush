@@ -139,6 +139,24 @@ pub fn share_account_delete() -> AppResult<()> {
     remove(SHARE_ACCOUNT)
 }
 
+/// The invite link a joined share came from (its token and key are after the `#`),
+/// so the share can be joined again from the history without pasting it (`share.rs`).
+fn share_link_name(share_id: &str) -> String {
+    format!("share:link:{share_id}")
+}
+
+pub fn share_link_get(share_id: &str) -> AppResult<Option<String>> {
+    read(&share_link_name(share_id))
+}
+
+pub fn share_link_set(share_id: &str, link: &str) -> AppResult<()> {
+    write(&share_link_name(share_id), link)
+}
+
+pub fn share_link_delete(share_id: &str) -> AppResult<()> {
+    remove(&share_link_name(share_id))
+}
+
 // Connector credentials can outgrow one Windows credential (2560 bytes,
 // stored as UTF-16), so they're split into parts; the first entry holds the
 // part count.

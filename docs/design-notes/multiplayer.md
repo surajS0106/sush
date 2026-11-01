@@ -4,6 +4,15 @@ Last updated: 2026-10-25 (phases 3 and 4)
 
 ## What changed
 
+### 2026-11-01 (room, history, share button, guest panel)
+- A **Share** pill (radio mark) sits in the header beside the session tabs for any session that isn't shared yet; once it is, the "Live" presence pill takes its place. The session menu's "Share live…" stays.
+- The comments sheet is now the **Room**: Chat, People and Activity tabs. Everyone in the session chats, viewers too, in bubbles (yours on the right, tinted brand). People lists the host first, then who's online, each with a green or grey dot and "Host", "Driving", "Can suggest" or "Watching".
+- A guest's side panel (`SharedPanel` in `components/shared-files-panel.tsx`) resizes from its left edge like the Cowork panel and has Room, Files, Graph and Browser tabs (Room and Browser in a chat session). Graph is the owner's git graph, read through the share. Browser follows the host's built-in browser in the guest's own, with a line saying which page the host is on and a Follow switch to browse on your own.
+- Sushi stands on a guest's composer (or the watching bar) and acts out the host's run, as on the owner's.
+- The sidebar group is now **Shared**: joined sessions, sessions you're sharing ("sharing"), then a **History** of past ones (hosted ones open the session; joined ones say "rejoin" or "ended"), five at a time with "Show all", each removable.
+- The share dialog has "Let them follow your browser", on by default.
+- Relay setup: the join dialog takes the link first and, when it uses another relay, signs in to that one right there; Settings → Sharing has **Change** beside the address; starting a share on a `localhost` relay warns that only this computer can open the link and offers this computer's network address.
+
 ### 2026-10-25 (phase 4: encryption, browser viewer, counts, plans)
 - **Encryption.** The share dialog's start screen has an **End-to-end encrypt** switch (lock icon), on by default; its bullet says the key is in the link, so links should be shared privately (or, when off, that the relay can see what's shared). While sharing, the status line ends with "Encrypted" (lock) or "Not encrypted" (open lock) before the end time. Settings → Sharing explains it in "What guests see".
 - **Usage counts.** Settings → Sharing has a "Usage counts" group with one switch, off by default: "Report anonymous counts to the relay", saying exactly what's counted and that nothing from the session is.
@@ -49,6 +58,8 @@ In phase 2 the composer comes back for guests who may write, but deliberately pl
 Phase 3 puts who drives in one line above the composer, because that's the question everyone in the room has ("who's got it?") and the place they look before typing. Asking, accepting, passing and taking back are all one click from there; the owner never has to open a dialog to get the wheel back. Stepping away is a button rather than an idle timer: it's an explicit act of handing over accountability, and its default (pause) is the one that can't surprise anyone.
 
 Phase 4's browser viewer is deliberately plainer than the app: text is rendered as text, tool cards are simple disclosures, and there's no composer for the agent at all, so the page is safe to open from a link and can't act. Encryption is on by default and shown as a small lock rather than a big badge: it should be unremarkable, and only "Not encrypted" should catch the eye.
+
+The room exists because people in a shared session want to talk about the work without talking to the agent; making viewers wait for a role just to say "looks good" was friction with no safety gain, since chat never reaches the model. History keeps what a person would want to find again (what, with whom, when) and a way back in, but not the host's conversation: that stays on the host's machine, as the plan promised. Following the browser shares an address rather than pixels, so guests get a real page they can scroll, and a dev server on the host's machine just works over the Wi-Fi.
 
 ## What makes it stand out
 

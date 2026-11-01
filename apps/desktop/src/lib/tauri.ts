@@ -480,6 +480,17 @@ export interface SharePolicy {
   delegation: ShareDelegation;
   /** What happens to the run while the owner is away. */
   away: ShareAwayPolicy;
+  /** Keep the page in the owner's browser to themselves (guests follow it otherwise). */
+  hideBrowser?: boolean;
+}
+
+/** The page open in the host's built-in browser, as guests follow it. */
+export interface ShareBrowserPage {
+  url: string;
+  title: string;
+  loading: boolean;
+  /** The host's address on its local network, for pages the host serves itself. */
+  lanHost: string | null;
 }
 
 /** `pause` (the default): the run finishes its step and pauses, and the owner drives again.
@@ -598,6 +609,8 @@ export interface ShareView {
   ownerAway: number | null;
   /** Whether the relay sees only ciphertext (end-to-end encrypted). */
   e2e: boolean;
+  /** The page in the host's browser, unless the owner hides it. */
+  browser: ShareBrowserPage | null;
   /** What the relay's plan lets the owner do (the host's view; guests see the defaults). */
   limits: { maxGuests: number; roles: Exclude<ShareRole, "owner">[] };
 }
@@ -640,6 +653,8 @@ export type ShareIntent =
   | { kind: "get-file"; path: string }
   | { kind: "list-dir"; path: string }
   | { kind: "get-blob"; sha: string }
+  | { kind: "git-log"; limit: number; all: boolean }
+  | { kind: "git-commit"; sha: string }
   | { kind: "steer"; text: string; images: ShareImage[] }
   | { kind: "suggestion-accept"; id: string; text?: string | null }
   | { kind: "suggestion-drop"; id: string }
@@ -739,6 +754,8 @@ export const api = {
   /** Share through the server this app signs in to, with that session. */
   shareAccountUseToken: (relayUrl: string, token: string) => invoke<ShareAccount>("share_account_use_token", { relayUrl, token }),
   shareAccountSignOut: () => invoke<void>("share_account_sign_out"),
+  /** This machine's address on the local network (null when there's none), for a relay others on the Wi-Fi can reach. */
+  shareLanAddress: () => invoke<string | null>("share_lan_address"),
   /** `e2e` (default on): the relay sees only ciphertext. `metrics`: report anonymous counts to the relay when it ends. */
   shareStart: (thread: ThreadMeta, e2e = true, metrics = false) => invoke<ShareView>("share_start", { thread, e2e, metrics }),
   shareInviteCreate: (threadId: string, roleCap: "viewer" | "collaborator" = "viewer", ttlHours?: number, maxUses?: number) =>
@@ -769,6 +786,10 @@ export const api = {
   /** Join from an invite link; the share shows as its `threadId`. */
   shareJoin: (link: string) => invoke<ShareView>("share_join", { link }),
   shareLeave: (threadId: string) => invoke<void>("share_leave", { threadId }),
+  /** Join again with the invite link kept (in the keyring) when it was first joined. */
+  shareRejoin: (shareId: string) => invoke<ShareView>("share_rejoin", { shareId }),
+  /** Forget a joined share's kept invite link. */
+  shareForget: (shareId: string) => invoke<void>("share_forget", { shareId }),
   /** Ask a joined share's host for something; the host checks it first. */
   shareRequest: <T>(threadId: string, intent: ShareIntent) => invoke<T>("share_request", { threadId, intent }),
   sharesState: () => invoke<SharesState>("shares_state"),

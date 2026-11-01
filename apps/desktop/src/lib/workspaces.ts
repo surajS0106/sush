@@ -2,7 +2,7 @@
 // (`workspaces.rs`); this keeps a copy for the UI and tracks file changes so
 // the file tree and the undo buttons refresh.
 
-import { createContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { createContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
 import {
@@ -185,33 +185,39 @@ export function useBranchStatus(
   return result;
 }
 
-/** The last history read per workspace and view, shown at once when the graph reopens. */
+/** The last history read per folder (`source`) and view, shown at once when the graph reopens. */
 const lastLogs = new Map<string, GitLog>();
 
 /**
- * Up to `limit` commits of the workspace's history (every branch when `all`),
- * read again as files change and when `refresh` does. Starts from the last
- * one read, if any, while the fresh one loads.
+ * Up to `limit` commits of a folder's history (every branch when `all`), read
+ * with `read`: a workspace here, or a shared session's folder on its host.
+ * `source` names the folder (it keys the last reads); it's read again when
+ * `version` (its files changed) or `refresh` does. Starts from the last one
+ * read, if any, while the fresh one loads.
  */
 export function useGitLog(
-  workspaceId: string,
+  source: string,
+  read: (limit: number, all: boolean) => Promise<GitLog>,
+  version: unknown,
   limit: number,
   all: boolean,
   refresh?: unknown,
 ): { log: GitLog | null; error: string | null; loading: boolean } {
-  const version = useFilesVersion(workspaceId);
-  const key = `${workspaceId}:${all}`;
+  const key = `${source}:${all}`;
   const [result, setResult] = useState<{ log: GitLog | null; error: string | null; loading: boolean }>(() => ({
     log: lastLogs.get(key) ?? null,
     error: null,
     loading: true,
   }));
+  // The latest `read`, so a new closure each render doesn't read again.
+  const readRef = useRef(read);
+  readRef.current = read;
   useEffect(() => {
     let live = true;
-    // Another workspace's history never stands in for this one's.
-    setResult((r) => ({ log: lastLogs.get(key) ?? (r.log && lastLogs.get(`${workspaceId}:${!all}`) === r.log ? r.log : null), error: r.error, loading: true }));
-    api
-      .workspaceGitLog(workspaceId, limit, all)
+    // Another folder's history never stands in for this one's.
+    setResult((r) => ({ log: lastLogs.get(key) ?? (r.log && lastLogs.get(`${source}:${!all}`) === r.log ? r.log : null), error: r.error, loading: true }));
+    readRef
+      .current(limit, all)
       .then((log) => {
         lastLogs.set(key, log);
         if (live) setResult({ log, error: null, loading: false });
@@ -220,7 +226,7 @@ export function useGitLog(
     return () => {
       live = false;
     };
-  }, [key, workspaceId, limit, all, version, refresh]);
+  }, [key, source, limit, all, version, refresh]);
   return result;
 }
 

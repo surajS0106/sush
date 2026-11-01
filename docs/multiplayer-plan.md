@@ -58,6 +58,16 @@ host's machine. Guests get replicated ops and frames, and they send *intents*.
 The host checks each intent against the sender's role and then carries it out
 through the code paths the app already uses.
 
+### Room, history, git graph and browser (2026-11-01)
+
+| Question | Choice |
+|---|---|
+| Room | The comments became the session's room: a chat for **everyone in the share, viewers included** (`policy::authorize` no longer checks the role for `comment`), people with their roles and online state, and the activity log. One `RoomView` (`share-activity.tsx`) in the header's sheet and in a guest's side panel; the browser viewer lets viewers post too. Still never sent to the model. |
+| History | List and rejoin, never transcripts: `lib/share.ts` keeps `sush.shareHistory` (title, host, people, when, ended) for shares hosted or joined, written by the leader window. A joined share's invite link (token and key) is kept in the keyring (`secrets::share_link_*`) when it's joined, so `share_rejoin` joins again without the link reaching the webview; removing an entry calls `share_forget`. |
+| Git graph | Intents `git-log {limit, all}` and `git-commit {sha}` for any member of a Cowork share (not gated on `browseFiles`: subjects, authors and file names, never contents). The host runs the owner's `git::log` / `git::commit_detail`, then clears `you`, drops the author's email and leaves out secret-looking paths. `GitGraph` takes a `GitSource`, so the guest's graph is the owner's. |
+| Browser | Guests follow the host's built-in browser: the page (`BrowserPage {url, title, loading, lanHost}`) travels in the `members` message and the snapshot (`browser`, serde default, so older apps ignore it), sent on each page change (`Shares::browser_changed`). The guest opens it in their own built-in browser, with `localhost` swapped for the host's network address (`share_lan_address`). The owner turns it off with "Let them follow your browser" (`SharePolicy.hideBrowser`). Only the address is shared, never the page's content or cookies. |
+| Guest panel | Resizable like the Cowork panel (the same `PANEL` limits and saved width), with Room / Files / Graph / Browser tabs; chat sessions get Room and Browser. |
+
 ---
 
 ## 0. What the code gives us, and what it doesn't
@@ -215,7 +225,7 @@ Peer = { peerId, userId, name, image /* data: URL or built-in avatar id only */,
 | watch, presence | ✓ | ✓ | ✓ | ✓ |
 | get diff / touched files | ✓ | ✓ | ✓ | ✓ |
 | browse files | ✓ | if `policy.browseFiles` | if `policy.browseFiles` | if `policy.browseFiles` |
-| comment | ✓ | ✓ | ✓ | – |
+| comment (the room's chat) | ✓ | ✓ | ✓ | ✓ |
 | steer | ✓ | ✓ (direct) | → suggestion queue | – |
 | accept / edit / drop a suggestion | ✓ | ✓ | – | – |
 | Send now, stop, resume | ✓ | ✓ | – | – |
@@ -244,7 +254,7 @@ Every intent first goes through `policy::authorize(ctx, sender, intent)`. `ctx` 
 | `stop` (2) | driver | `Runs::stop` |
 | `resume` (2) | driver; the last reply is `paused` | `run_start(RunAction::Resume, config)` |
 | `respond {callId, decision, answer?}` (2) | the call is unresolved in `LiveState.messages`; the sender may answer its `ApprovalClass` (§3.4); `decision` is `approve`/`deny` only, and `answer` is allowed only for `ask_user` (validated against the card's options). A guest never sends a raw `ToolResponse`, so it can't make up a tool result. | `run_start(RunAction::Respond{ Approve \| Error{"Denied by <name>"} \| Output{answer} })`, carrying `by: Author` (§3.5) |
-| `comment {text, messageId?}` (2) | collaborator or above; ≤ 4 KB | host appends to `share_events` and rebroadcasts. Not in the thread, never sent to the model. |
+| `comment {text, messageId?}` (2) | any member (viewers since 2026-11-01); ≤ 4 KB | host appends to `share_events` and rebroadcasts. Not in the thread, never sent to the model. |
 | `undo {turnId, path?}` (3) | owner, or driver with `delegation.undo` | `undo_turn` body |
 | `request-control` (3) | collaborator or viewer | `control` state machine → owner/driver sees "Shruti asks for control" |
 | `accept-control-request {userId}` / `pass-control {userId}` (3) | current driver | `control::pass`; the old driver becomes a collaborator; `members` message |

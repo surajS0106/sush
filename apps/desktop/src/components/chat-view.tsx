@@ -29,7 +29,7 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-e
 import { ActivityGroup, groupParts } from "@/components/activity-group";
 import { BranchCard, BranchChip, latestBranchCall } from "@/components/branch-card";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
-import { Composer } from "@/components/composer";
+import { Composer, replyStage } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
 import { AgentTeam, SubagentReport, withTeams } from "@/components/subagents";
@@ -41,7 +41,7 @@ import { DeckCard, SlidesPanel } from "@/components/slides-panel";
 import { UsageHeatmap } from "@/components/usage-heatmap";
 import { CoworkPanel } from "@/components/workspace-panel";
 import { Mascot } from "@/components/mascot";
-import { SharedFilesPanel } from "@/components/shared-files-panel";
+import { SharedPanel } from "@/components/shared-files-panel";
 import { GuestComposer, WatchingBar } from "@/components/shared-sessions";
 import { SuggestionQueue } from "@/components/suggestion-queue";
 import { UserAvatar } from "@/components/user-avatar";
@@ -174,8 +174,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     <SlidesPanel threadId={id} deck={openDeck} busy={busy} />
   ) : workspace ? (
     <CoworkPanel workspace={workspace} changed={changedPaths} />
-  ) : watching && cowork ? (
-    <SharedFilesPanel share={watching} changed={changedPaths} />
+  ) : watching ? (
+    <SharedPanel share={watching} changed={changedPaths} />
   ) : null;
   const hideChat = !!openDeck && !!deckPanel?.expanded;
 
@@ -257,11 +257,11 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // In someone's shared session, a driver or collaborator writes to the host;
   // a viewer sees whose session it is instead.
   const composer = watching ? (
-    canWrite(watching.role) && watching.status === "live" ? (
-      <GuestComposer share={watching} status={runStatus} />
-    ) : (
-      <WatchingBar share={watching} />
-    )
+    // Sushi stands on a guest's composer too, acting out the host's run.
+    <div className="relative">
+      <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft="" className="absolute right-10 bottom-full z-10 -mb-px" />
+      {canWrite(watching.role) && watching.status === "live" ? <GuestComposer share={watching} status={runStatus} /> : <WatchingBar share={watching} />}
+    </div>
   ) : (
     <div className={cn(incognito && "[&_[data-slot=input-group]]:border-dashed [&_[data-slot=input-group]]:border-foreground/30")}>
       <Composer
@@ -280,20 +280,22 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
 
   if (messages.length === 0 && watching) {
     return (
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
-          <Mascot busy={watching.status === "live"} draft="" still />
-          <h1 className="text-xl font-medium tracking-tight">{watching.thread.title || "Shared session"}</h1>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            {watching.status === "live"
-              ? `Nothing here yet. ${watching.thread.hostName}’s messages and the agent’s work appear as they happen.`
-              : watching.status === "lobby"
-                ? `${watching.thread.hostName} lets you in once they see you’re here.`
-                : "Connecting…"}
-          </p>
+      <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 text-center">
+            <img src="/sush-mark.png" alt="" className="size-10" />
+            <h1 className="text-xl font-medium tracking-tight">{watching.thread.title || "Shared session"}</h1>
+            <p className="max-w-sm text-sm text-muted-foreground">
+              {watching.status === "live"
+                ? `Nothing here yet. ${watching.thread.hostName}’s messages and the agent’s work appear as they happen.`
+                : watching.status === "lobby"
+                  ? `${watching.thread.hostName} lets you in once they see you’re here.`
+                  : "Connecting…"}
+            </p>
+          </div>
+          <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">{composer}</div>
         </div>
-        <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">{composer}</div>
-      </div>
+      </WorkspaceFrame>
     );
   }
 

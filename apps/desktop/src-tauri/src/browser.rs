@@ -106,6 +106,16 @@ fn may_open(url: &Url) -> bool {
     }
 }
 
+/// A page worth following: none while the browser is blank.
+fn shared_page(page: &Page) -> Option<sush_core::share::BrowserPage> {
+    (!page.url.is_empty() && page.url != "about:blank").then(|| sush_core::share::BrowserPage {
+        url: page.url.clone(),
+        title: page.title.clone(),
+        loading: page.loading,
+        lan_host: crate::share::share_lan_address(),
+    })
+}
+
 impl Browser {
     /// Page changes go to every window; a reveal only to the window the browser is in
     /// (else "main", as labels sort), so panes in several windows don't fight over it.
@@ -155,13 +165,20 @@ impl Browser {
         }
     }
 
-    fn update_page(&self, change: impl FnOnce(&mut Page)) {
+    fn update_page(&self, app: &AppHandle, change: impl FnOnce(&mut Page)) {
         let page = {
             let mut page = self.page.lock().unwrap();
             change(&mut page);
             page.clone()
         };
+        // Guests of a shared session follow the page (`share.rs`).
+        app.state::<crate::state::AppState>().runs.shares.browser_changed(shared_page(&page));
         self.emit(BrowserEvent::Page(page));
+    }
+
+    /// The page open now, as guests of a shared session follow it.
+    pub fn shared(&self) -> Option<sush_core::share::BrowserPage> {
+        shared_page(&self.page.lock().unwrap())
     }
 
     fn current(&self) -> Option<Webview<Wry>> {
@@ -221,12 +238,12 @@ impl Browser {
                     l.loading = loading;
                 });
                 let url = payload.url().to_string();
-                browser.update_page(|p| {
+                browser.update_page(webview.app_handle(), |p| {
                     p.url = url;
                     p.loading = loading;
                 });
             })
-            .on_document_title_changed(|webview, title| webview.state::<Browser>().update_page(|p| p.title = title));
+            .on_document_title_changed(|webview, title| webview.state::<Browser>().update_page(webview.app_handle(), |p| p.title = title));
         let bounds = self.view.lock().unwrap().unwrap_or(Bounds { x: 0.0, y: 0.0, width: 1.0, height: 1.0 });
         // `add_child` waits for the main thread, so not from an async worker.
         let webview = tauri::async_runtime::spawn_blocking(move || {
@@ -259,13 +276,13 @@ impl Browser {
         core::decode(&raw)
     }
 
-    async fn snapshot(&self, offset: usize) -> Result<Value, String> {
+    async fn snapshot(&self, app: &AppHandle, offset: usize) -> Result<Value, String> {
         let page = self.run(Action::Snapshot).await?;
         let text = core::page_text(&page, offset);
         let get = |k: &str| page.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
         // Pages can change their address without loading (history.pushState).
         let (url, title) = (get("url"), get("title"));
-        self.update_page(|p| {
+        self.update_page(app, |p| {
             p.url = url;
             p.title = title;
         });
@@ -327,23 +344,23 @@ impl Browser {
                     self.open(app, url).await?;
                     self.wait_loaded(before, Duration::from_secs(30)).await;
                 }
-                self.snapshot(0).await
+                self.snapshot(app, 0).await
             }
             core::BROWSER_READ => {
                 let offset = input.get("offset").and_then(Value::as_u64).unwrap_or(0) as usize;
-                self.snapshot(offset).await
+                self.snapshot(app, offset).await
             }
             core::BROWSER_CLICK => {
                 self.run(Action::Click { reference: reference()? }).await?;
                 self.settle(before).await;
-                self.snapshot(0).await
+                self.snapshot(app, 0).await
             }
             core::BROWSER_TYPE => {
                 let text = input.get("text").and_then(Value::as_str).ok_or("text is required.")?;
                 let submit = input.get("submit").and_then(Value::as_bool).unwrap_or(false);
                 self.run(Action::Type { reference: reference()?, text, submit }).await?;
                 self.settle(before).await;
-                self.snapshot(0).await
+                self.snapshot(app, 0).await
             }
             other => Err(format!("Unknown browser tool {other}.")),
         }

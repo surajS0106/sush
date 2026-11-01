@@ -1,7 +1,7 @@
 // Settings → Sharing: the relay shared sessions go through, and the account
 // on it. The token stays in the OS keyring, held by Rust (`share.rs`).
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Group, Page, Setting } from "@/components/settings-layout";
@@ -19,13 +19,23 @@ export function SharingSection() {
   }, []);
   const user = account?.user;
   const counts = useUsageCounts();
+  const [changing, setChanging] = useState(false);
   return (
     <Page>
       <Group title="Relay">
-        {user ? (
+        {changing ? (
+          <div className="max-w-md py-3">
+            <ShareAccountSetup relay={account?.relayUrl ?? undefined} onReady={() => setChanging(false)} onCancel={() => setChanging(false)} />
+          </div>
+        ) : user ? (
           <>
             <Setting title="Address" description="Where shared sessions pass through. Everyone in a session uses the same one.">
-              <code className="text-sm">{account?.relayUrl}</code>
+              <div className="flex items-center gap-3">
+                <code className="text-sm">{account?.relayUrl}</code>
+                <Button variant="outline" size="sm" onClick={() => setChanging(true)}>
+                  Change
+                </Button>
+              </div>
             </Setting>
             <Setting title={user.name || user.email} description={user.email}>
               <div className="flex items-center gap-3">

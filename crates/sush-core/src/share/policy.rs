@@ -8,7 +8,8 @@
 //!
 //! A driver steers the run, stops and resumes it, and answers the approvals
 //! the owner delegated ([`may_answer`]). A collaborator's message waits as a
-//! suggestion for the driver to accept. Viewers only watch.
+//! suggestion for the driver to accept. Viewers watch. Everyone chats in the
+//! room (comments, never sent to the model) and reads the folder's git history.
 //!
 //! While anyone but the owner can steer, the owner's standing permissions
 //! (edits without asking, sandboxed commands, "Always allow" connectors,
@@ -28,6 +29,8 @@ use crate::workspace::tools as ws;
 pub const MAX_TEXT: usize = 16 * 1024;
 /// A comment, at most.
 pub const MAX_COMMENT: usize = 4 * 1024;
+/// Commits one read of the history returns, at most.
+pub const MAX_LOG: usize = 2000;
 /// Images on one message, at most.
 pub const MAX_IMAGES: usize = 3;
 /// One image, decoded, at most.
@@ -178,6 +181,23 @@ pub fn authorize(ctx: &Ctx, intent: Intent) -> Result<Allowed, String> {
             }
             Intent::GetBlob { sha }
         }
+        // Subjects, authors and file names, like the branch card the thread already shows;
+        // never file contents. Secret-looking paths and emails are left out when it's carried out.
+        Intent::GitLog { limit, all } => {
+            if !ctx.cowork {
+                return Err("This session has no folder.".into());
+            }
+            Intent::GitLog { limit: limit.clamp(1, MAX_LOG), all }
+        }
+        Intent::GitCommit { sha } => {
+            if !ctx.cowork {
+                return Err("This session has no folder.".into());
+            }
+            if !(4..=40).contains(&sha.len()) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err("That isn't a commit.".into());
+            }
+            Intent::GitCommit { sha }
+        }
         Intent::Steer { text, images } => {
             check_message(&text, &images)?;
             return match role {
@@ -236,10 +256,8 @@ pub fn authorize(ctx: &Ctx, intent: Intent) -> Result<Allowed, String> {
             }
             Intent::Respond { child, call_id, decision, answer }
         }
+        // The room's chat: everyone in the share talks there, viewers too.
         Intent::Comment { text, message_id } => {
-            if !matches!(role, Role::Driver | Role::Collaborator) {
-                return Err("You're watching this session. Ask the host to let you comment.".into());
-            }
             if text.trim().is_empty() || text.len() > MAX_COMMENT {
                 return Err("A comment is between 1 and 4,096 characters.".into());
             }
@@ -523,11 +541,28 @@ mod tests {
     }
 
     #[test]
-    fn comments_need_a_voice_and_a_limit() {
+    fn everyone_reads_the_git_history_of_a_folder() {
+        let f = fixture(false);
+        let viewer = Some(Role::Viewer);
+        assert_eq!(check(&f, viewer, Intent::GitLog { limit: 0, all: true }), Ok(Allowed::Do(Intent::GitLog { limit: 1, all: true })));
+        assert_eq!(
+            check(&f, viewer, Intent::GitLog { limit: 1_000_000, all: false }),
+            Ok(Allowed::Do(Intent::GitLog { limit: MAX_LOG, all: false }))
+        );
+        assert!(check(&f, viewer, Intent::GitCommit { sha: "abc1234".into() }).is_ok());
+        assert!(check(&f, viewer, Intent::GitCommit { sha: "HEAD~1".into() }).is_err());
+        assert!(check(&f, viewer, Intent::GitCommit { sha: "--output=x".into() }).is_err());
+        assert!(check(&f, None, Intent::GitLog { limit: 10, all: true }).is_err());
+    }
+
+    #[test]
+    fn comments_need_a_member_and_a_limit() {
         let f = fixture(false);
         let comment = |text: &str| Intent::Comment { text: text.into(), message_id: None };
         assert!(check(&f, Some(Role::Collaborator), comment("looks good")).is_ok());
-        assert!(check(&f, Some(Role::Viewer), comment("looks good")).is_err());
+        assert!(check(&f, Some(Role::Viewer), comment("looks good")).is_ok());
+        assert!(check(&f, None, comment("looks good")).is_err());
+        assert!(check(&f, Some(Role::Owner), comment("looks good")).is_err());
         assert!(check(&f, Some(Role::Driver), comment("")).is_err());
         assert!(check(&f, Some(Role::Driver), comment(&"x".repeat(MAX_COMMENT + 1))).is_err());
     }

@@ -721,9 +721,10 @@ function overlayCovers(r: DOMRect) {
 /**
  * The address bar, and the place the browser sits. The page itself is a native
  * webview Rust lays over `host`; it's drawn above everything in this window, so
- * it steps aside while a menu or dialog overlaps it.
+ * it steps aside while a menu or dialog overlaps it. A shared session's guest
+ * shows it too, following the host's page (`banner` says so).
  */
-function BrowserPane() {
+export function BrowserPane({ onClose, banner }: { onClose?: () => void; banner?: React.ReactNode } = {}) {
   const page = useBrowserPage();
   const host = useRef<HTMLDivElement>(null);
   const shown = page?.url && page.url !== "about:blank" ? page.url : "";
@@ -821,10 +822,11 @@ function BrowserPane() {
             className="h-7 w-full rounded-md border bg-muted/40 px-2.5 text-sm outline-none focus-visible:bg-transparent focus-visible:ring-1 focus-visible:ring-ring"
           />
         </form>
-        <Button variant="ghost" size="icon" className="size-7" aria-label="Close browser" onClick={() => togglePanel("browser", false)}>
+        <Button variant="ghost" size="icon" className="size-7" aria-label="Close browser" onClick={onClose ?? (() => togglePanel("browser", false))}>
           <XIcon className="size-4" />
         </Button>
       </div>
+      {banner}
       {hasPage ? (
         <div ref={host} className="min-h-0 flex-1 bg-white" />
       ) : (

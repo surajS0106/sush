@@ -28,6 +28,9 @@ import {
   type ShareMember,
   type ShareRole,
   type ShareView,
+  type ShareBrowserPage,
+  type GitLog,
+  type CommitDetail,
   type UndoResult,
   type WorkspaceEntry,
 } from "@/lib/tauri";
@@ -126,7 +129,10 @@ function apply(frame: Extract<RunFrame, { type: "share" | "share-gone" }>) {
   }
   const next = frame.share;
   const prev = shares.get().get(next.threadId);
-  if (isLeader()) announce(prev, next);
+  if (isLeader()) {
+    announce(prev, next);
+    remember(next);
+  }
   shares.set((all) => new Map(all).set(next.threadId, next));
 }
 
@@ -230,6 +236,12 @@ export function useJoinedShares(): ShareView[] {
   return useMemo(() => [...all.values()].filter((s) => s.role !== "owner"), [all]);
 }
 
+/** Sessions shared from here (live or ended, until the app restarts). */
+export function useHostedShares(): ShareView[] {
+  const all = useSyncExternalStore(shares.subscribe, shares.get);
+  return useMemo(() => [...all.values()].filter((s) => s.role === "owner"), [all]);
+}
+
 /** Whether a hosted share is still going (an ended one can be started again). */
 export const isLive = (s: ShareView | null): s is ShareView & { status: Exclude<ShareView["status"], "ended"> } =>
   !!s && s.status !== "ended";
@@ -266,6 +278,7 @@ export function admit(threadId: string, userId: string, allow: boolean) {
 
 export const kick = (threadId: string, userId: string) => api.shareKick(threadId, userId);
 export const setBrowseFiles = (share: ShareView, browseFiles: boolean) => api.shareSetPolicy(share.threadId, { ...share.policy, browseFiles });
+export const setHideBrowser = (share: ShareView, hideBrowser: boolean) => api.shareSetPolicy(share.threadId, { ...share.policy, hideBrowser });
 export const setDelegation = (share: ShareView, delegation: ShareDelegation) => api.shareSetPolicy(share.threadId, { ...share.policy, delegation });
 export const setRole = (threadId: string, userId: string, role: Exclude<ShareRole, "owner">) => api.shareSetRole(threadId, userId, role);
 export const endShare = (threadId: string) => api.shareEnd(threadId);
@@ -353,6 +366,96 @@ export async function leaveShare(threadId: string) {
   await api.shareLeave(threadId);
 }
 
+/** Join a session from the history again, with the link Rust kept from the first time; returns its thread. */
+export async function rejoinShare(shareId: string): Promise<string> {
+  const view = await api.shareRejoin(shareId);
+  shares.set((all) => new Map(all).set(view.threadId, view));
+  return view.threadId;
+}
+
+/** The folder's git history in a shared Cowork session, read on the host. */
+export const requestGitLog = (threadId: string, limit: number, all: boolean) =>
+  api.shareRequest<GitLog>(threadId, { kind: "git-log", limit, all });
+
+/** One commit's message and files in a shared Cowork session (no email, no secret-looking paths). */
+export const requestGitCommit = (threadId: string, sha: string) => api.shareRequest<CommitDetail>(threadId, { kind: "git-commit", sha });
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0"]);
+
+/**
+ * Where a guest opens the host's page: as it is, except that a page the host
+ * serves itself (`localhost` there) is reached at the host's network address.
+ */
+export function followUrl(page: ShareBrowserPage): string {
+  try {
+    const url = new URL(page.url);
+    if (page.lanHost && LOOPBACK.has(url.hostname)) url.hostname = page.lanHost.includes(":") ? `[${page.lanHost}]` : page.lanHost;
+    return url.toString();
+  } catch {
+    return page.url;
+  }
+}
+
+// --- history ------------------------------------------------------------------------
+
+/**
+ * A session shared from here or joined, kept after it ends or is left. Only
+ * what it was and who was in it: a guest never keeps the host's conversation.
+ */
+export interface ShareHistoryEntry {
+  shareId: string;
+  /** Shared from here (`threadId` is the session's own) or joined (`shared:<id>`). */
+  hosted: boolean;
+  threadId: string;
+  title: string;
+  hostName: string;
+  /** The others who were in it. */
+  people: string[];
+  startedAt: number;
+  lastSeen: number;
+  ended: boolean;
+}
+
+const HISTORY_MAX = 50;
+const history = createStore<ShareHistoryEntry[]>("sush.shareHistory", []);
+
+export const useShareHistory = () => useSyncExternalStore(history.subscribe, history.get);
+
+/** Keep a share in the history as its frames arrive (the leader window writes it; the others follow). */
+function remember(view: ShareView) {
+  if (view.status === "lobby" || view.status === "connecting") {
+    if (history.get().some((h) => h.shareId === view.shareId)) return;
+  }
+  const people = view.members.filter((m) => m.userId !== view.me && m.role !== "owner").map((m) => m.name);
+  if (view.role !== "owner") people.unshift(view.thread.hostName);
+  const now = Date.now();
+  history.set((all) => {
+    const old = all.find((h) => h.shareId === view.shareId);
+    const entry: ShareHistoryEntry = {
+      shareId: view.shareId,
+      hosted: view.role === "owner",
+      threadId: view.threadId,
+      title: view.thread.title || old?.title || "Shared session",
+      hostName: view.thread.hostName,
+      people: [...new Set([...(old?.people ?? []), ...people])],
+      startedAt: old?.startedAt ?? now,
+      lastSeen: now,
+      ended: view.status === "ended",
+    };
+    if (old && old.title === entry.title && old.ended === entry.ended && old.people.length === entry.people.length) {
+      // Nothing worth a write; the time last seen only moves with a real change.
+      return all;
+    }
+    return [entry, ...all.filter((h) => h.shareId !== view.shareId)].slice(0, HISTORY_MAX);
+  });
+}
+
+/** Take a session out of the history, and forget its invite link. */
+export function forgetShare(shareId: string) {
+  history.set((all) => all.filter((h) => h.shareId !== shareId));
+  void api.shareForget(shareId).catch(() => {});
+}
+
 /** A file the shared session worked on (or any, if the host lets guests browse). */
 export const requestFile = (threadId: string, path: string) => api.shareRequest<FileView>(threadId, { kind: "get-file", path });
 
@@ -388,6 +491,34 @@ export async function shareWithAppAccount(relayUrl = DEFAULT_RELAY) {
 export async function signInToRelay(relayUrl: string, email: string, password: string, name?: string) {
   account.set(await api.shareAccountSignIn(relayUrl, email, password, name));
   me = account.get()?.user?.id ?? null;
+}
+
+/** `http(s)://host[:port]` of a URL (an invite link, a relay address), or null if it isn't one. */
+export function originOf(url: string): string | null {
+  try {
+    const u = new URL(url.trim());
+    return u.protocol === "http:" || u.protocol === "https:" ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether only this computer can reach a relay at this address, so its links open nowhere else. */
+export function isLoopbackRelay(relayUrl: string) {
+  try {
+    return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(relayUrl).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** The same relay as `relayUrl`, at this machine's address on the local network, if it has one. */
+export async function lanRelayFor(relayUrl: string): Promise<string | null> {
+  const ip = await api.shareLanAddress().catch(() => null);
+  if (!ip) return null;
+  const u = new URL(relayUrl);
+  u.hostname = ip.includes(":") ? `[${ip}]` : ip;
+  return u.origin;
 }
 
 export async function signOutOfRelay() {

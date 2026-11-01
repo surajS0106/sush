@@ -58,11 +58,11 @@ use sush_core::share::outbox::{self, Event, Outbox};
 use sush_core::share::policy::{Allowed, ApprovalClass};
 use sush_core::share::replica::{Applied, Change, Replica};
 use sush_core::share::{
-    self as proto, policy, Author, Body, Comment, Decision, GuestMsg, HostMsg, Image, Intent, Member, Role, Room, SharePolicy, Suggestion,
+    self as proto, policy, Author, Body, BrowserPage, Comment, Decision, GuestMsg, HostMsg, Image, Intent, Member, Role, Room, SharePolicy, Suggestion,
     ThreadInfo, ThreadKind, ThreadState, TurnFiles,
 };
 use sush_core::store::ThreadMeta;
-use sush_core::workspace::{looks_secret, WorkspaceFs};
+use sush_core::workspace::{git, looks_secret, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -228,6 +228,16 @@ pub async fn share_account_use_token(state: State<'_, AppState>, relay_url: Stri
     Ok(ShareAccount { relay_url: Some(account.relay_url), user: Some(user), error: None })
 }
 
+/// This machine's address on the local network, for a relay others on the same Wi-Fi can reach.
+/// Connecting a UDP socket only picks the outgoing route; nothing is sent.
+#[tauri::command]
+pub fn share_lan_address() -> Option<String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let ip = socket.local_addr().ok()?.ip();
+    (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+}
+
 #[tauri::command]
 pub async fn share_account_sign_out(state: State<'_, AppState>) -> AppResult<()> {
     if let Some(account) = load_account()? {
@@ -370,6 +380,8 @@ pub struct ShareView {
     owner_away: Option<i64>,
     /// Whether the relay sees only ciphertext.
     e2e: bool,
+    /// The page in the host's browser, as guests follow it (none while the owner hides it).
+    browser: Option<BrowserPage>,
     /// What the relay's plan lets the owner do (the host's view; guests see the defaults).
     limits: Limits,
 }
@@ -504,8 +516,21 @@ struct HostInner {
     away: Option<i64>,
     /// Ends a driver's time alone with the run (`AwayMode::KeepGoing`).
     away_timer: Option<CancellationToken>,
+    /// The page in the owner's browser (`Shares::browser_changed`).
+    browser: Option<BrowserPage>,
     ended: Option<String>,
     error: Option<String>,
+}
+
+impl HostInner {
+    /// The page guests follow, unless the owner keeps it to themselves.
+    fn shown_browser(&self) -> Option<BrowserPage> {
+        if self.policy.hide_browser {
+            None
+        } else {
+            self.browser.clone()
+        }
+    }
 }
 
 impl HostShare {
@@ -530,6 +555,7 @@ impl HostShare {
             requests: i.requests.clone(),
             owner_away: i.away,
             e2e: self.e2e.is_some(),
+            browser: i.shown_browser(),
             limits: self.limits.clone(),
         }
     }
@@ -544,6 +570,7 @@ impl HostShare {
             audit: i.audit.clone(),
             requests: i.requests.clone(),
             owner_away: i.away,
+            browser: i.shown_browser(),
         }
     }
 
@@ -710,11 +737,17 @@ impl HostShare {
         self.flush.notify_one();
     }
 
-    /// Tell guests who's in the share now, who asks for control, and whether the owner is away.
+    /// Tell guests who's in the share now, who asks for control, whether the owner is away, and the page in their browser.
     fn members_changed(&self) {
         let event = {
             let i = self.inner.lock().unwrap();
-            Event::Members { members: i.members.values().cloned().collect(), policy: i.policy.clone(), requests: i.requests.clone(), owner_away: i.away }
+            Event::Members {
+                members: i.members.values().cloned().collect(),
+                policy: i.policy.clone(),
+                requests: i.requests.clone(),
+                owner_away: i.away,
+                browser: i.shown_browser(),
+            }
         };
         self.push(event);
     }
@@ -826,6 +859,7 @@ impl GuestShare {
             requests: i.replica.requests.clone(),
             owner_away: i.replica.owner_away,
             e2e: self.e2e.is_some(),
+            browser: i.replica.browser.clone(),
             limits: Limits::default(),
         }
     }
@@ -886,6 +920,25 @@ impl GuestShare {
 }
 
 impl Shares {
+    /// The owner's browser showed another page (or finished loading one): guests
+    /// of every share hosted here follow it, unless the owner hides it.
+    pub(crate) fn browser_changed(&self, page: Option<BrowserPage>) {
+        let hosts: Vec<Arc<HostShare>> = self.hosts.lock().unwrap().values().cloned().collect();
+        for share in hosts {
+            let tell = {
+                let mut i = share.inner.lock().unwrap();
+                if i.browser == page {
+                    continue;
+                }
+                i.browser = page.clone();
+                !i.policy.hide_browser && i.status != LinkStatus::Ended
+            };
+            if tell {
+                share.members_changed();
+            }
+        }
+    }
+
     /// A frame a run (or `runs.rs`) sent, while the runs' channels are locked.
     /// Never sends frames itself: that would take the same lock again.
     pub(crate) fn on_frame(&self, frame: &RunFrame) {
@@ -1120,6 +1173,7 @@ pub async fn share_start(
             requests: Vec::new(),
             away: None,
             away_timer: None,
+            browser: app.state::<crate::browser::Browser>().shared(),
             ended: None,
             error: None,
         }),
@@ -1435,6 +1489,8 @@ fn intent_kind(intent: &Intent) -> &'static str {
         Intent::GetFile { .. } => "get-file",
         Intent::ListDir { .. } => "list-dir",
         Intent::GetBlob { .. } => "get-blob",
+        Intent::GitLog { .. } => "git-log",
+        Intent::GitCommit { .. } => "git-commit",
         Intent::Steer { .. } => "steer",
         Intent::SuggestionAccept { .. } => "suggestion-accept",
         Intent::SuggestionDrop { .. } => "suggestion-drop",
@@ -1543,6 +1599,7 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
     };
 
     let root = workspace.map(|w| w.root);
+    let git_root = root.clone().ok_or_else(|| AppError::Invalid("This session has no folder.".into()));
     let open = move || -> AppResult<WorkspaceFs> {
         let root = root.ok_or_else(|| AppError::Invalid("This session has no folder.".into()))?;
         WorkspaceFs::open(Path::new(&root)).map_err(AppError::Invalid)
@@ -1563,6 +1620,23 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
             let fs = open()?;
             let rel = fs.rel(&path).map_err(AppError::Invalid)?;
             Ok(json!(fs.list(&rel).map_err(AppError::Invalid)?))
+        })
+        .await
+        .map_err(failed),
+        // The same reads as the owner's graph (`workspaces::workspace_git_log`), less what guests never get.
+        Intent::GitLog { limit, all } => blocking(move || {
+            let mut log = git::log(Path::new(&git_root?), limit, all).map_err(AppError::Invalid)?;
+            // The owner's own commits read "You" for them, not for guests.
+            log.you = None;
+            Ok(json!(log))
+        })
+        .await
+        .map_err(failed),
+        Intent::GitCommit { sha } => blocking(move || {
+            let mut detail = git::commit_detail(Path::new(&git_root?), &sha).map_err(AppError::Invalid)?;
+            detail.email = String::new();
+            detail.files.retain(|f| !looks_secret(&f.path) && !f.local.as_deref().is_some_and(looks_secret));
+            Ok(json!(detail))
         })
         .await
         .map_err(failed),
@@ -2226,6 +2300,10 @@ pub async fn share_join(app: AppHandle, state: State<'_, AppState>, link: String
         .map_err(net)?;
     let joined = relay_json(resp).await?;
     let text = |k: &str| joined.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+    // Kept with the relay token, never in the webview: "Rejoin" in the history uses it.
+    if let Err(e) = secrets::share_link_set(&share_id, link.trim()) {
+        eprintln!("sush: could not keep the invite link: {e}");
+    }
 
     let (out, rx) = mpsc::unbounded_channel();
     let guest = Arc::new(GuestShare {
@@ -2255,6 +2333,20 @@ pub async fn share_join(app: AppHandle, state: State<'_, AppState>, link: String
     let view = guest.view();
     emit_view(&app, view.clone());
     Ok(view)
+}
+
+/// Join a share again from the history, with the invite link kept when it was first joined.
+#[tauri::command]
+pub async fn share_rejoin(app: AppHandle, state: State<'_, AppState>, share_id: String) -> AppResult<ShareView> {
+    let link = secrets::share_link_get(&share_id)?
+        .ok_or_else(|| AppError::NotFound("Sush no longer has the link for that session. Ask the host for a new one.".into()))?;
+    share_join(app, state, link).await
+}
+
+/// Forget a joined share's invite link, when it's removed from the history.
+#[tauri::command]
+pub fn share_forget(share_id: String) -> AppResult<()> {
+    secrets::share_link_delete(&share_id)
 }
 
 /// Stop watching a share. Its copy here is dropped.
