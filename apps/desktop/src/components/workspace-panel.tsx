@@ -108,7 +108,7 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
   const sandbox = useSandboxStatus();
   if (!workspace) {
     return (
-      <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground" title="This session's folder was removed from Cowork">
+      <span className="rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground" title="This session's folder was removed from Sush">
         Folder removed
       </span>
     );
@@ -118,7 +118,7 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
     void updateWorkspace(workspace.id, access, approval).catch((e) => toast.error(errorMessage(e)));
   };
   const remove = () => {
-    if (!window.confirm(`Remove ${workspace.name} from Cowork? Its sessions stay, but Sush won't be able to use its files.`)) return;
+    if (!window.confirm(`Remove ${workspace.name} from Sush? Its sessions stay, but Sush won't be able to use its files.`)) return;
     void removeWorkspace(workspace.id).catch((e) => toast.error(errorMessage(e)));
   };
   const mode = MODES.find((m) => m.value === modeOf(workspace))!;
@@ -169,7 +169,7 @@ export function WorkspaceChip({ workspaceId }: { workspaceId: string }) {
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem variant="destructive" onSelect={remove}>
-          <Trash2Icon /> Remove from Cowork
+          <Trash2Icon /> Remove folder
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

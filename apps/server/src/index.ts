@@ -9,6 +9,7 @@ import { logger } from "hono/logger";
 
 import { auth, trustedOrigins } from "./auth";
 import { oauth, oauthAccount } from "./oauth";
+import { JOIN_FALLBACK_HTML, VIEWER_CSP } from "./share/common";
 import { isAdmin, weekly } from "./share/metrics";
 import { shares } from "./share/routes";
 
@@ -57,9 +58,6 @@ app.get("/api/metrics/weekly", async (c) => {
 // and comments without installing Sush. Its token and key are after the `#`, which
 // browsers never send. Without a viewer build, a page that says how to join from the app.
 const viewerDir = process.env.SUSH_VIEWER_DIR ?? fileURLToPath(new URL("../../viewer/dist/", import.meta.url));
-// Nothing it renders can load or run anything from elsewhere.
-const VIEWER_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
 
 app.get("/join/:id", async (c) => {
   const page = Bun.file(join(viewerDir, "index.html"));
@@ -68,13 +66,7 @@ app.get("/join/:id", async (c) => {
     c.header("Referrer-Policy", "no-referrer");
     return c.html(await page.text());
   }
-  return c.html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Join a Sush session</title>
-<style>body{font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 16px;color:#222;background:#fff}
-@media (prefers-color-scheme:dark){body{color:#eee;background:#161616}}code{font-size:.9em}</style></head>
-<body><h1>Join a shared Sush session</h1>
-<p>Open Sush, choose <b>Join shared session…</b> in the sidebar, and paste this page’s link (the whole address, including the part after <code>#</code>).</p>
-<p>You need a Sharing account on this relay: Settings → Sharing.</p></body></html>`);
+  return c.html(JOIN_FALLBACK_HTML);
 });
 
 // The viewer's scripts and styles (built with `base: "/viewer/"`).

@@ -22,6 +22,8 @@ export interface SushMetadata {
   paused?: boolean;
   /** On the "continue" message Resume adds when a reply stopped mid-text. */
   resumed?: boolean;
+  /** On a reply whose model turned down images or PDFs, so they were sent as notes (`sush_core::agent::MEDIA_OMITTED`). */
+  mediaOmitted?: boolean;
   /** On the message that brings a background sub-agent's report (`sush_core::agent::subagents::report_message`). */
   subagentReport?: { callId: string; description: string; status: "done" | "failed" };
   /** In a shared session, on a message someone else wrote (set by the host, never by the sender). */

@@ -32,7 +32,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::ui::{self, apply, Op, StepBuilder, ToolCall, STOPPED};
-use crate::message::{ChatRequest, ToolSpec};
+use crate::message::{ChatRequest, Part, ToolSpec};
 use crate::provider::EventStream;
 
 /// What the UI asks a run to do.
@@ -65,6 +65,9 @@ pub const RESUMED: &str = "resumed";
 /// Metadata key on a reply: who answered its tool calls in a shared session,
 /// by call id (`{ by, decision, at }`). Only answers that carry an author are recorded.
 pub const ANSWERS: &str = "sushAnswers";
+/// Metadata key on a reply whose model couldn't read images or PDFs, so they were
+/// sent as notes instead.
+pub const MEDIA_OMITTED: &str = "mediaOmitted";
 /// The result of a tool call that `Inbox::Interrupt` cut short.
 pub const INTERRUPTED: &str = "Interrupted: the user sent a message.";
 /// The result of a call left waiting when a pause let messages join (`Inbox::Pause`).
@@ -231,6 +234,7 @@ pub async fn run(
         interrupt: false,
         recheck: false,
         pause: false,
+        text_only: false,
     };
     let resolve_first = match action {
         RunAction::Send { mut message, replace } => {
@@ -303,6 +307,8 @@ struct Runner<'a> {
     recheck: bool,
     /// End at the next step boundary (`Inbox::Pause`).
     pause: bool,
+    /// The model turned down images or PDFs; send them as notes (`ui::without_media`).
+    text_only: bool,
 }
 
 impl Runner<'_> {
@@ -472,6 +478,27 @@ impl Runner<'_> {
         }
     }
 
+    /// The next model request, and whether it carries images or PDFs.
+    fn request(&self) -> (ChatRequest, bool) {
+        let mut messages = ui::to_core(&self.messages, &self.config.expansions);
+        let had_media = if self.text_only {
+            ui::without_media(&mut messages);
+            false
+        } else {
+            messages.iter().flat_map(|m| &m.parts).any(|p| matches!(p, Part::Image { .. } | Part::Document { .. }))
+        };
+        let request = ChatRequest {
+            model: self.config.model.clone(),
+            messages,
+            system: self.config.system.clone(),
+            max_tokens: None,
+            temperature: None,
+            tools: self.config.tools.iter().map(|t| t.spec.clone()).collect(),
+            research: self.config.research,
+        };
+        (request, had_media)
+    }
+
     /// One model request, streamed into the last assistant message. Returns
     /// how many tool calls it made, or None if it was cancelled. An interrupt
     /// ends it early with what arrived so far, and no calls.
@@ -480,15 +507,6 @@ impl Runner<'_> {
             return Ok(None);
         }
         self.status(RunStatus::Submitted, None);
-        let request = ChatRequest {
-            model: self.config.model.clone(),
-            messages: ui::to_core(&self.messages, &self.config.expansions),
-            system: self.config.system.clone(),
-            max_tokens: None,
-            temperature: None,
-            tools: self.config.tools.iter().map(|t| t.spec.clone()).collect(),
-            research: self.config.research,
-        };
         // Steps after tool calls continue the same assistant message, like the AI SDK does.
         let metadata = json!({ "providerId": self.config.provider_id, "model": self.config.model });
         if self.messages.last().and_then(ui::role) == Some("assistant") {
@@ -506,10 +524,23 @@ impl Runner<'_> {
 
         let host = self.host;
         let provider_id = self.config.provider_id.clone();
-        let mut stream = tokio::select! {
-            biased;
-            _ = self.cancel.cancelled() => return Ok(None),
-            s = host.stream(&provider_id, request) => s?,
+        let mut stream = loop {
+            let (request, had_media) = self.request();
+            let opened = tokio::select! {
+                biased;
+                _ = self.cancel.cancelled() => return Ok(None),
+                s = host.stream(&provider_id, request) => s,
+            };
+            match opened {
+                Ok(s) => break s,
+                // A model that can't read images or PDFs gets them as notes instead,
+                // for this step and the rest of the run.
+                Err(e) if had_media && !self.text_only && ui::is_media_unsupported(&e) => {
+                    self.text_only = true;
+                    self.op(Op::SetMetadata { metadata: json!({ MEDIA_OMITTED: true }) });
+                }
+                Err(e) => return Err(e),
+            }
         };
         let last = self.messages.last();
         let mut builder = StepBuilder::new(last.map_or(0, |m| ui::parts(m).len())).after(last.and_then(|m| m.get("metadata")));
@@ -777,6 +808,8 @@ mod tests {
         tx: Mutex<Option<mpsc::UnboundedSender<Inbox>>>,
         /// Every call runs without asking, as after the user allows them all.
         allow_all: std::sync::atomic::AtomicBool,
+        /// Requests carrying images are turned down, like a model without vision.
+        no_vision: std::sync::atomic::AtomicBool,
     }
 
     impl FakeHost {
@@ -791,6 +824,7 @@ mod tests {
                 during: Mutex::default(),
                 tx: Mutex::default(),
                 allow_all: Default::default(),
+                no_vision: Default::default(),
             })
         }
 
@@ -810,6 +844,11 @@ mod tests {
     #[async_trait]
     impl RunHost for FakeHost {
         async fn stream(&self, _: &str, request: ChatRequest) -> Result<EventStream, String> {
+            let has_image = request.messages.iter().flat_map(|m| &m.parts).any(|p| matches!(p, Part::Image { .. }));
+            if has_image && self.no_vision.load(std::sync::atomic::Ordering::SeqCst) {
+                self.requests.lock().unwrap().push(request);
+                return Err("OpenAI-compatible returned HTTP 400: this model does not support image input".into());
+            }
             let step = {
                 let mut requests = self.requests.lock().unwrap();
                 requests.push(request);
@@ -1280,6 +1319,39 @@ mod tests {
         let last = host.events.lock().unwrap().last().cloned();
         assert_eq!(last, Some(RunEvent::Status { status: RunStatus::Error, error: Some("overloaded".into()) }));
         assert_eq!(ui::parts(&messages[1])[1], json!({ "type": "text", "text": "par", "state": "done" }));
+    }
+
+    #[tokio::test]
+    async fn images_a_model_cant_read_are_sent_as_notes() {
+        let host = FakeHost::new(vec![vec![call("auto_tool")], vec![text("done")]]);
+        host.no_vision.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let message = json!({ "role": "user", "parts": [
+            { "type": "file", "mediaType": "image/png", "url": "data:image/png;base64,AAA" },
+            { "type": "text", "text": "what is this?" },
+        ]});
+        let action = RunAction::Send { message, replace: None };
+        let messages = run(&*host, vec![], action, config(), &mut rx, &CancellationToken::new()).await;
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
+        assert_eq!(messages[1]["metadata"][MEDIA_OMITTED], true);
+        let requests = host.requests.lock().unwrap();
+        // Turned down once, then text only for this step and the next.
+        assert_eq!(requests.len(), 3);
+        for request in &requests[1..] {
+            assert!(matches!(&request.messages[0].parts[0], Part::Text { text } if text.contains("left out")));
+        }
+    }
+
+    #[tokio::test]
+    async fn other_errors_with_images_are_not_retried() {
+        let host = FakeHost::new(vec![]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let message = json!({ "role": "user", "parts": [
+            { "type": "file", "mediaType": "image/png", "url": "data:image/png;base64,AAA" },
+        ]});
+        run(&*host, vec![], RunAction::Send { message, replace: None }, config(), &mut rx, &CancellationToken::new()).await;
+        assert_eq!(host.requests.lock().unwrap().len(), 1);
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Error));
     }
 
     fn author(name: &str) -> Author {

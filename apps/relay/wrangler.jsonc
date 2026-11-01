@@ -1,0 +1,40 @@
+// The hosted relay for shared sessions, on Cloudflare's free plan: a Worker for
+// accounts and the REST API, D1 for its records, and one Durable Object per
+// share for the room. Setup and deploy: README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sush-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-15",
+  // process.env (read by the plan and admin settings) and better-auth's Node imports.
+  "compatibility_flags": ["nodejs_compat"],
+  // The browser viewer (`bun run build:viewer`). The Worker serves it itself, at
+  // /join/:id and /viewer/*, so nothing in the folder is served at its own path.
+  "assets": {
+    "directory": "../viewer/dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "none",
+    "not_found_handling": "none"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "sush-relay",
+      // From `bunx wrangler d1 create sush-relay`.
+      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  // SQLite-backed Durable Objects are the ones the free plan includes.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }],
+  "vars": {
+    "SUSH_PLANS": "off",
+    "SUSH_TEAM_EMAILS": "",
+    "SUSH_ADMIN_EMAILS": ""
+  },
+  "observability": { "enabled": true }
+}

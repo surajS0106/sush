@@ -5,6 +5,12 @@
 //! milliseconds; text deltas arriving in between are merged, so a streamed
 //! reply goes out as a few messages rather than one per token. A snapshot is
 //! taken right after a flush, so it carries the number the next message follows.
+//!
+//! The end of each text stream is held back until no secret can be split
+//! across it (`redact::Secrets::safe_cut`); the part's final `SetPart` carries
+//! the whole text, redacted, so nothing held is ever sent on its own.
+
+use std::collections::HashMap;
 
 use serde_json::Value;
 
@@ -33,11 +39,14 @@ pub struct Outbox {
     epoch: u64,
     seq: u64,
     pending: Vec<Event>,
+    secrets: redact::Secrets,
+    /// The unsent end of each text stream, by thread (`child`) and part index.
+    held: HashMap<(Option<String>, usize), String>,
 }
 
 impl Outbox {
     pub fn new(epoch: u64) -> Self {
-        Self { epoch, seq: 0, pending: Vec::new() }
+        Self { epoch, seq: 0, pending: Vec::new(), secrets: redact::Secrets::default(), held: HashMap::new() }
     }
 
     pub fn epoch(&self) -> u64 {
@@ -61,7 +70,31 @@ impl Outbox {
 
     pub fn push(&mut self, event: Event) {
         let event = match event {
-            Event::Op { child, op } => Event::Op { child, op: redact::op(&op) },
+            Event::Op { child, op: Op::AppendText { index, delta } } => {
+                let key = (child.clone(), index);
+                let mut text = self.held.remove(&key).unwrap_or_default();
+                text.push_str(&delta);
+                let rest = text.split_off(self.secrets.safe_cut(&text));
+                if !rest.is_empty() {
+                    self.held.insert(key, rest);
+                }
+                if text.is_empty() {
+                    return;
+                }
+                Event::Op { child, op: redact::op(&Op::AppendText { index, delta: text }, &self.secrets) }
+            }
+            Event::Op { child, op } => {
+                self.secrets.learn(&op);
+                // The part's whole text replaces what was held, or the message is gone.
+                match &op {
+                    Op::SetPart { index, .. } => {
+                        self.held.remove(&(child.clone(), *index));
+                    }
+                    Op::Push { .. } | Op::Reset { .. } => self.held.retain(|(c, _), _| c != &child),
+                    _ => {}
+                }
+                Event::Op { op: redact::op(&op, &self.secrets), child }
+            }
             other => other,
         };
         if let (Some(Event::Op { child: last_child, op: Op::AppendText { index: last, delta: text } }), Event::Op { child, op: Op::AppendText { index, delta } }) =
@@ -100,13 +133,35 @@ impl Outbox {
             .collect()
     }
 
+    /// A thread as guests have it: without the text still held back, which
+    /// later appends will bring.
+    fn without_held(&self, thread: &mut ThreadState) {
+        for ((child, index), tail) in &self.held {
+            if child != &thread.child {
+                continue;
+            }
+            let text = thread.messages.last_mut().and_then(|m| m.get_mut("parts")).and_then(|p| p.get_mut(*index)).and_then(|p| p.get_mut("text"));
+            if let Some(Value::String(text)) = text {
+                if text.ends_with(tail.as_str()) {
+                    text.truncate(text.len() - tail.len());
+                }
+            }
+        }
+    }
+
     /// A snapshot that follows the last flushed message. Flush first: anything
     /// still pending is already part of `threads` and must not be sent again.
-    pub fn snapshot(&self, thread: ThreadInfo, threads: Vec<ThreadState>, running: Vec<String>, turns: Vec<TurnFiles>, room: Room) -> HostMsg {
+    pub fn snapshot(&mut self, thread: ThreadInfo, threads: Vec<ThreadState>, running: Vec<String>, turns: Vec<TurnFiles>, room: Room) -> HostMsg {
         debug_assert!(self.pending.is_empty(), "flush before taking a snapshot");
+        for t in &threads {
+            self.secrets.learn_messages(&t.messages);
+        }
         let threads = threads
             .into_iter()
-            .map(|t| ThreadState { messages: redact::messages(&t.messages), ..t })
+            .map(|mut t| {
+                self.without_held(&mut t);
+                ThreadState { messages: redact::messages(&t.messages, &self.secrets), ..t }
+            })
             .collect();
         let Room { members, policy, suggestions, comments, audit, requests, owner_away } = room;
         HostMsg::Snapshot {
@@ -174,23 +229,25 @@ mod tests {
     #[test]
     fn text_deltas_merge_and_messages_are_numbered() {
         let mut out = Outbox::new(1);
-        out.push(text(1, "Hel"));
-        out.push(text(1, "lo"));
-        out.push(text(2, "!"));
+        out.push(text(1, "Hello there big "));
+        out.push(text(1, "world and more "));
+        out.push(text(2, "a b c "));
         out.push(Event::Status { child: None, status: RunStatus::Ready, error: None });
         let sent = out.flush();
         assert_eq!(sent.len(), 3);
-        assert_eq!(sent[0], HostMsg::Op { epoch: 1, seq: 1, child: None, op: Op::AppendText { index: 1, delta: "Hello".into() } });
+        // The last two words of each stream wait for what follows them.
+        assert_eq!(sent[0], HostMsg::Op { epoch: 1, seq: 1, child: None, op: Op::AppendText { index: 1, delta: "Hello there big world and ".into() } });
+        assert_eq!(sent[1], HostMsg::Op { epoch: 1, seq: 2, child: None, op: Op::AppendText { index: 2, delta: "a b ".into() } });
         assert_eq!(sent[2].order(), Some((1, 3)));
-        out.push(text(1, "more"));
+        out.push(text(1, "of it all "));
         assert_eq!(out.flush()[0].order(), Some((1, 4)));
     }
 
     #[test]
     fn deltas_for_different_threads_stay_apart() {
         let mut out = Outbox::new(1);
-        out.push(text(1, "a"));
-        out.push(Event::Op { child: Some("call".into()), op: Op::AppendText { index: 1, delta: "b".into() } });
+        out.push(text(1, "a b c "));
+        out.push(Event::Op { child: Some("call".into()), op: Op::AppendText { index: 1, delta: "d e f ".into() } });
         assert_eq!(out.flush().len(), 2);
     }
 
@@ -204,15 +261,39 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_the_model_quotes_is_hidden_even_split_across_deltas() {
+        let mut out = Outbox::new(1);
+        let read = json!({ "type": "dynamic-tool", "toolName": "fs_read", "toolCallId": "c", "state": "output-available", "input": { "path": ".env" }, "output": "OPENAI_API_KEY=proj-Xy7Qa91LmZ" });
+        out.push(Event::Op { child: None, op: Op::SetPart { index: 0, part: read } });
+        for delta in ["Your key is proj-Xy7", "Qa91LmZ, keep it ", "safe and private. "] {
+            out.push(text(1, delta));
+        }
+        let streamed: String = out
+            .flush()
+            .into_iter()
+            .filter_map(|m| match m {
+                HostMsg::Op { op: Op::AppendText { delta, .. }, .. } => Some(delta),
+                _ => None,
+            })
+            .collect();
+        assert!(streamed.contains("Your key is [redacted]"), "{streamed}");
+        assert!(!streamed.contains("Xy7") && !streamed.contains("LmZ"), "{streamed}");
+        let done = json!({ "type": "text", "text": "Your key is proj-Xy7Qa91LmZ, keep it safe and private.", "state": "done" });
+        out.push(Event::Op { child: None, op: Op::SetPart { index: 1, part: done } });
+        let HostMsg::Op { op: Op::SetPart { part, .. }, .. } = &out.flush()[0] else { panic!() };
+        assert_eq!(part["text"], "Your key is [redacted], keep it safe and private.");
+    }
+
+    #[test]
     fn a_snapshot_follows_the_last_flush() {
         let mut out = Outbox::new(2);
-        out.push(text(0, "x"));
+        out.push(text(0, "x y z "));
         out.flush();
         let info = ThreadInfo { title: "t".into(), kind: super::super::ThreadKind::Chat, workspace_name: None, host_name: "h".into() };
         let snap = out.snapshot(info, vec![], vec![], vec![], Room::default());
         assert_eq!(snap.order(), Some((2, 1)));
         out.next_epoch();
-        out.push(text(0, "y"));
+        out.push(text(0, "and then some "));
         assert_eq!(out.flush()[0].order(), Some((3, 2)));
     }
 

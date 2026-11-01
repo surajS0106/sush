@@ -33,7 +33,7 @@ pub async fn workspaces_list(state: State<'_, AppState>) -> AppResult<Vec<Worksp
 pub async fn workspace_add(app: AppHandle, state: State<'_, AppState>) -> AppResult<Option<Workspace>> {
     let dialog = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog.dialog().file().set_title("Choose a folder for Cowork").blocking_pick_folder()
+        dialog.dialog().file().set_title("Choose a folder to work in").blocking_pick_folder()
     })
     .await
     .map_err(|e| AppError::Invalid(format!("The folder picker failed: {e}")))?;

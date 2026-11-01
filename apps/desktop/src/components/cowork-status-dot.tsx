@@ -2,8 +2,8 @@ import { useCoworkStatus, type SessionStatus } from "@/lib/sessions";
 import { cn } from "@/lib/utils";
 
 const LABELS: Record<SessionStatus, string> = {
-  working: "A Cowork session is in progress",
-  "needs-input": "A Cowork session is waiting for you",
+  working: "A Work session is in progress",
+  "needs-input": "A Work session is waiting for you",
 };
 
 /** A Cowork session is running (pulsing) or waiting on the user (solid). Size and position come from `className`. */

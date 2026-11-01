@@ -374,8 +374,26 @@ export async function refreshShareAccount() {
   return a;
 }
 
-/** The address a new relay setup starts from: the server this app signs in to. */
-export const DEFAULT_RELAY = AUTH_URL;
+/**
+ * Whether a relay is on this machine or the local network. Anywhere else it's someone
+ * else's server on the internet, so shares through it are always encrypted (`share.rs::is_local_relay`).
+ */
+export function isLocalRelay(relayUrl: string | null | undefined): boolean {
+  let host: string;
+  try {
+    host = new URL(relayUrl ?? "").hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    return false;
+  }
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host === "::1") return true;
+  const ip = host.split(".").map(Number);
+  if (ip.length !== 4 || ip.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = ip;
+  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+}
+
+/** The address a new relay setup starts from: the hosted relay when the build names one, else the server this app signs in to. */
+export const DEFAULT_RELAY = import.meta.env.VITE_RELAY_URL || AUTH_URL;
 
 /** Share through the server this app signs in to, with this app's own session. */
 export async function shareWithAppAccount(relayUrl = DEFAULT_RELAY) {

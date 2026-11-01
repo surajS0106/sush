@@ -78,7 +78,7 @@ Add a variant to `HostMsg` and give it an `order()` arm if it's part of the orde
 1. `bun run dev:server`, then `bun run dev:app` for instance A.
 2. Instance B, from the repo root in PowerShell, once A has compiled (it reuses A's Vite on 1420): `$env:SUSH_PROFILE='b'; .\target\debug\sush.exe`. Its window is titled "Sush (b)" and it has its own data (`%APPDATA%\com.sush.app-b`), dev secrets and WebView2 storage, so its own login. macOS shares webview storage between instances, so use two machines there.
 3. In each instance, go to Settings → Sharing or the share dialog and choose **Use the account I'm signed in with**. Then in A: session menu → **Share live…** → start and copy the link. In B: **Shared with you** → **+** → paste → Join. In A: **Let in**.
-4. For two machines on a LAN, run `bun run dev:relay` (all interfaces, port 3000) on the host instead of `dev:server`. Everyone, including the host, uses `http://<host-ip>:3000`, because links carry the relay's origin.
+4. Over the internet, use the Cloudflare relay (`apps/relay`, `bun run dev:relay-cf` locally on :8787 or the deployed one; see its README). Shares through it are always encrypted. For two machines on a LAN, run `bun run dev:relay` (all interfaces, port 3000) on the host instead of `dev:server`. Everyone, including the host, uses `http://<host-ip>:3000`, because links carry the relay's origin.
 5. Phase 2 checks (all passed by hand on 2026-10-25). Give A's Cowork session auto-edits, and use a folder with a `.env`. Join B with **Link to suggest**:
    - B's suggestion reaches A's queue. A sends it on (edited); the message shows B's avatar and "sent by A".
    - An edit asks A despite auto-edits (the floor). B sees "Waiting for A".

@@ -6,7 +6,11 @@
 // relay never reads the session). No user ids, no share ids, no content.
 // Only admins (SUSH_ADMIN_EMAILS) can read the totals.
 
+import { bucket, isoWeek, type Metric } from "./common";
 import { db } from "./db";
+
+export { isAdmin } from "./common";
+export type { Metric };
 
 db.run(`CREATE TABLE IF NOT EXISTS share_metric (
   week TEXT NOT NULL,
@@ -15,30 +19,6 @@ db.run(`CREATE TABLE IF NOT EXISTS share_metric (
   count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (week, metric, bucket)
 )`);
-
-export type Metric = "shares_created" | "guests_per_share" | "steers_per_share";
-
-/** The ISO week a time falls in, like 2026-W43. */
-export function isoWeek(ms: number): string {
-  const d = new Date(ms);
-  const day = (d.getUTCDay() + 6) % 7;
-  const thursday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - day + 3));
-  const jan4 = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
-  const week = 1 + Math.round(((thursday.getTime() - jan4.getTime()) / 86_400_000 - 3 + ((jan4.getUTCDay() + 6) % 7)) / 7);
-  return `${thursday.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-}
-
-/** A histogram bucket for a count. */
-export function bucket(metric: Metric, n: number): string {
-  if (metric === "shares_created") return "all";
-  const edges = metric === "guests_per_share" ? [0, 1, 2, 5, 10] : [0, 5, 20, 50];
-  let low = 0;
-  for (const edge of edges) {
-    if (n <= edge) return low === edge ? String(edge) : `${low}-${edge}`;
-    low = edge + 1;
-  }
-  return `${low}+`;
-}
 
 export function count(metric: Metric, n = 0, at = Date.now()) {
   db.run(
@@ -62,10 +42,3 @@ export function weekly(limit = 26) {
   }
   return [...weeks].map(([week, metrics]) => ({ week, ...metrics }));
 }
-
-export const isAdmin = (email: string) =>
-  (process.env.SUSH_ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
-    .includes(email.toLowerCase());

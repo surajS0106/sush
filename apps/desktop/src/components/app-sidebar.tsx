@@ -89,7 +89,7 @@ const RECENT_LIMIT = 8;
 
 /** The sidebar's destinations, in order. "Edit sidebar…" moves any of them under "More". */
 const NAV = [
-  { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
+  { id: "cowork", label: "Work", icon: FolderOpenIcon },
   { id: "automations", label: "Automations", icon: TimerIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
@@ -452,10 +452,10 @@ function EditSidebarDialog({ open, onOpenChange }: { open: boolean; onOpenChange
 
 const MODES: { value: SessionMode; label: string; icon: typeof MessageSquareIcon }[] = [
   { value: "chat", label: "Chat", icon: MessagesSquareIcon },
-  { value: "cowork", label: "Cowork: work in a folder", icon: CodeXmlIcon },
+  { value: "cowork", label: "Work in a folder", icon: CodeXmlIcon },
 ];
 
-/** The Chat / Cowork switch in the sidebar's title bar. */
+/** The Chat / Work switch in the sidebar's title bar (Work is "cowork" in code). */
 function ModeToggle({ mode, onChange }: { mode: SessionMode; onChange: (mode: SessionMode) => void }) {
   return (
     <div role="radiogroup" aria-label="Session type" className="flex items-center gap-0.5 rounded-lg bg-sidebar-accent/70 p-0.5">
@@ -500,8 +500,8 @@ function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => voi
   if (workspaces.length === 0) {
     return (
       <SidebarMenuItem>
-        <SidebarMenuButton tooltip="Cowork: work in a folder" onClick={() => void add()}>
-          <FolderOpenIcon /> <span>Cowork</span>
+        <SidebarMenuButton tooltip="Work in a folder" onClick={() => void add()}>
+          <FolderOpenIcon /> <span>Work</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     );
@@ -510,8 +510,8 @@ function CoworkMenu({ onNewCowork }: { onNewCowork: (workspaceId: string) => voi
     <SidebarMenuItem>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <SidebarMenuButton tooltip="Cowork: work in a folder">
-            <FolderOpenIcon /> <span>Cowork</span>
+          <SidebarMenuButton tooltip="Work in a folder">
+            <FolderOpenIcon /> <span>Work</span>
             {status && <StatusDot status={status} className="ml-auto" />}
             <ChevronDownIcon className={cn("size-3.5 text-muted-foreground", !status && "ml-auto")} />
           </SidebarMenuButton>
@@ -557,7 +557,7 @@ function SessionRow({
         ) : automated ? (
           <TimerIcon className="text-muted-foreground" aria-label="Automation run" />
         ) : (
-          c.workspaceId && <FolderIcon className="text-muted-foreground" aria-label="Cowork session" />
+          c.workspaceId && <FolderIcon className="text-muted-foreground" aria-label="Work session" />
         )}
         <span>{c.title}</span>
         {status === "needs-input" && (

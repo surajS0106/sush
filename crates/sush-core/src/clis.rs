@@ -207,7 +207,7 @@ pub fn chat_section(installed: &[Cli]) -> String {
     let mut s = format!(
         "You can run {} commands on the user's computer with shell_run. Each one asks the user first and runs with \
          their permissions, outside any sandbox, so keep commands to what the task needs and say what you're about \
-         to do. For work on a project's files, suggest a Cowork session on its folder instead.",
+         to do. For work on a project's files, suggest a Work session on its folder instead.",
         shell::shell_name()
     );
     if let Some(clis) = prompt(installed) {

@@ -218,7 +218,7 @@ mod tests {
         ThreadInfo { title: "t".into(), kind: ThreadKind::Cowork, workspace_name: Some("sush".into()), host_name: "Suraj".into() }
     }
 
-    fn snapshot(out: &Outbox, messages: Vec<Value>) -> HostMsg {
+    fn snapshot(out: &mut Outbox, messages: Vec<Value>) -> HostMsg {
         let threads = vec![ThreadState { child: None, messages, status: RunStatus::Streaming, error: None }];
         out.snapshot(info(), threads, vec![], vec![], Room::default())
     }
@@ -227,7 +227,7 @@ mod tests {
     fn suggestions_comments_and_the_log_follow_the_host() {
         let mut out = Outbox::new(1);
         let mut guest = Replica::default();
-        guest.apply(snapshot(&out, vec![]));
+        guest.apply(snapshot(&mut out, vec![]));
         let author = Author { user_id: "u".into(), name: "Shruti".into(), image: None };
         let suggestion = Suggestion { id: "s".into(), author: author.clone(), text: "try tabs".into(), files: vec![], at: 1 };
         out.push(Event::Queue { suggestions: vec![suggestion.clone()] });
@@ -247,13 +247,14 @@ mod tests {
         let mut host = vec![json!({ "id": "u", "role": "user", "parts": [{ "type": "text", "text": "hi" }] })];
         let mut out = Outbox::new(1);
         let mut guest = Replica::default();
-        assert_eq!(guest.apply(snapshot(&out, host.clone())), Applied::Changed(Change::Snapshot));
+        assert_eq!(guest.apply(snapshot(&mut out, host.clone())), Applied::Changed(Change::Snapshot));
 
         let ops = [
             Op::Push { message: json!({ "id": "a", "role": "assistant", "parts": [] }) },
             Op::PushPart { part: json!({ "type": "text", "text": "", "state": "streaming" }) },
             Op::AppendText { index: 0, delta: "Hel".into() },
             Op::AppendText { index: 0, delta: "lo".into() },
+            Op::SetPart { index: 0, part: json!({ "type": "text", "text": "Hello", "state": "done" }) },
             Op::SetMetadata { metadata: json!({ "model": "m" }) },
         ];
         for op in ops {
@@ -268,6 +269,38 @@ mod tests {
         assert_eq!(guest.threads[&None].status, RunStatus::Ready);
     }
 
+    /// A guest joining while text is held back gets it from the appends that follow, not twice.
+    #[test]
+    fn a_snapshot_mid_stream_lines_up_with_the_appends_after_it() {
+        let mut host = vec![json!({ "id": "a", "role": "assistant", "parts": [{ "type": "text", "text": "", "state": "streaming" }] })];
+        let mut out = Outbox::new(1);
+        let mut guest = Replica::default();
+        let append = |host: &mut Vec<Value>, out: &mut Outbox, delta: &str| {
+            let op = Op::AppendText { index: 0, delta: delta.into() };
+            ui::apply(host, &op);
+            out.push(Event::Op { child: None, op });
+        };
+        append(&mut host, &mut out, "The answer is ");
+        append(&mut host, &mut out, "forty two, as ");
+        out.flush();
+        guest.apply(snapshot(&mut out, host.clone()));
+        append(&mut host, &mut out, "always and ");
+        append(&mut host, &mut out, "forever more ");
+        for msg in out.flush() {
+            guest.apply(msg);
+        }
+        let text = |messages: &[Value]| messages[0]["parts"][0]["text"].as_str().unwrap().to_string();
+        let (seen, full) = (text(&guest.threads[&None].messages), text(&host));
+        assert!(full.starts_with(&seen) && seen.len() > "The answer is ".len(), "{seen:?} / {full:?}");
+        let done = Op::SetPart { index: 0, part: json!({ "type": "text", "text": full, "state": "done" }) };
+        ui::apply(&mut host, &done);
+        out.push(Event::Op { child: None, op: done });
+        for msg in out.flush() {
+            guest.apply(msg);
+        }
+        assert_eq!(guest.threads[&None].messages, host);
+    }
+
     #[test]
     fn nothing_applies_before_a_snapshot_and_duplicates_are_ignored() {
         let mut out = Outbox::new(1);
@@ -275,7 +308,7 @@ mod tests {
         out.push(Event::ToolRunning { call_id: "c".into(), running: true });
         let early = out.flush();
         assert_eq!(guest.apply(early[0].clone()), Applied::Ignored);
-        guest.apply(snapshot(&out, vec![]));
+        guest.apply(snapshot(&mut out, vec![]));
         // Sent before the snapshot was taken, so already part of it.
         assert_eq!(guest.apply(early[0].clone()), Applied::Ignored);
     }
@@ -284,14 +317,14 @@ mod tests {
     fn a_gap_or_a_new_epoch_asks_for_a_snapshot() {
         let mut out = Outbox::new(1);
         let mut guest = Replica::default();
-        guest.apply(snapshot(&out, vec![]));
+        guest.apply(snapshot(&mut out, vec![]));
         out.push(Event::ToolRunning { call_id: "a".into(), running: true });
         out.push(Event::ToolRunning { call_id: "b".into(), running: true });
         let sent = out.flush();
         assert_eq!(guest.apply(sent[1].clone()), Applied::Resync);
         // Until the next snapshot, nothing applies.
         assert_eq!(guest.apply(sent[0].clone()), Applied::Ignored);
-        guest.apply(snapshot(&out, vec![]));
+        guest.apply(snapshot(&mut out, vec![]));
         out.next_epoch();
         out.push(Event::ToolRunning { call_id: "c".into(), running: true });
         assert_eq!(guest.apply(out.flush().remove(0)), Applied::Resync);
@@ -301,7 +334,7 @@ mod tests {
     fn sub_agents_threads_are_kept_apart() {
         let mut out = Outbox::new(1);
         let mut guest = Replica::default();
-        guest.apply(snapshot(&out, vec![]));
+        guest.apply(snapshot(&mut out, vec![]));
         out.push(Event::Op { child: Some("call1".into()), op: Op::Push { message: json!({ "id": "x", "role": "user", "parts": [] }) } });
         guest.apply(out.flush().remove(0));
         assert_eq!(guest.threads[&Some("call1".to_string())].messages.len(), 1);

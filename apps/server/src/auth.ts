@@ -3,8 +3,9 @@ import { betterAuth } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { bearer } from "better-auth/plugins";
 
-/** Origins the desktop webview loads from: Vite in dev, Tauri's custom protocol in builds. */
-export const trustedOrigins = ["http://localhost:1420", "tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
+import { trustedOrigins } from "./share/common";
+
+export { trustedOrigins };
 
 /** Accounts, and the shared sessions the relay keeps (`share/db.ts`). */
 export const db = new Database(process.env.DATABASE_PATH ?? "auth.sqlite");

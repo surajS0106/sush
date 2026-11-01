@@ -6,6 +6,9 @@
     }
   },
   "bundle": {
-    "externalBin": ["binaries/sush-auth"]
+    "externalBin": ["binaries/sush-auth"],
+    "macOS": {
+      "signingIdentity": "-"
+    }
   }
 }

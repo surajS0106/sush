@@ -55,7 +55,7 @@ import { addWorkspace, useGitInfo, useWorkspaces } from "@/lib/workspaces";
 type Kind = "security" | "review";
 
 const PAGE: Record<Kind, { title: string; description: string }> = {
-  security: { title: "Security", description: "Find vulnerabilities in a folder's code, then fix them in a Cowork session." },
+  security: { title: "Security", description: "Find vulnerabilities in a folder's code, then fix them in a Work session." },
   review: { title: "Review", description: "Review your changes, a branch or a pull request before it ships." },
 };
 
@@ -392,7 +392,7 @@ function NewReport({ kind, workspace, onStarted }: { kind: Kind; workspace: Work
           {starting ? <Spinner /> : <PlayIcon />} Run {KIND_LABEL[kind].toLowerCase()}
         </Button>
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">Sush only reads the code for this. Fixes happen in a Cowork session, where you can undo them.</p>
+      <p className="mt-3 text-xs text-muted-foreground">Sush only reads the code for this. Fixes happen in a Work session, where you can undo them.</p>
     </section>
   );
 }

@@ -8,7 +8,7 @@
 // what the relay always allowed. With plans on, accounts whose email is in
 // SUSH_TEAM_EMAILS (comma separated) get "team" and everyone else "free".
 
-import { MAX_GUESTS } from "./db";
+import { MAX_GUESTS } from "./common";
 
 export type GuestRole = "viewer" | "collaborator" | "driver";
 

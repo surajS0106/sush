@@ -7,8 +7,10 @@
 //! `applyOp` in the desktop app's `sessions.ts`).
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::LazyLock;
 
 use base64::Engine;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -479,6 +481,44 @@ fn file_part(url: &str, media_type: &str, filename: Option<&str>) -> Option<Part
     Some(Part::Text { text: format!("<file name=\"{name}\">\n{text}\n</file>") })
 }
 
+/// Matches the errors providers return when a model was sent images or PDFs it can't read.
+static MEDIA_UNSUPPORTED: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(concat!(
+        r"(?i)(does not|doesn't|doesn’t|do not|cannot|can't) (support|accept|process|handle|read) ",
+        r"(image|vision|multimodal|multi-modal|pdf|document|file|media)",
+        r"|(image|vision|pdf|document|multimodal)s? (input|content|inputs)? ?(is|are) not supported",
+        r"|not a (multimodal|vision) model|image_url is only supported|unsupported content type",
+        r"|invalid content type.{0,20}(image|file|document)",
+    ))
+    .expect("valid regex")
+});
+
+/// Whether a provider's error says the model can't take images or PDFs.
+pub fn is_media_unsupported(error: &str) -> bool {
+    MEDIA_UNSUPPORTED.is_match(error)
+}
+
+/// Swaps every image and PDF for a note that it was left out, for a model that
+/// can't read them. Returns whether there were any.
+pub fn without_media(messages: &mut [Message]) -> bool {
+    let mut found = false;
+    for part in messages.iter_mut().flat_map(|m| m.parts.iter_mut()) {
+        let what = match part {
+            Part::Image { .. } => "An image".to_string(),
+            Part::Document { name, .. } => format!("A PDF ({})", name.as_deref().unwrap_or("attachment")),
+            _ => continue,
+        };
+        found = true;
+        *part = Part::Text {
+            text: format!(
+                "[{what} was attached here, but the current model can't read images or PDFs, so it was left out. \
+                 If it matters, tell the user and suggest switching to a model that can.]"
+            ),
+        };
+    }
+    found
+}
+
 fn is_text_type(media_type: &str) -> bool {
     const APP: [&str; 10] = ["json", "xml", "javascript", "typescript", "x-yaml", "yaml", "toml", "x-sh", "sql", "graphql"];
     media_type.is_empty()
@@ -611,6 +651,37 @@ mod tests {
                 Part::ToolResult { call_id: "c2".into(), output: json!(UNANSWERED), is_error: true },
             ]
         );
+    }
+
+    #[test]
+    fn media_errors_are_told_apart() {
+        for e in [
+            "OpenAI-compatible returned HTTP 400: this model does not support image input",
+            "Anthropic returned HTTP 400: model doesn't support PDF documents",
+            "HTTP 400: Image input is not supported for this model",
+            "HTTP 400: image_url is only supported by certain models",
+        ] {
+            assert!(is_media_unsupported(e), "{e}");
+        }
+        for e in ["HTTP 400: this model does not support tools", "couldn't reach http://localhost:11434"] {
+            assert!(!is_media_unsupported(e), "{e}");
+        }
+    }
+
+    #[test]
+    fn without_media_leaves_notes() {
+        let mut messages = vec![Message {
+            role: Role::User,
+            parts: vec![
+                Part::Image { media_type: "image/png".into(), data: "AAA".into() },
+                Part::Document { media_type: "application/pdf".into(), data: "AAA".into(), name: Some("a.pdf".into()) },
+                Part::Text { text: "hi".into() },
+            ],
+        }];
+        assert!(without_media(&mut messages));
+        assert!(matches!(&messages[0].parts[1], Part::Text { text } if text.contains("A PDF (a.pdf)")));
+        assert_eq!(messages[0].parts[2], Part::Text { text: "hi".into() });
+        assert!(!without_media(&mut messages));
     }
 
     #[test]

@@ -48,7 +48,7 @@ pub async fn report_create(
     let store = state.store.clone();
     blocking(move || {
         let workspace =
-            store.workspace(&workspace_id)?.ok_or_else(|| AppError::NotFound("That folder is no longer in Cowork.".into()))?;
+            store.workspace(&workspace_id)?.ok_or_else(|| AppError::NotFound("That folder was removed from Sush.".into()))?;
         let report = Report::new(new_id(), workspace_id, kind, scope, thread_id, Path::new(&workspace.root), now_ms())
             .map_err(AppError::Invalid)?;
         store.save_report(&report)?;
@@ -68,7 +68,7 @@ pub async fn report_rerun(state: State<'_, AppState>, id: String, thread_id: Str
         let report = store.report(&id)?.ok_or_else(|| AppError::NotFound("That report no longer exists.".into()))?;
         let root = store
             .workspace(&report.workspace_id)?
-            .ok_or_else(|| AppError::NotFound("That folder is no longer in Cowork.".into()))?
+            .ok_or_else(|| AppError::NotFound("That folder was removed from Sush.".into()))?
             .root;
         Ok(store
             .update_report(&id, |r| {

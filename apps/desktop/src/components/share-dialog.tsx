@@ -20,12 +20,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
+import { AUTH_URL } from "@/lib/auth";
 import {
   admit,
   copyInvite,
   DEFAULT_RELAY,
   endShare,
   isLive,
+  isLocalRelay,
   kick,
   listInvites,
   othersCanSteer,
@@ -83,7 +85,7 @@ export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
     void run(() => signInToRelay(relay, email, password, creating ? name || email.split("@")[0] : undefined));
   };
   // The server this app signs in to can be the relay too; then the same session does.
-  const sameServer = sameOrigin(relay, DEFAULT_RELAY);
+  const sameServer = sameOrigin(relay, AUTH_URL);
 
   return (
     <div className="flex flex-col gap-4">
@@ -91,8 +93,8 @@ export function ShareAccountSetup({ onReady }: { onReady?: () => void }) {
         <Label htmlFor="share-relay">Relay</Label>
         <Input id="share-relay" value={relay} onChange={(e) => setRelay(e.target.value)} placeholder="http://192.168.1.20:3000" spellCheck={false} />
         <p className="text-xs text-muted-foreground">
-          The server shared sessions pass through. On your Wi-Fi, one of you runs <code>bun run dev:relay</code> and everyone
-          uses that machine’s address.
+          The server shared sessions pass through: the hosted relay (it only ever sees encrypted messages), or, on your
+          Wi-Fi, one of you runs <code>bun run dev:relay</code> and everyone uses that machine’s address.
         </p>
       </div>
       {sameServer && (
@@ -170,7 +172,10 @@ export function ShareDialog({ threadId, onClose }: { threadId: string | null; on
 
 function Start({ threadId, ended }: { threadId: string; ended: string | null }) {
   const [busy, setBusy] = useState(false);
-  const [e2e, setE2e] = useState(true);
+  const [chosen, setE2e] = useState(true);
+  // Through a relay on the internet, sessions are always encrypted (the app enforces it too).
+  const local = isLocalRelay(useShareAccount()?.relayUrl);
+  const e2e = chosen || !local;
   const start = async () => {
     setBusy(true);
     try {
@@ -197,7 +202,12 @@ function Start({ threadId, ended }: { threadId: string; ended: string | null }) 
         <span className="flex items-center gap-2">
           <LockIcon className="size-4" /> End-to-end encrypt
         </span>
-        <Switch checked={e2e} onCheckedChange={setE2e} />
+        <Switch
+          checked={e2e}
+          onCheckedChange={setE2e}
+          disabled={!local}
+          title={local ? undefined : "Always on through a relay on the internet"}
+        />
       </label>
       <Button onClick={() => void start()} disabled={busy}>
         <LinkIcon /> Start sharing and copy link

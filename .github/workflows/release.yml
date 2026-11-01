@@ -71,6 +71,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_AUTH_URL: http://localhost:47321
+          # The hosted relay for shared sessions (`apps/relay`), set as a repository variable once it's deployed.
+          VITE_RELAY_URL: ${{ vars.SUSH_RELAY_URL }}
         with:
           projectPath: apps/desktop
           tauriScript: bun tauri

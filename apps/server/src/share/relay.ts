@@ -9,19 +9,10 @@
 
 import type { WSContext } from "hono/ws";
 
-import { db, guestCount, liveShare, safeImage, user, type ShareRow, type UserRow } from "./db";
+import { BURST, GUEST_MAX_BYTES, HOST_GRACE_MS, peerOf, RATE, type Peer, type UserRow } from "./common";
+import { db, guestCount, liveShare, user, type ShareRow } from "./db";
 import { count } from "./metrics";
 import { planFor } from "./plans";
-
-export interface Peer {
-  peerId: string;
-  userId: string;
-  name: string;
-  image: string | null;
-  isHost: boolean;
-  /** A guest's invite: "viewer" or "collaborator". The host decides their role from it. */
-  roleCap?: string;
-}
 
 interface Conn {
   peer: Peer;
@@ -39,14 +30,6 @@ interface Room {
   /** Ends the share if the host stays away. */
   hostGone?: ReturnType<typeof setTimeout>;
 }
-
-/** A guest may send this many messages a second, with bursts of `BURST`. */
-const RATE = 10;
-const BURST = 30;
-/** Room for a message with a few images (the host checks each: at most 2 MB). */
-const GUEST_MAX_BYTES = 8 * 1024 * 1024;
-/** How long a share waits for its host to come back. */
-const HOST_GRACE_MS = 5 * 60 * 1000;
 
 const rooms = new Map<string, Room>();
 
@@ -77,17 +60,6 @@ function close(conn: Conn, reason: string) {
   } catch {
     // Already gone.
   }
-}
-
-export function peerOf(user: UserRow, isHost: boolean, roleCap?: string): Peer {
-  return {
-    peerId: crypto.randomUUID(),
-    userId: user.id,
-    name: user.name || user.email.split("@")[0],
-    image: safeImage(user.image),
-    isHost,
-    ...(roleCap ? { roleCap } : {}),
-  };
 }
 
 /** The handlers for one connection, opened after the route checked who it is. */

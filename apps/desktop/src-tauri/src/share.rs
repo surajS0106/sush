@@ -1036,8 +1036,22 @@ async fn fetch_limits(http: &reqwest::Client, account: &Account) -> Limits {
     }
 }
 
+/// Whether a relay is on this machine or the local network. Anywhere else it's
+/// someone else's server on the internet, so shares through it are always encrypted
+/// (`isLocalRelay` in `lib/share.ts`).
+fn is_local_relay(relay_url: &str) -> bool {
+    let Some(host) = reqwest::Url::parse(relay_url).ok().and_then(|u| u.host_str().map(str::to_owned)) else { return false };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private() || ip.is_link_local(),
+        Ok(std::net::IpAddr::V6(ip)) => ip.is_loopback(),
+        Err(_) => host == "localhost" || host.ends_with(".localhost") || host.ends_with(".local"),
+    }
+}
+
 /// Start sharing a session. Incognito sessions, reports and sub-agents' threads can't be shared.
-/// `e2e` (on unless turned off): the relay forwards only ciphertext. `metrics`: report
+/// `e2e` (on unless turned off, and always on through a relay off the local network): the
+/// relay forwards only ciphertext. `metrics`: report
 /// anonymous counts (guests, messages; never content) to the relay when the share ends.
 #[tauri::command]
 pub async fn share_start(
@@ -1057,6 +1071,7 @@ pub async fn share_start(
         return Ok(share.view());
     }
     let account = account()?;
+    let e2e = e2e.unwrap_or(true) || !is_local_relay(&account.relay_url);
     let store = state.store.clone();
     let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
     let (report, workspace) = blocking(move || {
@@ -1078,7 +1093,7 @@ pub async fn share_start(
         .http
         .post(format!("{}/api/shares", account.relay_url))
         .bearer_auth(&account.token)
-        .json(&json!({ "title": thread.title, "metrics": metrics.unwrap_or(false), "e2e": e2e.unwrap_or(true) }))
+        .json(&json!({ "title": thread.title, "metrics": metrics.unwrap_or(false), "e2e": e2e }))
         .send()
         .await
         .map_err(net)?;
@@ -1123,9 +1138,7 @@ pub async fn share_start(
             ended: None,
             error: None,
         }),
-        e2e: e2e
-            .unwrap_or(true)
-            .then(|| Mutex::new(HostE2e { keys: vec![ShareKey::generate(1)], devices: HashMap::new(), seen: Seen::default() })),
+        e2e: e2e.then(|| Mutex::new(HostE2e { keys: vec![ShareKey::generate(1)], devices: HashMap::new(), seen: Seen::default() })),
         metrics: metrics.unwrap_or(false),
         steers: Default::default(),
         limits,

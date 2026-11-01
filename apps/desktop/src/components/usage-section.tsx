@@ -169,7 +169,7 @@ export function UsageSection({ providers }: { providers: ProviderView[] }) {
               />
               <Row
                 icon={<FolderIcon className="size-4" />}
-                label="Cowork"
+                label="Work"
                 tally={usage.cowork}
                 details={<KindDetails tally={usage.cowork} sessions={usage.cowork.sessions} noun="session" />}
               />

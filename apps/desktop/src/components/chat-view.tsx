@@ -7,6 +7,7 @@ import {
   FolderKanbanIcon,
   GhostIcon,
   HistoryIcon,
+  ImageOffIcon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -887,6 +888,12 @@ const ChatMessage = memo(function ChatMessage({
             <UserAvatar image={safeImage(author.image)} name={author.name} className="size-4 text-[9px]" />
             {author.name}
             {message.metadata?.acceptedBy && <span>· sent by {message.metadata.acceptedBy.name}</span>}
+          </p>
+        )}
+        {message.metadata?.mediaOmitted && (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ImageOffIcon className="size-3.5" />
+            {model ?? "This model"} can’t read images or PDFs, so they were left out. Switch models to include them.
           </p>
         )}
         {withTeams(groupParts(message.parts, branchCall), message.parts).map((item) =>
