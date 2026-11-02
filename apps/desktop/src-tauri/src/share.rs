@@ -56,13 +56,14 @@ use sush_core::share::control::{self, Actor, AwayMode, ControlRequest};
 use sush_core::share::crypto::{self, Device, DeviceKeys, Direction, Seen, ShareKey};
 use sush_core::share::outbox::{self, Event, Outbox};
 use sush_core::share::policy::{Allowed, ApprovalClass};
+use sush_core::share::redact;
 use sush_core::share::replica::{Applied, Change, Replica};
 use sush_core::share::{
     self as proto, policy, Author, Body, BrowserPage, Comment, Decision, GuestMsg, HostMsg, Image, Intent, Member, Role, Room, SharePolicy, Suggestion,
     ThreadInfo, ThreadKind, ThreadState, TurnFiles,
 };
 use sush_core::store::ThreadMeta;
-use sush_core::workspace::{git, looks_secret, WorkspaceFs};
+use sush_core::workspace::{ci, git, looks_secret, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -1544,6 +1545,9 @@ fn intent_kind(intent: &Intent) -> &'static str {
         Intent::GetBlob { .. } => "get-blob",
         Intent::GitLog { .. } => "git-log",
         Intent::GitCommit { .. } => "git-commit",
+        Intent::BranchStatus { .. } => "branch-status",
+        Intent::PrChecks { .. } => "pr-checks",
+        Intent::CheckFailure { .. } => "check-failure",
         Intent::Steer { .. } => "steer",
         Intent::SuggestionAccept { .. } => "suggestion-accept",
         Intent::SuggestionDrop { .. } => "suggestion-drop",
@@ -1690,6 +1694,24 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
             detail.email = String::new();
             detail.files.retain(|f| !looks_secret(&f.path) && !f.local.as_deref().is_some_and(looks_secret));
             Ok(json!(detail))
+        })
+        .await
+        .map_err(failed),
+        // The pull request card, as the owner's (`workspaces::workspace_branch_status`, `workspace_pr_checks`).
+        Intent::BranchStatus { base } => blocking(move || Ok(json!(workspaces::branch_status_at(Path::new(&git_root?), base)?)))
+            .await
+            .map_err(failed),
+        Intent::PrChecks { pr } => blocking(move || Ok(json!(ci::pipeline(Path::new(&git_root?), pr)))).await.map_err(failed),
+        // A log can print anything the job had; scrubbed like tool output.
+        Intent::CheckFailure { job } => blocking(move || {
+            let mut f = ci::failure(Path::new(&git_root?), job).map_err(AppError::Invalid)?;
+            let scrub = |t: &mut Option<String>| *t = t.as_deref().map(redact::scrub);
+            scrub(&mut f.location);
+            scrub(&mut f.title);
+            scrub(&mut f.expected);
+            scrub(&mut f.received);
+            f.tail = f.tail.iter().map(|l| redact::scrub(l)).collect();
+            Ok(json!(f))
         })
         .await
         .map_err(failed),

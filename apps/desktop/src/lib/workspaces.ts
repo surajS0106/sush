@@ -10,10 +10,12 @@ import {
   errorMessage,
   isSharedThread,
   type BranchStatus,
+  type CheckFailure,
   type EditApproval,
   type FileDiff,
   type GitInfo,
   type GitLog,
+  type Pipeline,
   type SandboxStatus,
   type TurnChanges,
   type Workspace,
@@ -168,27 +170,176 @@ export function useGitInfo(workspaceId: string | undefined): GitInfo | null {
 }
 
 /**
- * The workspace's branch against `base`, refreshed as files change and when
- * `refresh` does. `error` says why there's none (not a repo, on the base itself).
+ * Where the pull request card reads git and CI: the owner's workspace, or, in a
+ * session shared with this app, the host (`thread` is `shared:…`).
  */
+export interface BranchSource {
+  key: string;
+  /** The files-version key (`useFilesVersion`): bumps when the session's files change. */
+  versionKey: string;
+  branchStatus: (base?: string) => Promise<BranchStatus>;
+  pipeline: (pr?: number) => Promise<Pipeline>;
+  failure: (job: number) => Promise<CheckFailure>;
+}
+
+export function branchSource(workspaceId: string | undefined, threadId: string): BranchSource | null {
+  if (workspaceId) {
+    return {
+      key: workspaceId,
+      versionKey: workspaceId,
+      branchStatus: (base) => api.workspaceBranchStatus(workspaceId, base),
+      pipeline: (pr) => api.workspacePrChecks(workspaceId, pr),
+      failure: (job) => api.workspaceCheckFailure(workspaceId, job),
+    };
+  }
+  if (!isSharedThread(threadId)) return null;
+  return {
+    key: threadId,
+    versionKey: threadId,
+    branchStatus: (base) => api.shareRequest<BranchStatus>(threadId, { kind: "branch-status", base: base ?? null }),
+    pipeline: (pr) => api.shareRequest<Pipeline>(threadId, { kind: "pr-checks", pr: pr ?? null }),
+    failure: (job) => api.shareRequest<CheckFailure>(threadId, { kind: "check-failure", job }),
+  };
+}
+
+/** The branch against `base`, read again whenever files change or `refresh` does. */
 export function useBranchStatus(
-  workspaceId: string | undefined,
+  source: BranchSource | null,
   base: string | undefined,
   refresh?: unknown,
 ): { status: BranchStatus | null; error: string | null } {
-  const version = useFilesVersion(workspaceId);
+  const version = useFilesVersion(source?.versionKey);
   const [result, setResult] = useState<{ status: BranchStatus | null; error: string | null }>({ status: null, error: null });
+  const read = useRef(source);
+  read.current = source;
+  const key = source?.key;
   useEffect(() => {
-    if (!workspaceId) return setResult({ status: null, error: null });
+    if (!key || !read.current) return setResult({ status: null, error: null });
     let live = true;
-    api
-      .workspaceBranchStatus(workspaceId, base)
+    read.current
+      .branchStatus(base)
       .then((status) => live && setResult({ status, error: null }))
       .catch((e) => live && setResult({ status: null, error: errorMessage(e) }));
     return () => {
       live = false;
     };
-  }, [workspaceId, base, version, refresh]);
+  }, [key, base, version, refresh]);
+  return result;
+}
+
+/** Polling while checks run, and while they're settled (a re-run or a new push can start them). */
+const PIPELINE_BUSY_MS = 4_000;
+const PIPELINE_IDLE_MS = 30_000;
+
+/** Reads in flight or just done, by source and pull request: the card and the tray share one gh call. */
+const pipelineReads = new Map<string, { at: number; read: Promise<Pipeline> }>();
+function readPipeline(source: BranchSource, pr: number | undefined): Promise<Pipeline> {
+  const key = `${source.key}:${pr ?? ""}`;
+  const last = pipelineReads.get(key);
+  if (last && Date.now() - last.at < 2_000) return last.read;
+  const read = source.pipeline(pr);
+  pipelineReads.set(key, { at: Date.now(), read });
+  return read;
+}
+
+/**
+ * The branch's pull request and its CI checks, as GitHub reports them. Polls
+ * while the pull request is open; stops once it's merged or closed, or when
+ * there's nothing to follow (no gh, no pull request), until `refresh` or
+ * `head` (a new commit) changes.
+ */
+export function usePrPipeline(source: BranchSource | null, pr: number | undefined, head: string | undefined, refresh?: unknown) {
+  const [pipeline, setPipeline] = useState<Pipeline | null>(null);
+  const read = useRef(source);
+  read.current = source;
+  const key = source?.key;
+  useEffect(() => {
+    if (!key) return setPipeline(null);
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let first = true;
+    const poll = () => {
+      timer = undefined;
+      // Skip polls while hidden (macOS also counts a covered window as hidden), but never the first read:
+      // the card holds Merge until it has one.
+      if (document.hidden && !first) return void (timer = setTimeout(poll, PIPELINE_IDLE_MS));
+      first = false;
+      if (!read.current) return;
+      readPipeline(read.current, pr)
+        .then((p) => {
+          if (!live) return;
+          setPipeline(p);
+          if (p.kind !== "live" || p.pr.state === "merged" || p.pr.state === "closed") return;
+          const busy = p.checks.some((c) => c.status === "running" || c.status === "pending");
+          timer = setTimeout(poll, busy ? PIPELINE_BUSY_MS : PIPELINE_IDLE_MS);
+        })
+        .catch((e) => live && setPipeline({ kind: "unavailable", reason: errorMessage(e) }));
+    };
+    poll();
+    // Back in view: read now rather than at the next idle tick, up to 30s away.
+    const onVisible = () => {
+      if (document.hidden || timer === undefined) return;
+      clearTimeout(timer);
+      poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [key, pr, head, refresh]);
+  return pipeline;
+}
+
+/** Failures read, by source and job: a finished job's log doesn't change. */
+const failures = new Map<string, CheckFailure>();
+
+/** Reading a failed job's log again after an error: GitHub can take a moment to have it. */
+const FAILURE_RETRY_MS = 5_000;
+const FAILURE_TRIES = 24;
+
+/**
+ * Why a failed CI job failed. `failure` is null while it's read; `error`
+ * says why it couldn't be, once retrying for about two minutes didn't help.
+ */
+export function useCheckFailure(
+  source: BranchSource | null,
+  job: number | null | undefined,
+): { failure: CheckFailure | null; error: string | null } {
+  const id = source && job != null ? `${source.key}:${job}` : null;
+  const [result, setResult] = useState<{ failure: CheckFailure | null; error: string | null }>(() => ({
+    failure: id ? (failures.get(id) ?? null) : null,
+    error: null,
+  }));
+  const read = useRef(source);
+  read.current = source;
+  useEffect(() => {
+    if (!id || job == null) return setResult({ failure: null, error: null });
+    const known = failures.get(id);
+    if (known) return setResult({ failure: known, error: null });
+    setResult({ failure: null, error: null });
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const attempt = (n: number) => {
+      read.current
+        ?.failure(job)
+        .then((f) => {
+          failures.set(id, f);
+          if (live) setResult({ failure: f, error: null });
+        })
+        .catch((e) => {
+          if (!live) return;
+          if (n + 1 < FAILURE_TRIES) timer = setTimeout(() => attempt(n + 1), FAILURE_RETRY_MS);
+          else setResult({ failure: null, error: errorMessage(e) });
+        });
+    };
+    attempt(0);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [id, job]);
   return result;
 }
 

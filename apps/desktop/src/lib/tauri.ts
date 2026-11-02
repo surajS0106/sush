@@ -216,6 +216,40 @@ export interface BranchStatus {
   more: boolean;
 }
 
+/** A branch's pull request and CI checks as GitHub reports them (`sush_core::workspace::ci::Pipeline`). */
+export type Pipeline = { kind: "live"; pr: PipelinePr; checks: CiCheck[] } | { kind: "unavailable"; reason: string };
+
+export interface PipelinePr {
+  number: number;
+  url: string;
+  state: "open" | "draft" | "merged" | "closed";
+  /** The commit the checks ran on. */
+  head: string;
+  base: string;
+}
+
+export interface CiCheck {
+  name: string;
+  status: "pending" | "running" | "passed" | "failed" | "skipped";
+  /** Unix milliseconds; null until it starts or ends. */
+  startedAt: number | null;
+  completedAt: number | null;
+  link: string | null;
+  /** The Actions job, for `workspaceCheckFailure`. */
+  job: number | null;
+}
+
+/** Why a CI job failed, from its log (`sush_core::workspace::ci::Failure`). */
+export interface CheckFailure {
+  /** `path:line`. */
+  location: string | null;
+  title: string | null;
+  expected: string | null;
+  received: string | null;
+  /** The log's last lines, when nothing above was found. */
+  tail: string[];
+}
+
 export interface BranchConflict {
   path: string;
   /** Who last changed the file on the base. */
@@ -667,6 +701,9 @@ export type ShareIntent =
   | { kind: "get-blob"; sha: string }
   | { kind: "git-log"; limit: number; all: boolean }
   | { kind: "git-commit"; sha: string }
+  | { kind: "branch-status"; base: string | null }
+  | { kind: "pr-checks"; pr: number | null }
+  | { kind: "check-failure"; job: number }
   | { kind: "steer"; text: string; images: ShareImage[] }
   | { kind: "suggestion-accept"; id: string; text?: string | null }
   | { kind: "suggestion-drop"; id: string }
@@ -849,6 +886,9 @@ export const api = {
   /** The branch against `base` (default: the repository's main branch), for the pull request card. */
   workspaceBranchStatus: (id: string, base?: string) =>
     invoke<BranchStatus>("workspace_branch_status", { id, base: base ?? null }),
+  /** The branch's pull request (or `pr`) and its CI checks, through the user's gh. */
+  workspacePrChecks: (id: string, pr?: number) => invoke<Pipeline>("workspace_pr_checks", { id, pr: pr ?? null }),
+  workspaceCheckFailure: (id: string, job: number) => invoke<CheckFailure>("workspace_check_failure", { id, job }),
   /** A new worktree on a fresh branch from `base`, added as a workspace. */
   worktreeCreate: (id: string, base: string) => invoke<Workspace>("worktree_create", { id, base }),
   turnDiff: (threadId: string, turnId: string) => invoke<FileDiff[]>("turn_diff", { threadId, turnId }),

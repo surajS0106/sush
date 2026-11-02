@@ -27,7 +27,7 @@ import { Message, MessageAction, MessageActions, MessageContent, MessageResponse
 import { usePromptInputController, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { ActivityGroup, groupParts } from "@/components/activity-group";
-import { BranchCard, BranchChip, latestBranchCall } from "@/components/branch-card";
+import { BranchCard, BranchTray, latestBranchCall } from "@/components/branch-card";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
 import { Composer, replyStage } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
@@ -117,7 +117,14 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // Driving someone's session: messages, stop, resume and the approvals handed over.
   const drives = watching?.role === "driver" && watching.status === "live";
   const watchingContext = useMemo<Watching | null>(
-    () => (watching ? { hostName: watching.thread.hostName, mayAnswer: (part) => mayAnswer(watching, part) } : null),
+    () =>
+      watching
+        ? {
+            hostName: watching.thread.hostName,
+            mayAnswer: (part) => mayAnswer(watching, part),
+            canSend: canWrite(watching.role) && watching.status === "live",
+          }
+        : null,
     [watching],
   );
 
@@ -164,7 +171,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // Slides: the deck open beside the chat takes the side panel's place.
   const decks = useMemo(() => deckViews(messages), [messages]);
   // Cowork: the latest branch_status call is the live pull request card.
-  const branchCall = useMemo(() => (workspaceId ? latestBranchCall(messages) : null), [workspaceId, messages]);
+  const branchCall = useMemo(() => (cowork ? latestBranchCall(messages) : null), [cowork, messages]);
   useEffect(() => {
     for (const deck of decks.byId.values()) autoOpenDeck(id, deck);
   }, [id, decks]);
@@ -259,7 +266,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const composer = watching ? (
     // Sushi stands on a guest's composer too, acting out the host's run.
     <div className="relative">
-      <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft="" className="absolute right-10 bottom-full z-10 -mb-px" />
+      <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft="" className="absolute right-10 bottom-[calc(100%+var(--tray-lift,0px))] z-10 -mb-px transition-[bottom] duration-300 ease-out" />
       {canWrite(watching.role) && watching.status === "live" ? <GuestComposer share={watching} status={runStatus} /> : <WatchingBar share={watching} />}
     </div>
   ) : (
@@ -447,11 +454,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
       </Conversation>
 
       <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
-        {workspaceId && branchCall && <BranchChip workspaceId={workspaceId} part={branchCall.part} />}
         {share && <ControlBanner share={share} />}
         {share && <SuggestionQueue share={share} />}
         {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
-        {composer}
+        {cowork && branchCall && <BranchTray workspaceId={workspaceId ?? undefined} threadId={id} part={branchCall.part} />}
+        {/* Above the tray, which tucks under its top edge. */}
+        <div className="relative z-10">{composer}</div>
       </div>
 
       <Dialog

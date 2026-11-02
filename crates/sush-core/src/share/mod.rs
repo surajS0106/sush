@@ -351,6 +351,18 @@ pub enum Intent {
     },
     /// One commit's message and changed files.
     GitCommit { sha: String },
+    /// The branch against its base, for the pull request card.
+    BranchStatus {
+        #[serde(default)]
+        base: Option<String>,
+    },
+    /// The branch's pull request and its CI checks (`workspace::ci`).
+    PrChecks {
+        #[serde(default)]
+        pr: Option<u64>,
+    },
+    /// Why a failed CI job failed.
+    CheckFailure { job: u64 },
     /// A message for the run: a driver's joins it, a collaborator's waits as a suggestion.
     Steer {
         #[serde(default)]
@@ -494,6 +506,9 @@ mod tests {
             (json!({ "kind": "undo", "turnId": "t", "path": "a.rs" }), Intent::Undo { turn_id: "t".into(), path: Some("a.rs".into()) }),
             (json!({ "kind": "git-log", "limit": 200, "all": true }), Intent::GitLog { limit: 200, all: true }),
             (json!({ "kind": "git-commit", "sha": "abc1234" }), Intent::GitCommit { sha: "abc1234".into() }),
+            (json!({ "kind": "branch-status" }), Intent::BranchStatus { base: None }),
+            (json!({ "kind": "pr-checks", "pr": 128 }), Intent::PrChecks { pr: Some(128) }),
+            (json!({ "kind": "check-failure", "job": 42 }), Intent::CheckFailure { job: 42 }),
         ];
         for (wire, intent) in intents {
             let text = Body::encode(GuestMsg::Intent { id: "i".into(), intent: intent.clone() });

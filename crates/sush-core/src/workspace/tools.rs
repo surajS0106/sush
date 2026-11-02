@@ -102,7 +102,7 @@ pub fn specs(access: Access, git: bool) -> Vec<ToolSpec> {
     }
     if git {
         out.push(spec(BRANCH_STATUS,
-            "Show the user this branch as a pull request card: its commits against the branch it merges into, whether it merges cleanly (and the conflicting lines if not), uncommitted changes, checks, and the pull request's state. The latest call's card stays live in the chat; call again whenever what you pass changes. Returns the branch's status.",
+            "Show the user this branch as a pull request card: its commits against the branch it merges into, whether it merges cleanly (and the conflicting lines if not), uncommitted changes, checks, and the pull request's state. The latest call's card stays live in the chat; call again whenever what you pass changes. Returns the branch's status, and its pull request and CI checks on GitHub when there is one.",
             json!({ "type": "object", "properties": {
                 "base": { "type": "string", "description": "The branch it merges into, e.g. main or origin/main (default: the repository's main branch)" },
                 "title": { "type": "string", "description": "The pull request's title, or what the branch does" },
@@ -316,7 +316,9 @@ fn git_tool(fs: &WorkspaceFs, name: &str, input: &Value, checkpoint: &Checkpoint
                 Some(b) => b.trim().to_string(),
                 None => git::default_base(root, current.as_deref()).ok_or("Couldn't tell which branch this one merges into; pass base.")?,
             };
-            Ok(git::branch_status(root, &base)?.summary())
+            let status = git::branch_status(root, &base)?;
+            // What GitHub says too, so the model doesn't push or open a pull request that exists, or miss a red check.
+            Ok(format!("{}\n{}", status.summary(), super::ci::pipeline(root, None).summary(&status.head)))
         }
         GIT_COMMIT => git::commit(root, str_arg(input, "message")?),
         GIT_MERGE if flag(input, "abort") => git::merge_abort(root, &mut keep),
@@ -365,6 +367,11 @@ pub fn system_section(ws: &Workspace, fs: &WorkspaceFs, sandbox: &SandboxStatus,
                  When the user asks for a pull request, or to commit, merge or check a branch, call branch_status to show it to them as a card, \
                  and call it again as things change: after committing, after opening the pull request (pass pr), around checks you run \
                  (pass checks, marking one running before you start it), after resolving conflicts, and after merging (pr.state merged). \
+                 Once a pull request on GitHub has its number, the card follows its CI checks by itself (through gh), with timing and \
+                 why one failed: don't poll checks or pass the host's checks, only the ones you run yourself. \
+                 branch_status also says whether the branch already has a pull request on GitHub and what its CI checks say: \
+                 call it before pushing or opening one, don't push or open another when it's already there and up to date, \
+                 and when a check failed say so plainly instead of calling the branch ready or clean. \
                  Opening or merging a pull request on a host like GitHub uses that host's connector tools if one is connected; \
                  pushing the branch needs shell_run with network and unsandboxed. Without a host, git_merge with into: true lands the branch on its base. ",
             );

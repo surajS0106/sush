@@ -51,6 +51,15 @@ function LoaderGrid({ delays, dur, round }: (typeof PATTERNS)[LoadingStateVarian
   );
 }
 
+/** The grid alone, in the text color, for a row's status (a running check). */
+export function PixelLoader({ variant = "Orbit", className }: { variant?: LoadingStateVariant; className?: string }) {
+  return (
+    <span className={cn("inline-flex scale-[0.8] [&_[data-pixel-loader]>span]:bg-current", className)}>
+      <LoaderGrid {...PATTERNS[variant]} />
+    </span>
+  );
+}
+
 function useElapsed() {
   const [ds, setDs] = useState(0);
   useEffect(() => {

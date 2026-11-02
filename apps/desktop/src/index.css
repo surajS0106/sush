@@ -27,6 +27,7 @@
     --font-sans: 'Geist Variable', sans-serif;
     --color-brand: var(--brand);
     --color-brand-foreground: var(--brand-foreground);
+    --color-coral: var(--coral);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -97,6 +98,8 @@
     --radius: 0.625rem;
     --brand: oklch(0.58 0.105 186);
     --brand-foreground: oklch(1 0 0);
+    /* The logo's coral, whatever the accent: failures in the pull request card's pipeline. */
+    --coral: oklch(0.64 0.21 25);
     --sidebar: var(--background);
     --sidebar-foreground: oklch(0.17 0.02 205);
     --sidebar-primary: var(--brand);
@@ -134,6 +137,7 @@
     --chart-5: oklch(0.42 0.06 205);
     --brand: oklch(0.7 0.12 182);
     --brand-foreground: oklch(1 0 0);
+    --coral: oklch(0.68 0.19 25);
     --sidebar: var(--background);
     --sidebar-foreground: oklch(0.975 0.004 190);
     --sidebar-primary: var(--brand);
@@ -193,6 +197,32 @@ html[data-resizing] * {
 
 @media (prefers-reduced-motion: reduce) {
   [data-flow] { animation: none !important; }
+}
+
+/* The pull request card's pipeline (components/branch-card.tsx): light
+   running along a check's bar while it runs, and once across every bar when
+   the last one passes. */
+@keyframes ci-run {
+  from { background-position: 200% 0; }
+  to { background-position: -100% 0; }
+}
+
+@keyframes ci-sweep {
+  from { transform: translateX(-100%); opacity: 1; }
+  to { transform: translateX(100%); opacity: 0; }
+}
+
+/* The dashes into the merge node, while checks run: one dash period (2 + 3)
+   per beat, toward the path's start, which is the merge node. */
+@keyframes ci-flow {
+  from { stroke-dashoffset: 0; }
+  to { stroke-dashoffset: 5; }
+}
+[data-ci-flow] { animation: ci-flow 0.7s linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ci-bar], [data-ci-flow] { animation: none !important; }
+  [data-ci-sweep] { display: none; }
 }
 
 /* AskUserCard (components/ask-user-card.tsx) entrances. */

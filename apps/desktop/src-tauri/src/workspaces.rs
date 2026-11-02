@@ -10,6 +10,7 @@ use std::path::Path;
 use serde::Serialize;
 use sush_core::agent::ui::new_id;
 use sush_core::store::{Store, TurnChanges};
+use sush_core::workspace::ci;
 use sush_core::workspace::git::{self, BranchStatus, CommitDetail, GitInfo, GitLog};
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, Commands, EditApproval, Entry, Workspace, WorkspaceFs};
@@ -216,20 +217,35 @@ pub async fn workspace_git(state: State<'_, AppState>, id: String) -> AppResult<
 #[tauri::command]
 pub async fn workspace_branch_status(state: State<'_, AppState>, id: String, base: Option<String>) -> AppResult<BranchStatus> {
     let store = state.store.clone();
-    blocking(move || {
-        let root = find(&store, &id)?.root;
-        let root = Path::new(&root);
-        let base = match base.filter(|b| !b.trim().is_empty()) {
-            Some(b) => b,
-            None => {
-                let current = git::info(root).ok_or_else(|| AppError::Invalid("This folder isn't in a git repository.".into()))?.branch;
-                git::default_base(root, current.as_deref())
-                    .ok_or_else(|| AppError::Invalid("Couldn't tell which branch this one merges into.".into()))?
-            }
-        };
-        git::branch_status(root, &base).map_err(AppError::Invalid)
-    })
-    .await
+    blocking(move || branch_status_at(Path::new(&find(&store, &id)?.root), base)).await
+}
+
+/// The branch in `root` against `base`, or the branch it merges into. Shared with a guest's `branch-status` intent.
+pub fn branch_status_at(root: &Path, base: Option<String>) -> AppResult<BranchStatus> {
+    let base = match base.filter(|b| !b.trim().is_empty()) {
+        Some(b) => b,
+        None => {
+            let current = git::info(root).ok_or_else(|| AppError::Invalid("This folder isn't in a git repository.".into()))?.branch;
+            git::default_base(root, current.as_deref())
+                .ok_or_else(|| AppError::Invalid("Couldn't tell which branch this one merges into.".into()))?
+        }
+    };
+    git::branch_status(root, &base).map_err(AppError::Invalid)
+}
+
+/// The branch's pull request (or `pr`) and its CI checks, as GitHub reports
+/// them, for the card's live pipeline.
+#[tauri::command]
+pub async fn workspace_pr_checks(state: State<'_, AppState>, id: String, pr: Option<u64>) -> AppResult<ci::Pipeline> {
+    let store = state.store.clone();
+    blocking(move || Ok(ci::pipeline(Path::new(&find(&store, &id)?.root), pr))).await
+}
+
+/// Why a failed CI job failed, from its log.
+#[tauri::command]
+pub async fn workspace_check_failure(state: State<'_, AppState>, id: String, job: u64) -> AppResult<ci::Failure> {
+    let store = state.store.clone();
+    blocking(move || ci::failure(Path::new(&find(&store, &id)?.root), job).map_err(AppError::Invalid)).await
 }
 
 /// Up to `limit` commits of the workspace's history (every branch when `all`),

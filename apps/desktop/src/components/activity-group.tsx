@@ -1,10 +1,11 @@
 // Finished tool calls, and the thinking between them, collapse into one line
-// ("Read 3 files and ran 2 commands") that expands to the individual steps.
-// Calls still running or waiting for the user stay visible on their own.
+// ("Worked for 5s · Read 3 files and ran 2 commands") that expands to the
+// individual steps on a rail. Calls still running or waiting for the user stay
+// visible on their own.
 
 import type { DynamicToolUIPart } from "ai";
-import { ChevronRightIcon, ListTreeIcon } from "lucide-react";
-import { useState } from "react";
+import { CheckIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
+import { Children, useState } from "react";
 
 import { toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
@@ -100,9 +101,37 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
   return { text: joined[0].toUpperCase() + joined.slice(1), failed };
 }
 
+/**
+ * How long the stretch of work took: from its first step's start (`at` on a
+ * step-start) to its last call's end (`callProviderMetadata.sush.endedAt`),
+ * both set by the run. Unknown on replies saved before they were recorded.
+ */
+export function workedFor(parts: Part[]): number | null {
+  let start: number | undefined;
+  let end: number | undefined;
+  for (const p of parts) {
+    if (p.type === "step-start" && start === undefined) {
+      const at = (p as { at?: unknown }).at;
+      if (typeof at === "number") start = at;
+    } else if (p.type === "dynamic-tool") {
+      const ended = (p.callProviderMetadata?.sush as { endedAt?: unknown } | undefined)?.endedAt;
+      if (typeof ended === "number") end = Math.max(end ?? 0, ended);
+    }
+  }
+  return start !== undefined && end !== undefined && end >= start ? end - start : null;
+}
+
+/** `5s`, `1m 12s`. */
+function seconds(ms: number) {
+  const total = Math.max(1, Math.round(ms / 1000));
+  return total < 60 ? `${total}s` : `${Math.floor(total / 60)}m ${total % 60}s`;
+}
+
 export function ActivityGroup({ parts, children }: { parts: Part[]; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const { text, failed } = activitySummary(parts);
+  const took = workedFor(parts);
+  const steps = Children.toArray(children);
   return (
     <div className="text-sm">
       <button
@@ -112,11 +141,33 @@ export function ActivityGroup({ parts, children }: { parts: Part[]; children: Re
         className="flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground"
       >
         <ListTreeIcon className="size-4 shrink-0" />
-        <span className="text-left">{text}</span>
+        <span className="text-left">
+          {took !== null && <span className="text-foreground/80">Worked for {seconds(took)} · </span>}
+          {took !== null ? text[0].toLowerCase() + text.slice(1) : text}
+        </span>
         {failed > 0 && <span className="text-destructive">· {failed} failed</span>}
         <ChevronRightIcon className={cn("size-3.5 transition-transform", open && "rotate-90")} />
       </button>
-      {open && <div className="mt-2 ml-2 flex flex-col gap-3 border-l pl-4">{children}</div>}
+      {open && (
+        // Each step a dot on a rail; the last one, a check once it all went through.
+        <ol className="mt-2 ml-2 flex flex-col gap-3 border-l border-dashed pl-4">
+          {steps.map((step, i) => {
+            const last = i === steps.length - 1;
+            return (
+              <li key={i} className="relative animate-[fade-up_200ms_ease-out_both]" style={{ animationDelay: `${Math.min(i, 8) * 30}ms` }}>
+                {last && failed === 0 ? (
+                  <span className="absolute top-1 -left-[23.5px] flex size-3.5 items-center justify-center rounded-full bg-brand text-brand-foreground">
+                    <CheckIcon className="size-2.5" strokeWidth={3} />
+                  </span>
+                ) : (
+                  <span className="absolute top-2 -left-[19.5px] size-1.5 rounded-full bg-muted-foreground/40" />
+                )}
+                {step}
+              </li>
+            );
+          })}
+        </ol>
+      )}
     </div>
   );
 }

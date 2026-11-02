@@ -48,6 +48,8 @@ const shares = createStore<ReadonlyMap<string, ShareView>>("sush.shares", new Ma
 export interface Watching {
   hostName: string;
   mayAnswer: (part: DynamicToolUIPart) => boolean;
+  /** Messages from here reach the run: a driver's steer, a collaborator's suggestion. */
+  canSend: boolean;
 }
 export const WatchingHost = createContext<Watching | null>(null);
 

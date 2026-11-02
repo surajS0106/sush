@@ -502,7 +502,8 @@ impl Runner<'_> {
             metadata["createdAt"] = json!(created_at);
             self.op(Op::Push { message: json!({ "id": ui::new_id(), "role": "assistant", "parts": [], "metadata": metadata }) });
         }
-        self.op(Op::PushPart { part: json!({ "type": "step-start" }) });
+        // When the step began: with each call's end, the UI tells how long a stretch of work took.
+        self.op(Op::PushPart { part: json!({ "type": "step-start", "at": now_ms() }) });
 
         let host = self.host;
         let provider_id = self.config.provider_id.clone();
@@ -728,7 +729,7 @@ impl Runner<'_> {
             ToolResponse::Output { .. } => "answer",
             ToolResponse::Error { .. } => "deny",
         };
-        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let at = now_ms();
         // Metadata merges shallowly, so the whole record goes each time.
         let mut answers = self
             .messages
@@ -747,8 +748,15 @@ impl Runner<'_> {
     }
 
     fn set_result(&mut self, index: usize, call: &ToolCall, result: Result<Value, String>) {
-        self.op(Op::SetPart { index, part: ui::tool_result_part(call, result) });
+        let mut part = ui::tool_result_part(call, result);
+        // When it finished, where the AI SDK keeps a call's extra data.
+        part["callProviderMetadata"] = json!({ "sush": { "endedAt": now_ms() } });
+        self.op(Op::SetPart { index, part });
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
 }
 
 /// A config with these tools, for tests and simple hosts.

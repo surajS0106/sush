@@ -198,6 +198,29 @@ pub fn authorize(ctx: &Ctx, intent: Intent) -> Result<Allowed, String> {
             }
             Intent::GitCommit { sha }
         }
+        // What the pull request card shows the owner: the branch, the pull request's checks and
+        // why one failed (scrubbed of credential-looking text when it's carried out).
+        Intent::BranchStatus { base } => {
+            if !ctx.cowork {
+                return Err("This session has no folder.".into());
+            }
+            if base.as_deref().is_some_and(|b| b.starts_with('-') || b.len() > 255 || b.contains("..")) {
+                return Err("That isn't a branch.".into());
+            }
+            Intent::BranchStatus { base }
+        }
+        Intent::PrChecks { pr } => {
+            if !ctx.cowork {
+                return Err("This session has no folder.".into());
+            }
+            Intent::PrChecks { pr }
+        }
+        Intent::CheckFailure { job } => {
+            if !ctx.cowork {
+                return Err("This session has no folder.".into());
+            }
+            Intent::CheckFailure { job }
+        }
         Intent::Steer { text, images } => {
             check_message(&text, &images)?;
             return match role {
@@ -553,6 +576,11 @@ mod tests {
         assert!(check(&f, viewer, Intent::GitCommit { sha: "HEAD~1".into() }).is_err());
         assert!(check(&f, viewer, Intent::GitCommit { sha: "--output=x".into() }).is_err());
         assert!(check(&f, None, Intent::GitLog { limit: 10, all: true }).is_err());
+        assert!(check(&f, viewer, Intent::BranchStatus { base: Some("main".into()) }).is_ok());
+        assert!(check(&f, viewer, Intent::BranchStatus { base: Some("--output=x".into()) }).is_err());
+        assert!(check(&f, viewer, Intent::PrChecks { pr: Some(128) }).is_ok());
+        assert!(check(&f, viewer, Intent::CheckFailure { job: 42 }).is_ok());
+        assert!(check(&f, None, Intent::PrChecks { pr: None }).is_err());
     }
 
     #[test]

@@ -129,6 +129,8 @@ pub fn run() {
             workspaces::workspace_git_log,
             workspaces::workspace_git_commit,
             workspaces::workspace_branch_status,
+            workspaces::workspace_pr_checks,
+            workspaces::workspace_check_failure,
             workspaces::worktree_create,
             workspaces::undo_turn,
             workspaces::workspace_read_file,

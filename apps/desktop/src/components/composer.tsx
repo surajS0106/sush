@@ -36,6 +36,8 @@ const PLACEHOLDERS = [
 ];
 /** While a reply is coming: what's sent now joins it at its next step. */
 const STEER_PLACEHOLDER = "Steer the reply, or add to it…";
+/** Once a conversation has started, including while a card waits for an answer: the starters above would read as noise. */
+const FOLLOW_UP_PLACEHOLDER = "Reply, or ask something else…";
 
 // Two soft brand-tinted pools blurred behind the input; tracks --brand in both themes.
 const GLOW =
@@ -89,6 +91,7 @@ export function Composer({
   const { attachments, textInput } = usePromptInputController();
   const reduceMotion = useReducedMotion();
   const busy = status === "submitted" || status === "streaming";
+  const started = messages.length > 0;
   const empty = textInput.value.length === 0;
   const canSend = !!target && (textInput.value.trim().length > 0 || attachments.files.length > 0);
   // Mid-reply, the button sends (steers) once there's something to send, and pauses otherwise.
@@ -128,10 +131,10 @@ export function Composer({
 
   // Cycle the placeholder only while the box is empty and idle.
   useEffect(() => {
-    if (!empty || busy || dictating) return;
+    if (!empty || busy || dictating || started) return;
     const id = setInterval(() => setPromptIndex((i) => (i + 1) % PLACEHOLDERS.length), 3200);
     return () => clearInterval(id);
-  }, [empty, busy]);
+  }, [empty, busy, dictating, started]);
 
   return (
     <div className="group/composer relative isolate flex flex-col gap-2">
@@ -154,7 +157,7 @@ export function Composer({
         transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
       />
       <div className="relative">
-        {!slash.open && !mention.open && <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft={textInput.value} className="absolute right-10 bottom-full z-10 -mb-px" />}
+        {!slash.open && !mention.open && <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft={textInput.value} className="absolute right-10 bottom-[calc(100%+var(--tray-lift,0px))] z-10 -mb-px transition-[bottom] duration-300 ease-out" />}
         <PromptInput
           onSubmit={submit}
           multiple
@@ -228,7 +231,7 @@ export function Composer({
                 <div aria-hidden className="pointer-events-none absolute inset-x-4 top-3.5 overflow-hidden">
                   <AnimatePresence mode="wait" initial={false}>
                     <motion.span
-                      key={dictating ? dictation.status : busy ? "busy" : promptIndex}
+                      key={dictating ? dictation.status : busy ? "busy" : started ? "follow-up" : promptIndex}
                       initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
                       exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -8 }}
@@ -243,7 +246,9 @@ export function Composer({
                             ? "Transcribing…"
                             : busy
                               ? STEER_PLACEHOLDER
-                              : PLACEHOLDERS[promptIndex]}
+                              : started
+                                ? FOLLOW_UP_PLACEHOLDER
+                                : PLACEHOLDERS[promptIndex]}
                     </motion.span>
                   </AnimatePresence>
                 </div>
