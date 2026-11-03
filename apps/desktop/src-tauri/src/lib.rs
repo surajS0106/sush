@@ -126,6 +126,7 @@ pub fn run() {
             workspaces::turn_diff,
             workspaces::workspace_git,
             workspaces::workspace_git_switch,
+            workspaces::workspace_git_rebase,
             workspaces::workspace_git_log,
             workspaces::workspace_git_commit,
             workspaces::workspace_branch_status,

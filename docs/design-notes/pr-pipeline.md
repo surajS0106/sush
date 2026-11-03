@@ -4,6 +4,10 @@ Last updated: 2026-11-04
 
 ## What changed
 
+### 2026-11-04 (finish a stopped rebase from the branch chip)
+- Picking a branch while a rebase was stopped showed git's raw "fatal: cannot switch branch while rebasing" toast, and nothing in the app could finish or abandon the rebase. While `GitInfo.rebasing` is set, the branch menu now starts with "Continue the rebase" and "Abort the rebase", and its branches are disabled under "Finish the rebase to switch branch" (`components/session-options.tsx`). The commands are `git::rebase_continue` and `git::rebase_abort` (`crates/sush-core/src/workspace/git.rs`), exposed as `workspace_git_rebase` (`src-tauri/src/workspaces.rs`) and `finishRebase` (`lib/workspaces.ts`). Both run with the folder's hooks disabled, like `git_commit`. Continue runs with `GIT_EDITOR=true` so no editor opens and each message stays as it is. It refuses while files are still unresolved and reports when the rebase stops again. `git::switch` also refuses mid-rebase, in plain words.
+- The "detached" label in the report came from an installed build made before rebase detection landed, not from a fault in the detection. The repository's `rebase-merge/head-name` held `refs/heads/test/merge-tray`.
+
 ### 2026-11-04 (merged is deep teal, not violet)
 - The merged state (the tray and card label, PR badge, merge lines and the branch chip in the graph) used Tailwind's violet, GitHub's color for a merged PR, which is not a Sush color. It now uses `--sush-deep`, the deep teal shade from the palette, defined in `index.css` next to `--coral` so it stays the same whatever accent is picked (`components/branch-card.tsx`, `components/ui/PullRequestCard.tsx`). Coral was not used because the card already uses it for failures.
 

@@ -111,7 +111,43 @@ fn check_branch(root: &Path, branch: &str) -> Result<(), String> {
 /// uncommitted changes, and that error is returned as is.
 pub fn switch(root: &Path, branch: &str) -> Result<(), String> {
     check_branch(root, branch)?;
+    if let Some(rebasing) = info(root).and_then(|i| i.rebasing) {
+        return Err(format!("A rebase of {rebasing} stopped partway. Continue or abort it before switching branches."));
+    }
     git(root, &["switch", branch]).map(|_| ())
+}
+
+/// Carry on with a rebase that stopped partway, keeping the commit messages
+/// as they are. It may stop again, on a conflict or another `edit` step.
+pub fn rebase_continue(root: &Path) -> Result<String, String> {
+    let rebasing = info(root).and_then(|i| i.rebasing).ok_or("No rebase is in progress.")?;
+    let (_, unresolved) = status(root)?;
+    if !unresolved.is_empty() {
+        return Err(format!("These files still have conflicts: {}. Resolve them first.", unresolved.join(", ")));
+    }
+    let opts = without_hooks(root)?;
+    let args: Vec<&str> = opts.iter().map(String::as_str).chain(["rebase", "--continue"]).collect();
+    // No editor opens for the messages; "true" leaves each one as it is.
+    let out = run_env(root, &args, &[("GIT_EDITOR", "true")])?;
+    match info(root).and_then(|i| i.rebasing) {
+        None if out.code == 0 => Ok(format!("Finished rebasing {rebasing}.")),
+        None => Err(if out.stderr.is_empty() { out.stdout } else { out.stderr }),
+        Some(_) => {
+            let (_, unresolved) = status(root)?;
+            Ok(if unresolved.is_empty() {
+                format!("The rebase of {rebasing} stopped again at the next step.")
+            } else {
+                format!("The rebase of {rebasing} stopped on conflicts in {}.", unresolved.join(", "))
+            })
+        }
+    }
+}
+
+/// Give up on a rebase that stopped partway; the branch goes back to where it was.
+pub fn rebase_abort(root: &Path) -> Result<String, String> {
+    let rebasing = info(root).and_then(|i| i.rebasing).ok_or("No rebase is in progress.")?;
+    check(git_with(root, &without_hooks(root)?, &["rebase", "--abort"])?)?;
+    Ok(format!("Stopped the rebase; {rebasing} is back where it was."))
 }
 
 /// Add a worktree at `dest` on a new branch `new_branch` starting from `base`.
@@ -1074,6 +1110,33 @@ mod tests {
         assert_eq!(info(dir.path()).unwrap().branch.as_deref(), Some("feature"));
         assert!(switch(dir.path(), "--orphan").is_err());
         assert!(switch(dir.path(), "nope").is_err());
+    }
+
+    #[test]
+    fn a_stopped_rebase_blocks_switching_until_continued_or_aborted() {
+        if !have_git() {
+            return;
+        }
+        let dir = repo();
+        let root = dir.path();
+        git(root, &["switch", "-q", "feature"]).unwrap();
+        std::fs::write(root.join("one.txt"), "one\n").unwrap();
+        git(root, &["add", "one.txt"]).unwrap();
+        git(root, &["commit", "-q", "-m", "one"]).unwrap();
+        let before = head(root).unwrap();
+        // An `edit` step stops the rebase on the first commit.
+        run_env(root, &["rebase", "-q", "-i", "main"], &[("GIT_SEQUENCE_EDITOR", "sed -i.bak s/^pick/edit/")]).unwrap();
+        assert_eq!(info(root).unwrap().rebasing.as_deref(), Some("feature"));
+        assert!(switch(root, "main").unwrap_err().contains("rebase of feature"));
+
+        rebase_abort(root).unwrap();
+        assert_eq!(info(root).unwrap().branch.as_deref(), Some("feature"));
+        assert_eq!(head(root).unwrap(), before);
+
+        run_env(root, &["rebase", "-q", "-i", "main"], &[("GIT_SEQUENCE_EDITOR", "sed -i.bak s/^pick/edit/")]).unwrap();
+        rebase_continue(root).unwrap();
+        assert_eq!(info(root).unwrap().branch.as_deref(), Some("feature"));
+        assert!(rebase_continue(root).is_err());
     }
 
     #[test]

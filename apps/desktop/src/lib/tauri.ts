@@ -888,6 +888,8 @@ export const api = {
   turnChanges: (threadId: string) => invoke<TurnChanges[]>("turn_changes", { threadId }),
   workspaceGit: (id: string) => invoke<GitInfo | null>("workspace_git", { id }),
   workspaceGitSwitch: (id: string, branch: string) => invoke<void>("workspace_git_switch", { id, branch }),
+  /** Continue or abort a stopped rebase; what happened. */
+  workspaceGitRebase: (id: string, abort: boolean) => invoke<string>("workspace_git_rebase", { id, abort }),
   /** Up to `limit` commits, every branch when `all`, for the graph panel. */
   workspaceGitLog: (id: string, limit: number, all: boolean) => invoke<GitLog>("workspace_git_log", { id, limit, all }),
   workspaceGitCommit: (id: string, sha: string) => invoke<CommitDetail>("workspace_git_commit", { id, sha }),

@@ -394,6 +394,16 @@ export async function switchBranch(workspaceId: string, branch: string) {
   versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1 }));
 }
 
+/** Continue or abort a rebase that stopped partway in the workspace folder; what happened. */
+export async function finishRebase(workspaceId: string, abort: boolean) {
+  try {
+    return await api.workspaceGitRebase(workspaceId, abort);
+  } finally {
+    // Even a failed continue can have moved HEAD or rewritten files.
+    versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1 }));
+  }
+}
+
 /**
  * Sessions that will get their own worktree when their first message is
  * sent, with the branch it starts from. Only untouched sessions are listed.

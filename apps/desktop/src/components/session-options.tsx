@@ -11,6 +11,8 @@ import {
   GitBranchIcon,
   LaptopIcon,
   MessageSquareIcon,
+  PlayIcon,
+  Undo2Icon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -28,6 +30,7 @@ import { errorMessage } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 import {
   addWorkspace,
+  finishRebase,
   setPendingWorktree,
   switchBranch,
   useGitInfo,
@@ -132,6 +135,13 @@ function GitOptions({ conversationId, workspaceId }: { conversationId: string; w
   if (!git) return null;
 
   const branch = pendingBase ?? git.branch;
+  // HEAD is detached mid-rebase, so git won't switch until it's finished or abandoned.
+  const rebasing = !pendingBase && !git.branch ? git.rebasing : null;
+  const rebase = (abort: boolean) =>
+    finishRebase(workspaceId, abort).then(
+      (msg) => toast.success(msg),
+      (e) => toast.error(abort ? "Couldn’t abort the rebase" : "Couldn’t continue the rebase", { description: errorMessage(e) }),
+    );
   const pick = (b: string) => {
     if (pendingBase) return setPendingWorktree(conversationId, b);
     if (b === git.branch) return;
@@ -151,7 +161,7 @@ function GitOptions({ conversationId, workspaceId }: { conversationId: string; w
               pendingBase
                 ? `The new worktree starts from ${pendingBase}`
                 : !branch && git.rebasing
-                  ? `A rebase of ${git.rebasing} stopped partway. Run git rebase --continue to finish it, or git rebase --abort to go back.`
+                  ? `A rebase of ${git.rebasing} stopped partway. Continue or abort it from this menu.`
                   : "The branch checked out in this folder"
             }
           >
@@ -160,11 +170,25 @@ function GitOptions({ conversationId, workspaceId }: { conversationId: string; w
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="max-h-80 w-60 overflow-y-auto">
+          {rebasing && (
+            <>
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                A rebase of {rebasing} stopped partway
+              </DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => void rebase(false)}>
+                <PlayIcon /> <span>Continue the rebase</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => void rebase(true)}>
+                <Undo2Icon /> <span>Abort the rebase</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-            {pendingBase ? "Start the worktree from" : "Switch branch"}
+            {pendingBase ? "Start the worktree from" : rebasing ? "Finish the rebase to switch branch" : "Switch branch"}
           </DropdownMenuLabel>
           {git.branches.map((b) => (
-            <DropdownMenuItem key={b} onSelect={() => pick(b)}>
+            <DropdownMenuItem key={b} disabled={!!rebasing} onSelect={() => pick(b)}>
               <GitBranchIcon />
               <span className="flex-1 truncate">{b}</span>
               {b === branch && <CheckIcon className="text-muted-foreground" />}

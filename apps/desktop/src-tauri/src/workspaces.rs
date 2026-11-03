@@ -270,6 +270,19 @@ pub async fn workspace_git_switch(state: State<'_, AppState>, id: String, branch
     blocking(move || git::switch(Path::new(&find(&store, &id)?.root), &branch).map_err(AppError::Invalid)).await
 }
 
+/// Continue (`abort` false) or abort a rebase that stopped partway in the
+/// workspace folder; what happened, for a toast.
+#[tauri::command]
+pub async fn workspace_git_rebase(state: State<'_, AppState>, id: String, abort: bool) -> AppResult<String> {
+    let store = state.store.clone();
+    blocking(move || {
+        let root = find(&store, &id)?.root;
+        let root = Path::new(&root);
+        if abort { git::rebase_abort(root) } else { git::rebase_continue(root) }.map_err(AppError::Invalid)
+    })
+    .await
+}
+
 /// Give a session its own git worktree: a new branch from `base`, checked out
 /// in a folder under the app data dir, added as a workspace with the same
 /// settings. The user's checkout is left alone.
