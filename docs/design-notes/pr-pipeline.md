@@ -4,6 +4,9 @@ Last updated: 2026-11-04
 
 ## What changed
 
+### 2026-11-04 (the tray agrees with the card after a squash)
+- After a squash or rebase merge, the card read "Merged into main" while the tray above the composer still read "Ready to merge". Only the card checked whether the turn's merge step had succeeded. The tray used the verdict from the read status, and there the branch's own commits are still off the base, so it still counted as two commits ahead. Both now get the verdict from one hook, `useLanded` in `components/branch-card.tsx`, so the tray also shows "Merged", folds away and offers Delete branch.
+
 ### 2026-11-04 (Delete branch deletes it here too)
 - Delete branch removed only the remote copy, so the deleted branch stayed in the composer's branch chip. It now does what `gh pr merge --delete-branch` does: `git push <remote> --delete <branch> && git switch <base> && git branch -D <branch>`, as one approved command. When the remote copy is already gone (deleted on GitHub's website, or by an older build), it offers the last two steps. `-D` is needed because a squash or rebase merge leaves the branch's own commits off the base. The PR being merged is what makes that safe. Afterwards HEAD is on the base and the card reads "Merged into main · branch deleted". In a Sush worktree whose base is checked out elsewhere, `git switch` fails, so the chain stops after the remote delete.
 

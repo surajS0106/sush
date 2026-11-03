@@ -434,17 +434,9 @@ export function BranchCard({ part, threadId }: { part: DynamicToolUIPart; thread
   const doing = useActing(threadId);
   const canAct = useCanAct();
   const checking = part.state === "input-streaming" || part.state === "input-available";
-  const steps = useGitSteps(threadId, status?.base ?? input.base ?? "main");
-  const phase = mergePhase(steps);
+  const { steps, phase, pr, merged, verdict: v } = useLanded(threadId, input.base, status, reported, judged);
 
   const title = input.title ?? status?.commits.find((c) => !c.onBase && c.sha === status.head)?.subject ?? status?.branch ?? "This branch";
-  // Once the merge command succeeds the card says so, without waiting for GitHub's next poll.
-  const pr = reported && phase === "merged" ? { ...reported, state: "merged" as const } : reported;
-  const merged = pr?.state === "merged" || phase === "merged";
-  const v: Verdict | null =
-    judged && status && phase === "merged" && judged.tone !== "merged"
-      ? mergedVerdict(status, pr)
-      : judged;
 
   const action = !checking && canAct ? v?.action : undefined;
 
@@ -1178,6 +1170,30 @@ function mergePhase(steps: GitStep[]): MergePhase {
   return null;
 }
 
+type Card = ReturnType<typeof useCard>;
+
+/**
+ * Once the turn's merge command succeeds the branch counts as merged, without
+ * waiting for GitHub's next poll. A squash or rebase leaves the branch's own
+ * commits off the base, so the read status alone would still say "ready".
+ * The card and the tray both go through this so they agree.
+ */
+function useLanded(
+  threadId: string,
+  base: string | undefined,
+  status: Card["status"],
+  reported: Card["pr"],
+  judged: Card["verdict"],
+) {
+  const steps = useGitSteps(threadId, status?.base ?? base ?? "main");
+  const phase = mergePhase(steps);
+  const pr = reported && phase === "merged" ? { ...reported, state: "merged" as const } : reported;
+  const merged = pr?.state === "merged" || phase === "merged";
+  const verdict: Verdict | null =
+    judged && status && phase === "merged" && judged.tone !== "merged" ? mergedVerdict(status, pr) : (judged ?? null);
+  return { steps, phase, pr, merged, verdict };
+}
+
 function StepGlyph({ state }: { state: StepState }) {
   return (
     <Swap id={state} className="relative z-10 size-4 shrink-0 justify-center gap-0 bg-card">
@@ -1657,7 +1673,8 @@ function useTrayLift(shown: boolean) {
  */
 export function BranchTray({ workspaceId, threadId, part }: { workspaceId: string | undefined; threadId: string; part: DynamicToolUIPart }) {
   const source = useMemo(() => branchSource(workspaceId, threadId), [workspaceId, threadId]);
-  const { pr, status, checks, failure, failureError, failedJob, verdict: given } = useCard(source, part);
+  const { input, pr: reported, status, checks, failure, failureError, failedJob, verdict: judged } = useCard(source, part);
+  const { pr, verdict: given } = useLanded(threadId, input.base, status, reported, judged);
   const session = useSessionStatus(threadId);
   const doing = useActing(threadId);
   const canAct = useCanAct();
