@@ -204,22 +204,27 @@ function fixPrompt(failed: Check[], failure: CheckFailure | null): string {
 }
 
 /**
- * Merged. Like GitHub, the branch's copy on the remote can go now: a button
- * deletes just that one (the local branch stays), and the card says once it's gone.
+ * Merged. Like `gh pr merge --delete-branch`, the branch can go now: a button
+ * deletes its copy on the remote (if there still is one) and the local one,
+ * moving the checkout onto the base first. The card then reads the base, and
+ * says the branch is gone.
  */
 function mergedVerdict(s: BranchStatus, pr: CardInput["pr"]): Verdict {
   const done: Verdict = { tone: "merged", label: `Merged into ${s.base}`, merge: "merged" };
-  if (!s.upstream || s.branch === s.base) return pr ? { ...done, label: `${done.label} · branch deleted` } : done;
-  const [remote, ...rest] = s.upstream.split("/");
-  const name = rest.join("/");
+  if (!s.branch || s.branch === s.base) return pr ? { ...done, label: `${done.label} · branch deleted` } : done;
+  const branch = s.branch;
+  // `origin/feat` while the remote still has it; null once it was deleted there (here or on the host's site).
+  const [remote, ...rest] = s.upstream?.split("/") ?? [];
+  const command = [remote && `git push ${remote} --delete ${rest.join("/")}`, `git switch ${s.base}`, `git branch -D ${branch}`]
+    .filter(Boolean)
+    .join(" && ");
   const prArg = pr ? ` with pr (number ${pr.number ?? "as before"}, state merged)` : "";
-  const command = `git push ${remote} --delete ${name}`;
   return {
     ...done,
     action: {
       label: "Delete branch",
-      say: `Delete ${name} from ${remote}`,
-      prompt: `Run \`${command}\` with shell_run (network and unsandboxed). Keep the local branch. Then call branch_status${prArg}.`,
+      say: `Delete ${branch}`,
+      prompt: `Run \`${command}\` as one shell_run (network and unsandboxed). Then call branch_status${prArg}.`,
       busy: "Deleting the branch",
       approves: [command],
     },
@@ -1072,6 +1077,10 @@ function commandStep(cmd: string, base: string): Pick<GitStep, "kind" | "label">
       return { kind: "merge", label: arg ? `Merge ${arg}` : "Merge" };
     case "commit":
       return { kind: "commit", label: "Commit" };
+    case "branch":
+      return words.some((w) => w === "-D" || w === "-d" || w === "--delete")
+        ? { kind: "git", label: arg ? `Delete ${arg} here` : "Delete the branch here" }
+        : { kind: "git", label: "git branch" };
     case "switch":
     case "checkout":
       return { kind: "git", label: arg ? `Switch to ${arg}` : "Switch branch" };
