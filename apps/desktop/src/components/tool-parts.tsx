@@ -523,8 +523,7 @@ function WorkspacePart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
         onApprove();
       };
       const allowAll =
-        // Landing on another branch asks every time, so "allow all" wouldn't cover it.
-        workspace && EDIT_TOOLS.has(part.toolName) && !input.into
+        workspace && EDIT_TOOLS.has(part.toolName)
           ? () => {
               setApproved(true);
               // Later edits in this folder run without asking; this one goes ahead now.

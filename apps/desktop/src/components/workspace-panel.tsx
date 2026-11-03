@@ -98,7 +98,7 @@ type Mode = "read-only" | "ask" | "auto-edits";
 const MODES: { value: Mode; label: string; hint: string }[] = [
   { value: "read-only", label: "Read only", hint: "Read and search; no changes, no commands" },
   { value: "ask", label: "Ask before changes", hint: "Every edit and command needs your OK" },
-  { value: "auto-edits", label: "Edit automatically", hint: "Edits and sandboxed commands run; you can undo a turn" },
+  { value: "auto-edits", label: "Edit automatically", hint: "Edits, commands, pushes and merges run; only destructive ones ask. You can undo a turn" },
 ];
 
 const modeOf = (w: Workspace): Mode => (w.access === "read-only" ? "read-only" : w.approval);

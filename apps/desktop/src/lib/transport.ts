@@ -24,6 +24,11 @@ export interface SushMetadata {
   resumed?: boolean;
   /** On the message that brings a background sub-agent's report (`sush_core::agent::subagents::report_message`). */
   subagentReport?: { callId: string; description: string; status: "done" | "failed" };
+  /**
+   * On a message a card's button sent (the branch card's Merge, Commit, Delete branch): what the model
+   * gets in place of the short text shown, and the exact commands the click already approved.
+   */
+  instruction?: { text: string; approves?: string[] };
   /** In a shared session, on a message someone else wrote (set by the host, never by the sender). */
   author?: ShareAuthor;
   /** On a collaborator's suggestion: who sent it on. */

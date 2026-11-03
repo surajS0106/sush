@@ -24,17 +24,8 @@ const G: GraphGeometry = { row: 26, lane: 14, pad: 10 };
 const PAGE = 200;
 /** Beyond this the graph column clips, so the subjects keep their room. */
 const MAX_GRAPH_WIDTH = 168;
-/** One colour per lane, cycling. */
-const LANE_COLORS = [
-  "text-brand",
-  "text-amber-500",
-  "text-violet-500",
-  "text-teal-500",
-  "text-rose-500",
-  "text-green-600 dark:text-green-500",
-  "text-orange-500",
-  "text-sky-500",
-];
+/** The logo's teal and coral, alternating by lane, whatever the accent. */
+const LANE_COLORS = ["text-chart-1", "text-coral"];
 const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length];
 
 /** Every branch, or only HEAD and the branch it tracks. */

@@ -198,6 +198,8 @@ export interface BranchStatus {
   base: string;
   /** The commit HEAD points at. */
   head: string;
+  /** The commit the base points at. */
+  baseHead: string;
   /** The user's git name, so their commits can read "You". */
   you: string | null;
   ahead: number;
@@ -214,6 +216,8 @@ export interface BranchStatus {
   /** Both sides' commits since they split, newest first, then the commit they split from. */
   commits: GraphCommit[];
   more: boolean;
+  /** The branch's copy on its remote (`origin/feat`), while git still has it; null once deleted there. */
+  upstream: string | null;
 }
 
 /** A branch's pull request and CI checks as GitHub reports them (`sush_core::workspace::ci::Pipeline`). */
@@ -758,6 +762,8 @@ export interface RunConfig {
   research: boolean;
   /** Text sent to the model in place of a user message's first text, by message id. */
   expansions: Record<string, string>;
+  /** Shell commands the button that started this run already approved; exactly these run without asking. */
+  approved?: string[];
 }
 
 export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };

@@ -31,8 +31,12 @@ struct Output {
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<Output, String> {
+    run_env(root, args, &[])
+}
+
+fn run_env(root: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<Output, String> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(root).args(args).env("GIT_TERMINAL_PROMPT", "0");
+    cmd.arg("-C").arg(root).args(args).env("GIT_TERMINAL_PROMPT", "0").envs(env.iter().copied());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -195,6 +199,8 @@ pub struct BranchStatus {
     pub base: String,
     /// The commit HEAD points at.
     pub head: String,
+    /// The commit the base points at.
+    pub base_head: String,
     /// The user's git name, so their commits can read "You".
     pub you: Option<String>,
     /// Commits on this branch that the base lacks, and the reverse.
@@ -211,10 +217,13 @@ pub struct BranchStatus {
     /// What merging the base in would conflict on; `None` when that can't be
     /// told (a merge is in progress, or git is older than 2.38).
     pub conflicts: Option<Vec<Conflict>>,
-    /// Both sides' commits since they split, newest first, then the commit they split from.
+    /// Both sides' commits since they split, and those of other local branches that left the base
+    /// recently, newest first, then the oldest commit any of them left from.
     pub commits: Vec<GraphCommit>,
     /// There are older commits than `commits` shows.
     pub more: bool,
+    /// The branch's copy on its remote (`origin/feat`), while git still has it; gone once deleted there.
+    pub upstream: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,6 +267,10 @@ pub struct GraphCommit {
 }
 
 const GRAPH_LIMIT: usize = 40;
+/// Other branches drawn beside the branch and its base.
+const SIBLING_LIMIT: usize = 12;
+/// How many of the base's commits back another branch may have left it and still be drawn.
+const SIBLING_REACH: usize = 20;
 const HUNKS_PER_FILE: usize = 4;
 const HUNK_LINES: usize = 3;
 const UNMERGED: [&str; 7] = ["DD", "AU", "UD", "UA", "DU", "AA", "UU"];
@@ -277,12 +290,37 @@ pub fn branch_status(root: &Path, base: &str) -> Result<BranchStatus, String> {
     let mut counts = counts.split_whitespace().map(|n| n.parse().unwrap_or(0));
     let (ahead, behind) = (counts.next().unwrap_or(0), counts.next().unwrap_or(0));
 
-    // Both sides since they split, and the commit they split from (so not its parents).
-    let stops: Vec<String> = git(root, &["rev-parse", &format!("{split}^@")])
+    // Other local branches with work the base lacks that left it recently, so their lines show beside ours.
+    // The graph reaches back to the oldest place one of them left from.
+    let (mut oldest, mut reach) = (split.clone(), git(root, &["rev-list", "--count", &format!("{split}..{base_sha}")])?.parse().unwrap_or(0));
+    let mut siblings = Vec::new();
+    for tip in git(root, &["for-each-ref", "--sort=-committerdate", "--count=50", "--format=%(objectname)", "refs/heads"])?.lines() {
+        if siblings.len() == SIBLING_LIMIT {
+            break;
+        }
+        if tip == head || tip == base_sha || siblings.iter().any(|s| s == tip) {
+            continue;
+        }
+        let Ok(fork) = git(root, &["merge-base", tip, &base_sha]) else { continue };
+        if fork == tip {
+            continue; // Already in the base.
+        }
+        let back: usize = git(root, &["rev-list", "--count", &format!("{fork}..{base_sha}")])?.parse().unwrap_or(usize::MAX);
+        if back > SIBLING_REACH {
+            continue;
+        }
+        if back > reach {
+            (oldest, reach) = (fork, back);
+        }
+        siblings.push(tip.to_string());
+    }
+    // Every side since it left, and the oldest commit one left from (so not its parents).
+    let stops: Vec<String> = git(root, &["rev-parse", &format!("{oldest}^@")])
         .map(|o| o.lines().map(|p| format!("^{p}")).collect())
         .unwrap_or_default();
     let n = (GRAPH_LIMIT + 1).to_string();
     let mut log = vec!["log", "--topo-order", "--decorate-refs=refs/heads", "-n", n.as_str(), "--format=%H%x1f%P%x1f%an%x1f%at%x1f%D%x1f%s", "HEAD", base_sha.as_str()];
+    log.extend(siblings.iter().map(String::as_str));
     log.extend(stops.iter().map(String::as_str));
     log.push("--");
     let mut list = vec!["rev-list", "-n", "5000", base_sha.as_str()];
@@ -328,6 +366,7 @@ pub fn branch_status(root: &Path, base: &str) -> Result<BranchStatus, String> {
         branch,
         base: base.into(),
         head,
+        base_head: base_sha,
         you: git(root, &["config", "user.name"]).ok().filter(|n| !n.is_empty()),
         ahead,
         behind,
@@ -339,6 +378,8 @@ pub fn branch_status(root: &Path, base: &str) -> Result<BranchStatus, String> {
         conflicts,
         commits,
         more,
+        // `@{u}` fails once the remote branch is deleted (`git push --delete` drops the tracking ref too).
+        upstream: git(root, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).ok().filter(|u| !u.is_empty()),
     })
 }
 
@@ -511,6 +552,10 @@ impl BranchStatus {
         if self.uncommitted > 0 {
             s.push_str(&format!("{} files have uncommitted changes.\n", self.uncommitted));
         }
+        match &self.upstream {
+            Some(u) => s.push_str(&format!("Tracks {u}.\n")),
+            None => s.push_str("Has no branch on a remote (never pushed, or deleted there).\n"),
+        }
         match (&self.merging, &self.conflicts) {
             (Some(m), _) if m.unresolved.is_empty() => s.push_str("A merge is in progress with every conflict resolved; git_commit finishes it.\n"),
             (Some(m), _) => s.push_str(&format!("A merge is in progress; still conflicted: {}.\n", m.unresolved.join(", "))),
@@ -613,14 +658,123 @@ pub fn merge_abort(root: &Path, before: &mut dyn FnMut(&str) -> Result<(), Strin
     Ok("Undid the merge; the branch is back where it was.".into())
 }
 
-/// Land this branch on `base` locally by fast-forwarding `base` to HEAD. Where
-/// `base` is checked out (often the user's own checkout) it must be clean.
-pub fn land(root: &Path, base: &str) -> Result<String, String> {
+/// How `land` puts the branch on its base, like a host's merge button.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LandMethod {
+    /// Move the base up to HEAD; only when the base has nothing the branch lacks.
+    FastForward,
+    /// A merge commit on the base with HEAD as its second parent.
+    MergeCommit,
+    /// One new commit on the base holding the branch's changes.
+    Squash,
+    /// The branch's commits replayed on top of the base.
+    Rebase,
+}
+
+impl LandMethod {
+    pub fn parse(method: Option<&str>) -> Result<Self, String> {
+        match method {
+            None | Some("fast-forward") => Ok(Self::FastForward),
+            Some("merge") => Ok(Self::MergeCommit),
+            Some("squash") => Ok(Self::Squash),
+            Some("rebase") => Ok(Self::Rebase),
+            Some(other) => Err(format!("Unknown method {other:?}: use merge, squash, rebase or fast-forward.")),
+        }
+    }
+}
+
+/// The tree merging `theirs` into `ours` makes, written without touching the folder (git 2.38+).
+fn merged_tree(root: &Path, ours: &str, theirs: &str, merge_base: Option<&str>, base: &str) -> Result<String, String> {
+    let at = merge_base.map(|b| format!("--merge-base={b}"));
+    let mut args = vec!["merge-tree", "--write-tree", "--no-messages"];
+    args.extend(at.as_deref());
+    args.extend([ours, theirs]);
+    let out = run(root, &args)?;
+    match out.code {
+        0 => Ok(out.stdout.lines().next().unwrap_or_default().trim().to_string()),
+        1 => Err(format!("This branch conflicts with {base}. Merge {base} into it first (git_merge) and resolve the conflicts, then land it.")),
+        _ => Err(if out.stderr.is_empty() { "git merge-tree failed (needs git 2.38 or later).".into() } else { out.stderr }),
+    }
+}
+
+/// A commit of `tree` on `parents`, authored as `author` (name, email, date) or as the user.
+fn commit_tree(root: &Path, tree: &str, parents: &[&str], message: &str, author: Option<[&str; 3]>) -> Result<String, String> {
+    let mut args = vec!["commit-tree", tree];
+    for p in parents {
+        args.extend(["-p", *p]);
+    }
+    args.extend(["-m", message]);
+    let env = author.map(|[name, email, date]| [("GIT_AUTHOR_NAME", name), ("GIT_AUTHOR_EMAIL", email), ("GIT_AUTHOR_DATE", date)]);
+    let out = run_env(root, &args, env.as_ref().map_or(&[][..], |e| &e[..]))?;
+    check(out).map(|sha| sha.trim().to_string())
+}
+
+/// The branch's commits (`base..HEAD`) replayed one by one on `onto`, keeping their messages and authors.
+fn replay(root: &Path, base_sha: &str, onto: &str, base: &str) -> Result<String, String> {
+    let list = git(root, &["rev-list", "--reverse", "--parents", &format!("{base_sha}..HEAD")])?;
+    let mut tip = onto.to_string();
+    for line in list.lines().filter(|l| !l.is_empty()) {
+        let ids: Vec<&str> = line.split(' ').collect();
+        if ids.len() != 2 {
+            return Err("This branch has merge commits, which a rebase can't replay. Land it with a merge commit or a squash instead.".into());
+        }
+        let (commit, parent) = (ids[0], ids[1]);
+        let tree = merged_tree(root, &tip, commit, Some(parent), base)?;
+        let meta = git(root, &["log", "-1", "--format=%an%x00%ae%x00%aD%x00%B", commit])?;
+        let mut f = meta.splitn(4, '\0');
+        let (name, email, date) = (f.next().unwrap_or_default(), f.next().unwrap_or_default(), f.next().unwrap_or_default());
+        let message = f.next().unwrap_or_default().trim();
+        tip = commit_tree(root, &tree, &[&tip], message, Some([name, email, date]))?;
+    }
+    Ok(tip)
+}
+
+/// Land this branch on `base` locally, the way `method` says. The new commits
+/// are made without touching any checkout; where `base` is checked out (often
+/// the user's own checkout) it must be clean, and it fast-forwards to them.
+pub fn land(root: &Path, base: &str, method: LandMethod) -> Result<String, String> {
     check_branch(root, base)?;
     let head = git(root, &["rev-parse", "HEAD"])?;
-    if run(root, &["merge-base", "--is-ancestor", base, "HEAD"])?.code != 0 {
-        return Err(format!("{base} has commits this branch doesn't. Merge {base} into this branch first (git_merge), then land it."));
+    let base_sha = git(root, &["rev-parse", "--verify", &format!("refs/heads/{base}")])?;
+    let contained = run(root, &["merge-base", "--is-ancestor", base, "HEAD"])?.code == 0;
+    let name = git(root, &["branch", "--show-current"]).ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "HEAD".into());
+    if method != LandMethod::FastForward && run(root, &["merge-base", "--is-ancestor", "HEAD", base])?.code == 0 {
+        return Err(format!("{base} already has every commit on this branch; there's nothing to land."));
     }
+    let short = |sha: &str| sha[..7.min(sha.len())].to_string();
+    let (target, said) = match method {
+        LandMethod::FastForward => {
+            if !contained {
+                return Err(format!("{base} has commits this branch doesn't. Merge {base} into this branch first (git_merge), then land it."));
+            }
+            (head.clone(), format!("{base} now points at {}: this branch is merged into it.", short(&head)))
+        }
+        LandMethod::MergeCommit => {
+            let tree = merged_tree(root, &base_sha, &head, None, base)?;
+            let sha = commit_tree(root, &tree, &[&base_sha, &head], &format!("Merge branch '{name}' into {base}"), None)?;
+            (sha.clone(), format!("{base} now has a merge commit, {}, bringing this branch in.", short(&sha)))
+        }
+        LandMethod::Squash => {
+            let tree = merged_tree(root, &base_sha, &head, None, base)?;
+            let subjects = git(root, &["log", "--reverse", "--no-merges", "--format=%s", &format!("{base_sha}..HEAD")])?;
+            let subjects: Vec<&str> = subjects.lines().filter(|l| !l.is_empty()).collect();
+            let message = match subjects.as_slice() {
+                [one] => one.to_string(),
+                many => format!("{name}\n\n{}", many.iter().map(|s| format!("* {s}")).collect::<Vec<_>>().join("\n")),
+            };
+            let sha = commit_tree(root, &tree, &[&base_sha], &message, None)?;
+            (
+                sha.clone(),
+                format!("{base} now has this branch's changes as one commit, {}. The branch itself is unchanged, so git still counts its commits as ahead of {base}.", short(&sha)),
+            )
+        }
+        LandMethod::Rebase if contained => (head.clone(), format!("{base} now points at {}: this branch is rebased onto it (a fast-forward, as {base} had nothing new).", short(&head))),
+        LandMethod::Rebase => {
+            let sha = replay(root, &base_sha, &base_sha, base)?;
+            (sha.clone(), format!("{base} now has this branch's commits replayed on top, ending at {}.", short(&sha)))
+        }
+    };
+    let head = target;
     let worktrees = git(root, &["worktree", "list", "--porcelain"])?;
     let (mut at, mut checkout) = (None, None);
     for line in worktrees.lines() {
@@ -640,11 +794,10 @@ pub fn land(root: &Path, base: &str) -> Result<String, String> {
             check(git_with(dir, &without_hooks(dir)?, &["merge", "--ff-only", "-q", &head])?)?;
         }
         None => {
-            let old = git(root, &["rev-parse", "--verify", &format!("refs/heads/{base}")])?;
-            git(root, &["update-ref", &format!("refs/heads/{base}"), &head, &old])?;
+            git(root, &["update-ref", &format!("refs/heads/{base}"), &head, &base_sha])?;
         }
     }
-    Ok(format!("{base} now points at {}: this branch is merged into it.", &head[..7.min(head.len())]))
+    Ok(said)
 }
 
 // --- history, for the graph panel ----------------------------------------------------
@@ -1008,9 +1161,15 @@ mod tests {
         commit_file("mine\n", "a on feat");
         git(root, &["switch", "-q", "main"]).unwrap();
         commit_file("theirs\n", "a again on main");
+        git(root, &["switch", "-q", "-c", "side"]).unwrap();
+        std::fs::write(root.join("b.txt"), "side\n").unwrap();
+        git(root, &["add", "b.txt"]).unwrap();
+        git(root, &["commit", "-q", "-m", "b on side"]).unwrap();
         git(root, &["switch", "-q", "feat"]).unwrap();
 
         let status = branch_status(root, "main").unwrap();
+        // A sibling branch that left after the split is drawn too.
+        assert!(status.commits.iter().any(|c| c.subject == "b on side" && c.refs == ["side"] && !c.on_base));
         assert_eq!((status.ahead, status.behind, status.branch.as_deref()), (1, 1, Some("feat")));
         let conflicts = status.conflicts.clone().expect("git 2.38+");
         assert_eq!(conflicts.len(), 1);
@@ -1038,7 +1197,41 @@ mod tests {
         assert_eq!((status.behind, status.merging.is_none(), status.conflicts.as_deref().map(<[_]>::len)), (0, true, Some(0)));
         assert!(commit(root, "again").unwrap_err().contains("nothing to commit"));
 
-        land(root, "main").unwrap();
+        land(root, "main", LandMethod::FastForward).unwrap();
         assert_eq!(git(root, &["rev-parse", "main"]).unwrap(), git(root, &["rev-parse", "HEAD"]).unwrap());
+        assert!(land(root, "main", LandMethod::Squash).unwrap_err().contains("nothing to land"));
+
+        // Each method once more, from a fresh branch with two commits on it, while main moves on.
+        let fresh = |name: &str| {
+            git(root, &["switch", "-q", "-c", name, "main"]).unwrap();
+            for n in 1..=2 {
+                std::fs::write(root.join(format!("{name}-{n}.txt")), "x\n").unwrap();
+                git(root, &["add", "-A"]).unwrap();
+                git(root, &["commit", "-q", "-m", &format!("{name} {n}")]).unwrap();
+            }
+        };
+        let on_main = |file: &str| git(root, &["cat-file", "-e", &format!("main:{file}")]).is_ok();
+        let parents = |rev: &str| git(root, &["rev-list", "--parents", "-n1", rev]).unwrap().split(' ').count() - 1;
+
+        fresh("m");
+        land(root, "main", LandMethod::MergeCommit).unwrap();
+        assert!(on_main("m-2.txt") && parents("main") == 2);
+        assert!(git(root, &["log", "-1", "--format=%s", "main"]).unwrap().contains("Merge branch 'm' into main"));
+
+        fresh("s");
+        land(root, "main", LandMethod::Squash).unwrap();
+        assert!(on_main("s-1.txt") && on_main("s-2.txt") && parents("main") == 1);
+        assert!(git(root, &["log", "-1", "--format=%B", "main"]).unwrap().contains("* s 2"));
+
+        // main has the squash, which r lacks: a real replay.
+        git(root, &["switch", "-q", "-c", "r", "main~1"]).unwrap();
+        std::fs::write(root.join("r.txt"), "x\n").unwrap();
+        git(root, &["add", "-A"]).unwrap();
+        git(root, &["commit", "-q", "-m", "r only"]).unwrap();
+        let before = git(root, &["rev-parse", "main"]).unwrap();
+        land(root, "main", LandMethod::Rebase).unwrap();
+        assert_eq!(git(root, &["rev-parse", "main~1"]).unwrap(), before);
+        assert!(on_main("r.txt") && git(root, &["log", "-1", "--format=%s", "main"]).unwrap() == "r only");
+        assert!(LandMethod::parse(Some("octopus")).is_err());
     }
 }

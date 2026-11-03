@@ -108,6 +108,10 @@ pub struct RunConfig {
     /// Text sent to the model in place of a user message's first text, by message id.
     #[serde(default)]
     pub expansions: HashMap<String, String>,
+    /// Shell commands the user already approved by pressing the button that started this run
+    /// (the branch card's Delete branch): exactly these run without asking again.
+    #[serde(default)]
+    pub approved: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

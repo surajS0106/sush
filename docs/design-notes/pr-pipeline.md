@@ -1,8 +1,36 @@
 # Pull request pipeline (Cowork) — Design Notes
 
-Last updated: 2026-11-03
+Last updated: 2026-11-04
 
 ## What changed
+
+### 2026-11-04 (buttons speak plainly; a click is the approval)
+- **Plain words in the transcript.** A card button used to send its whole instruction to the model as your message, for example "Merge the pull request with `gh pr merge 5 --rebase` (shell_run with network and unsandboxed)…". Now the transcript shows what you chose ("Rebase and merge #5", "Delete feat/x from origin", "Fix the failing unit check"). The exact instruction travels in the message's `metadata.instruction` and reaches the model through the existing expansions path (`runConfig` in `lib/sessions.ts` → `to_core`), so it is still there on every later run. A guest in a shared session sends text only, so for them the instruction is sent as text.
+- **A click is the approval.** Delete branch asked again, even in a workspace that edits automatically, because remote deletes are `tools::destructive`. But pressing the button is already your yes. The message now carries `instruction.approves` (the exact commands named), and the run's `RunConfig.approved` takes them from the latest user message. `Host::approval` (`src-tauri/src/runs.rs`) runs a `shell_run` whose command is exactly one of those without asking. Anything else, including the same command with changes, asks as before. Sub-agents never inherit them, and in a session others can steer, the shared-session floor still applies. The Merge menu's `gh pr merge <n> --<method>` is approved the same way.
+
+- **Delete branch on a merged card.** When the card reads "Merged into main" and the branch still has its copy on the remote, the card and the tray show a "Delete branch" button (outlined and neutral, not brand teal). It asks for exactly `git push <remote> --delete <branch>`, followed by `branch_status`. The local branch stays, as on GitHub, so the session keeps its branch and its card. Remote deletes count as `tools::destructive`, so this asks for approval even in a workspace that edits automatically.
+- **Knowing it's gone.** `BranchStatus.upstream` (new, from `@{u}` in `workspace/git.rs`; mirrored in `lib/tauri.ts`) is the branch's remote-tracking ref. `git push --delete` drops that ref, so `@{u}` fails and the card reads "Merged into main · branch deleted" with no button. `branch_status`'s output also tells the model whether the branch tracks a remote.
+- The step rail names a remote delete "Delete feat/x from origin" instead of "Push to origin", so the graph doesn't animate it as a push.
+
+- **Merge opens a menu.** Clicking Merge on the card or the tray now opens three methods: "Create a merge commit", "Squash and merge" and "Rebase and merge". Each one says what it will do to this branch ("Combines the 2 commits into a single commit on main"). The method you picked last is ticked (`sush.merge-method` in localStorage).
+- **Each choice asks for exactly one call.** The old button sent "Merge this branch into main." and left the model to work out how. In a test session a weaker model reasoned for about a minute about which way the merge went before it called `git_merge`, so the button looked broken. Now the prompt names the call: `gh pr merge <n> --squash` (or `--merge`, `--rebase`) for a pull request, or `git_merge` with `into: true` and `method` for a local branch.
+- **`git_merge` lands by method** (`git::land` + `LandMethod` in `workspace/git.rs`). `fast-forward` is still the default. `merge` writes a merge commit with both parents. `squash` writes one commit whose message lists the branch's subjects. `rebase` replays the branch's commits onto the base and keeps each author and message; it fast-forwards when the base has nothing new, and it refuses a branch that contains merge commits. All of these are built with `merge-tree --write-tree` and `commit-tree`, so neither checkout is touched. Where the base is checked out, that checkout must be clean, and it fast-forwards to the new commit as before. A conflict stops the landing and points to `git_merge <base>`.
+- The step rail shows the method's command (`git merge --squash  (on main)`).
+
+### 2026-11-03 (the merge, shown on the card)
+- **Git steps:** the card lists the turn's git work as a rail of steps, live: each `git_commit`, `git_merge`, and every `git`/`gh` command in a `shell_run` that changes something (`git push && gh pr merge` is two steps; `git log`, `gh pr view` and other reads are left out). Each step has its label ("Push to origin", "Merge the pull request into main", "Land on main"), the command, a running bar, "Waiting for you" while it asks for approval, how long it took, and its last line of output. Steps are read from the thread since the last user message, so they follow the turn from card to card (`useGitSteps` in `components/branch-card.tsx`).
+- **Graph motion by phase:** a running push or `gh pr create` sends pulses up the branch's line into the merge node, which breathes teal. A running `gh pr merge` or `git_merge into` adds the base's line, and both run violet into the node. Once either succeeds, the merge edges draw themselves in solid violet, the node grows, and a wider ring ripples out. The merge row reads "Pushing, then merging into main", "Merging into main", "Merged into main".
+- The card shows "Merged" as soon as the merge command succeeds, without waiting for GitHub's next poll.
+- **Main's line:** the merge node now has both parents, like the merge commit it stands for. A dashed line runs from it to the base's tip (`BranchStatus.baseHead`, new in `workspace/git.rs` and `lib/tauri.ts`).
+- **More sibling branches:** a sibling now counts if it left the base within its last 20 commits, not only at or after the split. The graph reaches back to the oldest such fork point. Fully merged branches are skipped (`SIBLING_REACH`).
+- Each sibling gets its own lane colour (amber, sky, rose, green, orange, fuchsia), never the brand teal or the merged violet. 12 rows show before "Show more" (was 9).
+- With reduced motion (the OS setting or Sush's own), the pulses and the breathing node are left out, and the running bar uses `data-ci-bar`, so it stops.
+
+### 2026-11-03 (sibling branches in the graph)
+- The card's commit graph drew only the branch and its base, so other branches cut from the same point (`fix/cart-total` beside `feat/shipping-label`) were invisible there while the Cowork graph panel showed them. `branch_status` now also logs every local branch that contains the split commit (`git branch --contains <split>`, up to 12), bounded by the same stops, so each one draws as its own lane forking off the base (`workspace/git.rs`).
+- Those lanes and their branch chips are amber, the graph panel's second lane colour, instead of `teal-500`, which sat too close to the brand teal of the branch's own line (`components/branch-card.tsx`).
+- The card's title fallback uses the head commit's subject, not the first commit off the base, which could now be a sibling's.
+- The `branch_status` test adds a `side` branch and checks its commit is in the graph.
 
 ### 2026-11-03 (graph motion)
 - The commit graph used to appear all at once. Now, when a card first shows, it grows from the base upward: each dot springs in, the line above it draws, and its row slides in, 90ms apart. After about 1.2s the delays drop to 0, so later changes move at once (`Graph` in `components/branch-card.tsx`).
@@ -91,8 +119,14 @@ A Merge button must never appear on a branch whose CI is red. Until `gh` answers
 
 The tray brings the status into the user's line of sight while they type, and opening it shows the pipeline without scrolling back up the transcript. Colours follow the brand: teal for progress and success, the logo coral for failure. Coral is a fixed token, so a failure looks like a failure whatever accent the user picked.
 
+Sibling branches belong on the card because a merge is a decision about the base, and the work landing beside yours is part of that picture: two fixes cut from the same commit are about to race into `main`. Only branches that contain the split commit are drawn, so the graph stays connected and never fills with old unrelated branches. The cap of 12 and the shared 40-commit limit keep a busy repo from crowding out the branch's own commits.
+
+Merging is the moment the card exists for, and until now it changed in one jump: a spinner, then a violet colour some seconds after GitHub's poll. The model's git commands were only in the transcript, in collapsed tool rows above or below the card. Putting them on the card, and tying the graph's motion to which one is running, shows where the work is at each step: on your machine, on its way to origin, merging, merged. Every state comes from tool calls the run really makes, so the motion never claims progress that isn't happening. The trade-off: a chained shell line can't say which of its commands is running, so its steps share the call's state.
+
 ## What makes it stand out
 
+- During a merge the card shows the git commands themselves (label, command, duration, last output line, approval wait), and the graph moves with them: pulses up the branch while it pushes, both parents flowing into the merge node while it merges, the merge edges drawing in once it lands.
+- The graph shows the local branches forked beside this one, each in its own lane, so the card shows what else is about to land on the base, not only this branch against it.
 - The checks come from GitHub, not from the model: start offsets and durations are real, and running bars grow live every second. A simple status list or the model's own report has neither.
 - A failure shows what went wrong (test, `file:line`, Expected against Received) right in the row, with the file opening at the line in Cowork's viewer. Fix sends the same detail to the agent.
 - The card and the model read the same GitHub state. The model's tool result carries the PR and each check, so its reply can't call a blocked PR clean, and it won't push or open a PR that already exists.
@@ -100,3 +134,11 @@ The tray brings the status into the user's line of sight while they type, and op
 - The same card works for guests in a live share, read on the host, with the log scrubbed. Buttons appear only to guests whose messages reach the run (driver or collaborator).
 - Motion respects both the OS setting and Sush's own reduced-motion preference: the `ci-run` and `ci-sweep` keyframes are listed in `prefers-reduced-motion` and caught by `[data-motion="reduced"]`.
 - Polling is light: only while the PR is open, shared between the card and the tray, paused while the window is hidden, and stopped once merged or closed.
+
+### Why merge methods are a menu, and why the model only relays them
+
+GitHub puts the method choice on the merge button itself, and that is where people expect it. A separate setting is easy to forget, and a dialog adds a step. The work itself still goes through the run, not a direct command. That keeps approvals, checkpoints, shared-session policy and the step rail the same for every merge. The cost was the model having to interpret the request, so each prompt now names the exact call and its arguments. Squashing is the one method where git can't tell afterwards that the branch landed: its commits still count as ahead of the base. The tool's output says so, and within the turn the card already shows "Merged" from the step that succeeded.
+
+### Why Delete branch removes only the remote copy
+
+GitHub's button deletes the branch on GitHub and leaves your clone alone, and people expect the same here. Deleting the local branch as well would mean switching the session off its branch first. The card follows HEAD, so it would jump to `main` against `main` and lose the merged pull request it was showing. Reading the tracking ref costs nothing, because no network call is made. The trade-off: a branch deleted on GitHub's website still reads as present here until the next `git fetch --prune`.

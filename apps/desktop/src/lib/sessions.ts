@@ -55,7 +55,7 @@ import {
   type ThreadOp,
   type ToolResponse,
 } from "@/lib/tauri";
-import type { ModelTarget, SushUIMessage } from "@/lib/transport";
+import type { ModelTarget, SushMetadata, SushUIMessage } from "@/lib/transport";
 import { notifyFilesChanged } from "@/lib/workspaces";
 
 export interface ThreadView {
@@ -316,7 +316,9 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   const expansions: Record<string, string> = {};
   for (const m of messages) {
     const text = m.role === "user" ? m.parts.find((p) => p.type === "text")?.text : undefined;
-    const expanded = text === undefined ? undefined : expandMentions(expandSlash(text), text);
+    // A card button's message: the short label it shows, then exactly what to do.
+    const instruction = m.role === "user" ? m.metadata?.instruction?.text : undefined;
+    const expanded = text === undefined ? undefined : instruction ? `${text}\n\n${instruction}` : expandMentions(expandSlash(text), text);
     if (expanded !== undefined && expanded !== text) expansions[m.id] = expanded;
   }
   return {
@@ -326,6 +328,8 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
     tools: runTools(ctx.tools),
     research: ctx.research,
     expansions,
+    // What the button behind the latest message approved by being pressed.
+    approved: messages.findLast((m) => m.role === "user")?.metadata?.instruction?.approves ?? [],
   };
 }
 
@@ -370,12 +374,14 @@ const isBusy = (id: string) => {
  * adds it at its next step boundary. Otherwise anything still queued (from a
  * run that stopped before taking it) goes along with it.
  */
-export function sendMessage(id: string, text: string, files: FileUIPart[]) {
+export function sendMessage(id: string, text: string, files: FileUIPart[], instruction?: SushMetadata["instruction"]) {
   if (isSharedThread(id)) {
-    void sendShared(id, text, files);
+    // A guest's message is built on the host from its text alone, so the instruction travels as text.
+    void sendShared(id, instruction ? `${text}\n\n${instruction.text}` : text, files);
     return;
   }
   const sent = userMessage(crypto.randomUUID(), text, files);
+  if (instruction) sent.metadata = { instruction };
   if (isBusy(id)) {
     setQueue(id, (q) => [...q, sent]);
     void start(id, { type: "steer", message: sent }, [...current(id), ...(queues.get().get(id) ?? NONE)]);

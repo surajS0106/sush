@@ -460,7 +460,13 @@ impl RunHost for Host {
     fn approval(&self, call: &ToolCall, tool: &RunTool) -> Approval {
         let approval = match (&tool.exec, &self.live.cowork) {
             (ToolExec::Workspace, Some(cowork)) => {
-                ws_tools::approval(&cowork.workspace.lock().unwrap(), &call.name, &call.input, Some(&cowork.sandbox))
+                let command = (call.name == ws_tools::SHELL_RUN).then(|| call.input.get("command").and_then(Value::as_str)).flatten();
+                if command.is_some_and(|c| self.live.ui_config.lock().unwrap().approved.iter().any(|a| a == c.trim())) {
+                    // The click that asked for this exact command was the approval.
+                    Approval::Auto
+                } else {
+                    ws_tools::approval(&cowork.workspace.lock().unwrap(), &call.name, &call.input, Some(&cowork.sandbox))
+                }
             }
             (ToolExec::Browser, _) => {
                 let allowed = self.app.state::<Browser>().allowed_sites(&self.thread_id);
@@ -563,7 +569,8 @@ impl Host {
         let task = subagents::parse(&call.input)?;
         let (parent, config) = {
             let s = self.live.state.lock().unwrap();
-            (s.thread.clone(), self.live.ui_config.lock().unwrap().clone())
+            // A sub-agent never inherits the commands a click approved for the lead.
+            (s.thread.clone(), RunConfig { approved: Vec::new(), ..self.live.ui_config.lock().unwrap().clone() })
         };
         if parent.parent_id.is_some() || parent.incognito {
             return Err("Sub-agents aren't available here.".into());
