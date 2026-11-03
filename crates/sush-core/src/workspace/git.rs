@@ -21,6 +21,9 @@ pub struct GitInfo {
     pub branches: Vec<String>,
     /// The folder is a linked worktree rather than the main checkout.
     pub worktree: bool,
+    /// The branch a rebase stopped partway through is replaying; HEAD is
+    /// detached until it's continued or aborted.
+    pub rebasing: Option<String>,
 }
 
 /// What a git command printed, whatever its exit code.
@@ -73,7 +76,18 @@ pub fn info(root: &Path) -> Option<GitInfo> {
     let branches = git(root, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])
         .map(|o| o.lines().map(str::to_string).filter(|b| !b.is_empty()).collect())
         .unwrap_or_default();
-    Some(GitInfo { branch: (head != "HEAD").then(|| head.to_string()), branches, worktree })
+    let branch = (head != "HEAD").then(|| head.to_string());
+    let rebasing = if branch.is_none() { rebase_branch(&root.join(git_dir)) } else { None };
+    Some(GitInfo { branch, branches, worktree, rebasing })
+}
+
+/// The branch a stopped rebase is replaying, from the state git keeps in the
+/// git dir (`rebase-merge` for the default backend, `rebase-apply` for `am`).
+fn rebase_branch(git_dir: &Path) -> Option<String> {
+    ["rebase-merge", "rebase-apply"].iter().find_map(|d| {
+        let name = std::fs::read_to_string(git_dir.join(d).join("head-name")).ok()?;
+        name.trim().strip_prefix("refs/heads/").map(str::to_string)
+    })
 }
 
 fn same_dir(root: &Path, a: &str, b: &str) -> bool {

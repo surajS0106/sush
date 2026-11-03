@@ -147,10 +147,16 @@ function GitOptions({ conversationId, workspaceId }: { conversationId: string; w
           <button
             type="button"
             className="flex h-full max-w-44 items-center gap-1.5 rounded-l-lg px-2.5 hover:text-foreground"
-            title={pendingBase ? `The new worktree starts from ${pendingBase}` : "The branch checked out in this folder"}
+            title={
+              pendingBase
+                ? `The new worktree starts from ${pendingBase}`
+                : !branch && git.rebasing
+                  ? `A rebase of ${git.rebasing} stopped partway. Run git rebase --continue to finish it, or git rebase --abort to go back.`
+                  : "The branch checked out in this folder"
+            }
           >
             <GitBranchIcon className="size-3.5 shrink-0" />
-            <span className="truncate">{branch ?? "detached"}</span>
+            <span className="truncate">{branch ?? (git.rebasing ? `rebasing ${git.rebasing}` : "detached")}</span>
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="max-h-80 w-60 overflow-y-auto">

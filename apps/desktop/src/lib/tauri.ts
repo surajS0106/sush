@@ -190,6 +190,8 @@ export interface GitInfo {
   branches: string[];
   /** The folder is a linked worktree rather than the main checkout. */
   worktree: boolean;
+  /** The branch a rebase stopped partway through is replaying; HEAD is detached until it's continued or aborted. */
+  rebasing: string | null;
 }
 
 /** The workspace's branch against the branch it merges into (`sush_core::workspace::git::BranchStatus`). */

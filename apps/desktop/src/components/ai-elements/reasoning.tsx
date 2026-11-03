@@ -19,6 +19,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -81,6 +82,9 @@ export const Reasoning = memo(
     });
 
     const hasEverStreamedRef = useRef(isStreaming);
+    const wasStreamingRef = useRef(false);
+    // Once the user opens or closes it, auto-open and auto-close leave it alone.
+    const userToggledRef = useRef(false);
     const [hasAutoClosed, setHasAutoClosed] = useState(false);
     const startTimeRef = useRef<number | null>(null);
 
@@ -97,9 +101,12 @@ export const Reasoning = memo(
       }
     }, [isStreaming, setDuration]);
 
-    // Auto-open when streaming starts (unless explicitly closed)
+    // Auto-open when streaming starts (unless explicitly closed). Only on the
+    // transition: re-opening on every render undid the user's collapse.
     useEffect(() => {
-      if (isStreaming && !isOpen && !isExplicitlyClosed) {
+      const started = isStreaming && !wasStreamingRef.current;
+      wasStreamingRef.current = isStreaming;
+      if (started && !isOpen && !isExplicitlyClosed && !userToggledRef.current) {
         setIsOpen(true);
       }
     }, [isStreaming, isOpen, setIsOpen, isExplicitlyClosed]);
@@ -110,7 +117,8 @@ export const Reasoning = memo(
         hasEverStreamedRef.current &&
         !isStreaming &&
         isOpen &&
-        !hasAutoClosed
+        !hasAutoClosed &&
+        !userToggledRef.current
       ) {
         const timer = setTimeout(() => {
           setIsOpen(false);
@@ -123,6 +131,7 @@ export const Reasoning = memo(
 
     const handleOpenChange = useCallback(
       (newOpen: boolean) => {
+        userToggledRef.current = true;
         setIsOpen(newOpen);
       },
       [setIsOpen]
@@ -207,24 +216,44 @@ export type ReasoningContentProps = ComponentProps<
 const streamdownPlugins = { cjk, code, math, mermaid };
 
 export const ReasoningContent = memo(
-  ({ className, children, ...props }: ReasoningContentProps) => (
-    <CollapsibleContent
-      className={cn(
-        // Indented under the brain icon with a guide line, so the thought reads as an aside, not the answer.
-        "mt-2 ml-1.75 border-border border-l-2 pl-4 text-[13px] leading-relaxed",
-        "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground/80 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
-        className
-      )}
-      {...props}
-    >
-      <Streamdown
-        className="space-y-2 [&_code]:text-[12px] [&_li]:my-0.5 [&_p]:my-0"
-        plugins={streamdownPlugins}
+  ({ className, children, ...props }: ReasoningContentProps) => {
+    const { isStreaming } = useReasoning();
+    const tailRef = useRef<HTMLDivElement>(null);
+
+    // While it streams, the thought sits in a fixed-height window pinned to its
+    // newest line, so the transcript below doesn't shift with every token.
+    useLayoutEffect(() => {
+      const el = tailRef.current;
+      if (isStreaming && el) el.scrollTop = el.scrollHeight;
+    }, [children, isStreaming]);
+
+    return (
+      <CollapsibleContent
+        className={cn(
+          // Indented under the brain icon with a guide line, so the thought reads as an aside, not the answer.
+          "mt-2 ml-1.75 border-border border-l-2 pl-4 text-[13px] leading-relaxed",
+          "data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground/80 outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
+          className
+        )}
+        {...props}
       >
-        {children}
-      </Streamdown>
-    </CollapsibleContent>
-  )
+        <div
+          ref={tailRef}
+          className={cn(
+            isStreaming &&
+              "max-h-36 overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_2rem)]"
+          )}
+        >
+          <Streamdown
+            className="space-y-2 [&_code]:text-[12px] [&_li]:my-0.5 [&_p]:my-0"
+            plugins={streamdownPlugins}
+          >
+            {children}
+          </Streamdown>
+        </div>
+      </CollapsibleContent>
+    );
+  }
 );
 
 Reasoning.displayName = "Reasoning";

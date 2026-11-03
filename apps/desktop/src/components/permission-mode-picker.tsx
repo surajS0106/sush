@@ -29,7 +29,7 @@ export function PermissionModePicker() {
           className={cn(
             "flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium shadow-xs transition-colors",
             mode === "auto"
-              ? "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400"
+              ? "border-sush/50 bg-sush/15 text-sush-deep hover:bg-sush/25 dark:bg-sush/20 dark:text-sush dark:hover:bg-sush/30"
               : "border-foreground/10 bg-foreground/[0.03] text-foreground hover:bg-foreground/[0.06] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
           )}
         >

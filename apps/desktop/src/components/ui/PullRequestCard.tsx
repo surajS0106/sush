@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 const STATES: Record<PullRequestState, { label: string; icon: typeof GitPullRequestIcon; className: string }> = {
   open: { label: "PR Open", icon: GitPullRequestIcon, className: "text-green-600 dark:text-green-500" },
   draft: { label: "Draft PR", icon: GitPullRequestDraftIcon, className: "text-muted-foreground" },
-  merged: { label: "PR Merged", icon: GitMergeIcon, className: "text-violet-600 dark:text-violet-400" },
+  merged: { label: "PR Merged", icon: GitMergeIcon, className: "text-sush-deep" },
   closed: { label: "PR Closed", icon: GitPullRequestClosedIcon, className: "text-red-600 dark:text-red-500" },
 };
 

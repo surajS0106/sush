@@ -4,6 +4,15 @@ Last updated: 2026-11-04
 
 ## What changed
 
+### 2026-11-04 (merged is deep teal, not violet)
+- The merged state (the tray and card label, PR badge, merge lines and the branch chip in the graph) used Tailwind's violet, GitHub's color for a merged PR, which is not a Sush color. It now uses `--sush-deep`, the deep teal shade from the palette, defined in `index.css` next to `--coral` so it stays the same whatever accent is picked (`components/branch-card.tsx`, `components/ui/PullRequestCard.tsx`). Coral was not used because the card already uses it for failures.
+
+### 2026-11-04 (the tray's chevron points the way it opens)
+- The chevron that shows or hides the tray's checks pointed down when closed and up when open, as on a panel that opens downward. The tray stands on the composer and its checks open upward, so the chevron is now flipped: it points up when closed and down when open (`components/branch-card.tsx`).
+
+### 2026-11-04 (the branch chip names a stopped rebase)
+- When a rebase stopped partway (a conflict, or one the agent started in the shell and left unfinished), HEAD is detached, so the composer's branch chip read "detached" while the branch was still in its list, which looked like a branch that had been deleted but was still there. `git::info` now reads the branch being replayed from `rebase-merge/head-name` (or `rebase-apply/`) in the git dir and reports it as `GitInfo.rebasing` (`crates/sush-core/src/workspace/git.rs`, `lib/tauri.ts`). The chip reads "rebasing test/merge-tray", and its tooltip names `git rebase --continue` and `--abort` (`components/session-options.tsx`). While a rebase is stopped, git refuses `git switch`, so Delete branch's chain also stops there until the rebase is finished or aborted.
+
 ### 2026-11-04 (the tray agrees with the card after a squash)
 - After a squash or rebase merge, the card read "Merged into main" while the tray above the composer still read "Ready to merge". Only the card checked whether the turn's merge step had succeeded. The tray used the verdict from the read status, and there the branch's own commits are still off the base, so it still counted as two commits ahead. Both now get the verdict from one hook, `useLanded` in `components/branch-card.tsx`, so the tray also shows "Merged", folds away and offers Delete branch.
 

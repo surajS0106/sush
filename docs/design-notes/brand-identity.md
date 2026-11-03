@@ -25,6 +25,7 @@ Last updated: 2026-10-19
   - Neutrals carry a low-chroma teal tint (hue 190 to 215).
   - Dark mode uses a deep teal-black.
   - Charts use teal tints and shades plus coral.
+  - `--sush` (logo teal) and `--sush-deep` (deep teal) sit beside `--coral` as fixed colors that ignore the accent. The Auto permission chip uses `--sush`; merged pull requests use `--sush-deep` (added 2026-11-04, replacing violet).
 - Accents:
   - New default accent `sush` (logo teal).
   - `red` is retuned to the logo coral and labelled "Coral".

@@ -304,7 +304,7 @@ const TONE_TEXT: Record<Tone, string> = {
   warn: "text-amber-600 dark:text-amber-500",
   bad: "text-coral",
   good: "text-brand",
-  merged: "text-violet-600 dark:text-violet-400",
+  merged: "text-sush-deep",
 };
 
 const TONE_DOT: Record<Tone, string> = {
@@ -313,7 +313,7 @@ const TONE_DOT: Record<Tone, string> = {
   warn: "bg-amber-500",
   bad: "bg-coral",
   good: "bg-brand",
-  merged: "bg-violet-500",
+  merged: "bg-sush-deep",
 };
 
 /** One commit, however much of its sha each side has. */
@@ -593,7 +593,7 @@ function PrBadge({ state }: { state: PrState }) {
   const tone: Record<PrState, [string, string]> = {
     open: ["Open", "text-brand before:bg-brand"],
     draft: ["Draft", "text-muted-foreground before:bg-muted-foreground/60"],
-    merged: ["Merged", "text-violet-600 dark:text-violet-400 before:bg-violet-500"],
+    merged: ["Merged", "text-sush-deep before:bg-sush-deep"],
     closed: ["Closed", "text-coral before:bg-coral"],
   };
   const [label, className] = tone[state];
@@ -1303,7 +1303,7 @@ const PAD = 7;
 /** Commit rows shown before "Show more". */
 const FOLDED = 12;
 
-/** Other branches' lines and chips, a colour per lane like the graph panel's. Never the brand teal or the merged violet. */
+/** Other branches' lines and chips, a colour per lane like the graph panel's. Never the brand teal or the merged deep teal. */
 const OTHER: [line: string, chip: string][] = [
   ["text-amber-500", "bg-amber-500/10 text-amber-700 dark:text-amber-400"],
   ["text-sky-500", "bg-sky-500/10 text-sky-700 dark:text-sky-400"],
@@ -1370,9 +1370,9 @@ function Graph({
   const hidden = rows.length - shown;
   const width = PAD * 2 + (lanes - 1) * LANE;
   const color = (kind: Kind, lane: number) =>
-    kind === "ours" ? (merged ? "text-violet-500" : "text-brand") : kind === "base" ? "text-muted-foreground/45" : other(lane)[0];
+    kind === "ours" ? (merged ? "text-sush-deep" : "text-brand") : kind === "base" ? "text-muted-foreground/45" : other(lane)[0];
 
-  // Colours fade between states (blue to violet on merge, amber to green).
+  // Colours fade between states (blue to deep teal on merge, amber to green).
   const fade = "transition-[color,fill,stroke] duration-500";
   // On first show the graph grows from the base up to the merge node: each dot, then the line above it.
   // After that, delays stay 0 so later changes move at once.
@@ -1424,7 +1424,7 @@ function Graph({
                   strokeDasharray={e.dashed ? "2 3" : undefined}
                   // While checks run or the branch merges, the dashes into the merge node flow up toward it.
                   data-ci-flow={e.dashed && (v.tone === "progress" || phase === "merge") ? "" : undefined}
-                  className={cn(fade, e.fromMerge && merged ? "text-violet-500" : color(e.kind, e.lane))}
+                  className={cn(fade, e.fromMerge && merged ? "text-sush-deep" : color(e.kind, e.lane))}
                 />
               );
             })}
@@ -1439,7 +1439,7 @@ function Graph({
                   key={`${rows[e.from].key}>${rows[e.to].key}:${phase}:${at}`}
                   r={2}
                   fill="currentColor"
-                  className={phase === "merge" ? "text-violet-500" : e.kind === "ours" ? "text-brand" : "text-muted-foreground"}
+                  className={phase === "merge" ? "text-sush-deep" : e.kind === "ours" ? "text-brand" : "text-muted-foreground"}
                 >
                   <animateMotion dur={`${dur}s`} begin={`${at * dur}s`} repeatCount="indefinite" path={d} keyPoints="1;0" keyTimes="0;1" calcMode="linear" />
                   <animate attributeName="opacity" dur={`${dur}s`} begin={`${at * dur}s`} repeatCount="indefinite" values="0;1;1;0" keyTimes="0;0.15;0.8;1" />
@@ -1486,7 +1486,7 @@ function Graph({
               fill="none"
               strokeWidth={1.5}
               stroke="currentColor"
-              className={phase === "merge" ? "text-violet-500" : "text-brand"}
+              className={phase === "merge" ? "text-sush-deep" : "text-brand"}
             />
           )}
           {/* A ring ripples out of the merge node whenever the verdict lands: ready, merged, blocked or conflicted. */}
@@ -1543,7 +1543,7 @@ const DOT_FILL: Record<Tone, string> = {
   warn: "text-amber-500",
   bad: "text-coral",
   good: "text-brand",
-  merged: "text-violet-500",
+  merged: "text-sush-deep",
 };
 
 function GraphRow({
@@ -1591,7 +1591,7 @@ function GraphRow({
   const c = row.commit!;
   const ref = c.refs.find((r) => r !== s.branch) ?? c.refs[0];
   const chip: Record<Kind, string> = {
-    ours: merged ? "bg-violet-500/10 text-violet-600 dark:text-violet-400" : "bg-brand/10 text-brand",
+    ours: merged ? "bg-sush-deep/10 text-sush-deep" : "bg-brand/10 text-brand",
     base: "bg-muted text-muted-foreground",
     other: other(lane)[1],
   };
@@ -1762,7 +1762,8 @@ export function BranchTray({ workspaceId, threadId, part }: { workspaceId: strin
             aria-label={open ? "Hide checks" : "Show checks"}
             className="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <ChevronDownIcon className={cn("size-3.5 transition-transform duration-200", open && "rotate-180")} />
+            {/* The tray stands on the composer and grows upward, so closed points up and open points down. */}
+            <ChevronDownIcon className={cn("size-3.5 transition-transform duration-200", !open && "rotate-180")} />
           </button>
         )}
         <ActionButton action={canAct ? given.action : undefined} threadId={threadId} doing={doing} disabled={session !== null} />

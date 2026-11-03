@@ -1,8 +1,11 @@
 # Cowork approvals — Design Notes
 
-Last updated: 2026-11-03
+Last updated: 2026-11-04
 
 ## What changed
+
+### 2026-11-04
+- The composer's Auto chip was hard to see: amber-700 text on a 10% amber fill with a 30% border read as a faint peach outline on the light composer. It is now a light `--sush` (logo teal) tint with a 50% teal border and `--sush-deep` text in light mode, so the label is dark enough to read while the pill stays light; a solid teal pill with white text was tried and looked too heavy beside the other composer chips. Dark mode uses light teal text on a 20% fill (`apps/desktop/src/components/permission-mode-picker.tsx`). The color is fixed rather than following the accent, so the chip stays Sush teal even when another accent, such as violet, is picked, and it reads as a state of the app rather than a warning.
 
 ### 2026-11-03
 - "Edit automatically" now means everything runs without asking. Before, it covered only edits, commits, merging the base in, and commands the sandbox kept offline. Commands that need the network or leave the sandbox, commands in a folder set to run on the user's machine, commands where no sandbox works, and `git_merge` with `into` all asked. So a push, `gh pr create`, `gh pr merge` and landing on `main` stopped the run every time (`approval` in `crates/sush-core/src/workspace/tools.rs`).
