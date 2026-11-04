@@ -5,6 +5,7 @@ import type { DynamicToolUIPart } from "ai";
 import {
   ArrowRightIcon,
   BrainIcon,
+  CloudSunIcon,
   DownloadIcon,
   FileIcon,
   FilePenIcon,
@@ -47,9 +48,11 @@ import { LocationCard } from "@/components/location-card";
 import { MapCard } from "@/components/map-card";
 import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
+import { InstamartAddresses, InstamartCard, InstamartPendingItems, InstamartWorking } from "@/components/instamart-card";
 import { SwiggyCard, SwiggyOrderApproval } from "@/components/swiggy-card";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { WeatherCard } from "@/components/weather-card";
 import {
   CHATS_SEARCH,
   findConnectorTool,
@@ -76,6 +79,7 @@ import { getConversations } from "@/lib/store";
 import { errorMessage, type SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type SushMetadata, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
+import type { WeatherOutput } from "@/lib/weather";
 import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
 
 interface ToolPartProps {
@@ -147,6 +151,8 @@ function ToolCard(props: ToolPartProps) {
       return <MapPart part={props.part} />;
     case "flights":
       return <FlightsPart part={props.part} />;
+    case "weather":
+      return <WeatherPart part={props.part} />;
     case "location":
       return <LocationPart {...props} />;
     case "agent":
@@ -169,7 +175,7 @@ function AskUserPart({ part, canAnswer, onResult }: ToolPartProps) {
   useEffect(() => {
     if (part.state === "input-available" && !questions && canAnswer && !reported.current) {
       reported.current = true;
-      onResult({ errorText: "Invalid ask_user input: expected { questions: [{ question, options[], multiSelect? }] }." });
+      onResult({ errorText: "Invalid ask_user input: expected { questions: [{ question, options[], multiSelect? } or { question, type: \"date\" | \"date-range\" }] }." });
     }
   }, [part.state, questions, canAnswer, onResult]);
 
@@ -314,6 +320,28 @@ function FlightsPart({ part }: { part: DynamicToolUIPart }) {
   return <FlightCard trip={part.output as FlightsOutput} />;
 }
 
+// --- weather -----------------------------------------------------------------------
+
+function WeatherPart({ part }: { part: DynamicToolUIPart }) {
+  if (part.state === "input-streaming" || part.state === "input-available") return <LoadingState label="Checking the sky" />;
+  const row = (text: string, detail?: string, error?: boolean) => (
+    <ToolResultRow
+      error={error}
+      detail={detail}
+      label={
+        <>
+          <CloudSunIcon className="size-4 shrink-0" />
+          <span className="line-clamp-1 text-left">{text}</span>
+        </>
+      }
+    />
+  );
+  if (part.state === "output-error") return row("Couldn't get the weather", part.errorText, true);
+  // A guest gets a placeholder: the place is usually where the host is (`share/redact.rs`).
+  if (typeof part.output !== "object" || part.output === null) return row("Weather hidden: private to the host");
+  return <WeatherCard weather={part.output as WeatherOutput} />;
+}
+
 // --- location ----------------------------------------------------------------------
 
 const LOCATION_DECLINED = "The user didn't share their location. Ask them to name a place instead.";
@@ -334,7 +362,9 @@ function LocationPart({ part, canAnswer, onResult }: ToolPartProps) {
     case "input-streaming":
       return <LoadingState label="Asking for your location" />;
     case "output-available": {
-      const shared = part.output as Partial<LocationOutput>;
+      const shared = part.output as Partial<LocationOutput> & { removed?: boolean };
+      if (shared.removed) return row("Location removed after its session");
+      if (shared.temporary) return row("Shared location for this session", shared.place);
       return row(shared.source === "saved" ? "Shared saved address" : "Shared location", shared.place);
     }
     case "output-error":
@@ -804,7 +834,11 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
   const watching = useContext(WatchingHost);
   const [running, setRunning] = useState(false);
   const inFlight = useRunningToolCalls().has(part.toolCallId);
+  // Only a card that just finished plays its entrance, not every one in a reopened chat.
+  const sawItRun = useRef(false);
+  if (part.state !== "output-available" && part.state !== "output-error") sawItRun.current = true;
   const found = findConnectorTool(part.toolName);
+  const instamart = swiggyService(part.toolName) === "instamart";
   // Saved chats can reference connectors that are gone; fall back to the raw name.
   const [connectorName, toolName] = found
     ? [found.connector.name, found.tool]
@@ -823,9 +857,27 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
 
   switch (part.state) {
     case "input-streaming":
-      return <LoadingState label={`Preparing ${toolName}`} />;
+      return instamart ? <InstamartWorking tool={toolName} input={part.input} /> : <LoadingState label={`Preparing ${toolName}`} />;
     case "output-available": {
       const swiggy = parseSwiggyCard(part.toolName, part.output);
+      if (swiggy?.service === "instamart" && swiggy.card.kind === "addresses") {
+        return <InstamartAddresses card={swiggy.card} callId={part.toolCallId} connected={!!found} readOnly={!found || !!watching} row={<ToolResultRow label={label} />} />;
+      }
+      if (swiggy?.service === "instamart" && (swiggy.card.kind === "products" || swiggy.card.kind === "cart")) {
+        return (
+          <InstamartCard
+            card={swiggy.card}
+            callId={part.toolCallId}
+            input={part.input}
+            output={part.output}
+            connectorId={found?.connector.id}
+            widget={found?.widget}
+            readOnly={!found || !!watching}
+            fresh={sawItRun.current}
+            row={<ToolResultRow label={label} />}
+          />
+        );
+      }
       const pr = swiggy ? null : parsePullRequest(part.output, part.input);
       const commits = pr || swiggy ? null : parseCommits(part.output, part.input);
       return (
@@ -855,7 +907,7 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
     default:
       // The run starts calls that need no approval itself and reports them as running.
       if (running || inFlight) {
-        return <LoadingState label={`Running ${toolName}`} />;
+        return instamart ? <InstamartWorking tool={toolName} input={part.input} /> : <LoadingState label={`Running ${toolName}`} />;
       }
       if (!canAnswer || (!found && !watching)) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
       if (found && !watching && isSwiggyOrder(part.toolName)) {
@@ -873,19 +925,22 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
         );
       }
       return (
-        <ToolApprovalCard
-          connector={connectorName}
-          tool={toolName}
-          description={found?.spec.description.replace(/^\[[^\]]*\] /, "")}
-          input={part.input}
-          allowAlways={!watching && !!found && !placesOrder(found.tool)}
-          onDeny={() => onResult({ errorText: DENIED })}
-          onAllow={(always) => {
-            if (always && found) allowTool(found.connector.id, found.tool);
-            setRunning(true);
-            onApprove();
-          }}
-        />
+        <>
+          {instamart && <InstamartPendingItems tool={toolName} input={part.input} />}
+          <ToolApprovalCard
+            connector={connectorName}
+            tool={toolName}
+            description={found?.spec.description.replace(/^\[[^\]]*\] /, "")}
+            input={part.input}
+            allowAlways={!watching && !!found && !placesOrder(found.tool)}
+            onDeny={() => onResult({ errorText: DENIED })}
+            onAllow={(always) => {
+              if (always && found) allowTool(found.connector.id, found.tool);
+              setRunning(true);
+              onApprove();
+            }}
+          />
+        </>
       );
   }
 }

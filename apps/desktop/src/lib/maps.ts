@@ -19,7 +19,8 @@ export const mapTool: ToolSpec = {
   name: MAP_SHOW,
   description:
     "Show the user an interactive Google Map in the chat: a route between two places, or one place. Use it whenever " +
-    "the user asks for directions, a route, how to get somewhere, where a place is, or to see a map. If they want " +
+    "the user asks for directions, a route, how to get somewhere, where a place is, or to see a map, but not for the " +
+    "weather, which is weather_show. If they want " +
     "directions from where they are, get the start with location_get; if you don't know the start, ask; don't guess. " +
     "The map is shown right under the call. The result may hold `details` from Google (travel time, distance, rating, " +
     "open now). If it doesn't, you have no such figures, so don't state them as fact: call any figure a rough estimate " +

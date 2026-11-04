@@ -258,6 +258,15 @@ html[data-resizing] * {
   [data-ci-sweep] { display: none; }
 }
 
+/* The weather card's temperature: pixels dissolve in one by one (components/weather-card.tsx). */
+@keyframes pixel-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-weather-pixels] > * { animation: none !important; }
+}
+
 /* AskUserCard (components/ask-user-card.tsx) entrances. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }

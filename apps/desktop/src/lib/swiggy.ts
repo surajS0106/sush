@@ -67,6 +67,7 @@ const WITH_CARD: Record<SwiggyService, Set<string>> = {
     "your_go_to_items",
     "get_cart",
     "update_cart",
+    "get_addresses",
     ORDER_TOOL.instamart,
     "confirm_order",
     "track_order",
@@ -79,8 +80,11 @@ export function hasSwiggyCard(toolName: string): boolean {
   return !!service && WITH_CARD[service].has(swiggyToolOf(toolName) ?? "");
 }
 
-/** `data` of Swiggy's `{ success, data }` envelope, from the tool's text output. */
-function envelopeData(output: unknown): Rec | null {
+/**
+ * A tool's fields, from its text output. Swiggy's reference wraps them in `{ success, data }`, but the
+ * servers send instructions for the model and then the fields bare, so this takes either.
+ */
+export function envelopeData(output: unknown): Rec | null {
   let value = output;
   if (typeof value === "string") {
     const start = value.indexOf("{");
@@ -92,8 +96,10 @@ function envelopeData(output: unknown): Rec | null {
       return null;
     }
   }
-  if (!isRec(value) || value.success === false || !isRec(value.data)) return null;
-  return value.data;
+  // Instamart's cart: the full result is kept for the card, away from the model (`instamart_output`).
+  if (isRec(value) && isRec(value.cardOnly) && isRec(value.cardOnly.result)) value = value.cardOnly.result;
+  if (!isRec(value) || value.success === false || isRec(value.error)) return null;
+  return isRec(value.data) ? value.data : value;
 }
 
 /** "₹240", from a number or a figure in a string; other text (like "₹300 for two") as written. */
@@ -135,7 +141,30 @@ export interface SwiggyProduct {
   name: string;
   brand?: string;
   imageUrl?: string;
-  variants: { id: string; label: string; price?: string; mrp?: string; inStock: boolean }[];
+  /** Sponsored by the brand; Swiggy asks that this is always shown. */
+  promoted: boolean;
+  /** Swiggy's own label, such as "Diwali Picks". */
+  badge?: string;
+  variants: SwiggyVariant[];
+}
+
+/** One pack size. `id` is its `spinId`. */
+export interface SwiggyVariant {
+  id: string;
+  skuId?: string;
+  label: string;
+  price?: string;
+  mrp?: string;
+  /** Whole percent off, from Swiggy's two prices. */
+  percentOff?: number;
+  inStock: boolean;
+  imageUrl?: string;
+  rating?: string;
+  ratingCount?: string;
+  /** "10 mins", from Swiggy's estimate for this address. */
+  eta?: string;
+  maxQuantity?: number;
+  maxQuantityMessage?: string;
 }
 
 export interface SwiggyCartItem {
@@ -145,6 +174,12 @@ export interface SwiggyCartItem {
   price?: string;
   options: string[];
   inStock: boolean;
+  /** Instamart only, like the rest of these. */
+  skuId?: string;
+  imageUrl?: string;
+  mrp?: string;
+  maxQuantity?: number;
+  maxQuantityMessage?: string;
 }
 
 export interface SwiggyCart {
@@ -156,6 +191,8 @@ export interface SwiggyCart {
   toPay?: number;
   /** The address the cart was built for, when it says. */
   addressId?: string;
+  /** Where it's going, for the card: "Home · 12 Main Road". */
+  addressLabel?: string;
   /** How many stores its items come from: Instamart makes an order per store. */
   stores: number;
   /** Items that can't be delivered to the cart's address. */
@@ -188,7 +225,16 @@ export interface SwiggyTracked {
   progress?: number;
 }
 
+export interface SwiggyAddress {
+  id: string;
+  label: string;
+  /** Who it's for, as saved on the address. */
+  name?: string;
+  line: string;
+}
+
 export type SwiggyCardData =
+  | { kind: "addresses"; addresses: SwiggyAddress[]; suggestedId?: string; total?: number }
   | { kind: "restaurants"; restaurants: SwiggyRestaurant[]; dishes: SwiggyDish[] }
   | { kind: "menu"; restaurant: SwiggyRestaurant; categories: { title: string; items: SwiggyDish[] }[] }
   | { kind: "products"; products: SwiggyProduct[]; similar: SwiggyProduct[] }
@@ -277,16 +323,29 @@ const productsOf = (v: unknown): SwiggyProduct[] =>
         name,
         brand: text(p.brand),
         imageUrl: variations.map((x) => text(x.imageUrl)).find(Boolean),
+        promoted: p.isPromoted === true,
+        badge: list(p.badges).flatMap((b) => text(b.text) ?? [])[0],
         variants: variations.map((x, i) => {
           const price = isRec(x.price) ? x.price : {};
           const offer = num(price.offerPrice);
           const mrp = num(price.mrp);
+          const discounted = mrp !== undefined && offer !== undefined && mrp > offer;
+          const rating = isRec(x.rating) ? x.rating : {};
+          const sla = isRec(x.sla) ? x.sla : {};
           return {
             id: text(x.spinId) ?? String(i),
+            skuId: text(x.skuId),
             label: text(x.quantityDescription) ?? text(x.displayName) ?? "",
             price: rupees(offer ?? mrp),
-            mrp: mrp !== undefined && offer !== undefined && mrp > offer ? rupees(mrp) : undefined,
+            mrp: discounted ? rupees(mrp) : undefined,
+            percentOff: discounted ? Math.round(((mrp - offer) / mrp) * 100) : undefined,
             inStock: x.isInStockAndAvailable !== false,
+            imageUrl: text(x.imageUrl),
+            rating: text(rating.value),
+            ratingCount: text(rating.count),
+            eta: text(sla.value) ? `${text(sla.value)} ${(text(sla.unit) ?? "mins").toLowerCase()}` : undefined,
+            maxQuantity: num(x.maxQuantity),
+            maxQuantityMessage: text(x.maxQuantityMessage),
           };
         }),
       },
@@ -299,10 +358,10 @@ function products(data: Rec): SwiggyCardData | null {
   return found.length + similar.length ? { kind: "products", products: found, similar } : null;
 }
 
-/** Food's cart: its `data` holds another `data`. */
+/** Food's cart: by Swiggy's reference, its `data` holds another `data`. */
 function foodCart(data: Rec): SwiggyCart | null {
-  const inner = isRec(data.data) ? data.data : null;
-  if (!inner || !Array.isArray(inner.items)) return null;
+  const inner = isRec(data.data) ? data.data : data;
+  if (!Array.isArray(inner.items)) return null;
   const pricing = isRec(inner.pricing) ? inner.pricing : {};
   const offers = isRec(inner.offers) ? inner.offers : {};
   const restaurant = isRec(inner.restaurant) ? inner.restaurant : {};
@@ -332,6 +391,13 @@ function foodCart(data: Rec): SwiggyCart | null {
   };
 }
 
+function labelledAddress(address: Rec) {
+  const line = text(address.address);
+  if (!line) return undefined;
+  const tag = text(address.annotation) ?? text(address.category);
+  return tag ? `${tag.charAt(0).toUpperCase()}${tag.slice(1).toLowerCase()} · ${line}` : line;
+}
+
 /** Instamart's cart, from `get_cart` or `update_cart`. */
 function instamartCart(data: Rec): SwiggyCart | null {
   if (!Array.isArray(data.items) && data.cartAbsent !== true) return null;
@@ -348,6 +414,11 @@ function instamartCart(data: Rec): SwiggyCart | null {
       price: rupees(i.discountedFinalPrice),
       options: text(i.itemVariant) ? [text(i.itemVariant)!] : [],
       inStock: i.isInStockAndAvailable !== false,
+      skuId: text(i.skuId),
+      imageUrl: text(i.imageUrl),
+      mrp: num(i.mrp) !== undefined && num(i.mrp)! > (num(i.discountedFinalPrice) ?? Infinity) ? rupees(i.mrp) : undefined,
+      maxQuantity: num(i.maxQuantity),
+      maxQuantityMessage: text(i.maxQuantityMessage),
     })),
     lines: list(bill.lineItems).flatMap((l) => {
       const label = text(l.label);
@@ -356,6 +427,7 @@ function instamartCart(data: Rec): SwiggyCart | null {
     }),
     toPay: money(toPay.value) ?? money(data.cartTotalAmount),
     addressId: text(address.id),
+    addressLabel: labelledAddress(address),
     stores: new Set(items.map((i) => text(i.storeId)).filter(Boolean)).size,
     unavailable: list(data.unserviceableItems).flatMap((i) => text(i.itemName) ?? []),
     warnings: [
@@ -457,11 +529,39 @@ function instamartTracking(data: Rec): SwiggyCardData | null {
   };
 }
 
+/** In practice `get_addresses` sends text, a line per address: `1. [Home] Name: 12 Main Road (ID: abc)`. */
+const ADDRESS_ROW = /^\s*\d+\.\s*\[([^\]]+)\]\s*(?:([^:]*):\s*)?(.+?)\s*\(ID:\s*([^)\s]+)\)\s*$/;
+
+function savedAddresses(output: unknown): SwiggyCardData | null {
+  if (typeof output === "string") {
+    const rows = output.split("\n").flatMap((row) => {
+      const found = row.match(ADDRESS_ROW);
+      return found ? [{ id: found[4], label: found[1].trim(), name: found[2]?.trim() || undefined, line: found[3] }] : [];
+    });
+    if (rows.length) {
+      return {
+        kind: "addresses",
+        addresses: rows,
+        suggestedId: output.match(/(?:preselected|suggested) address ID:\s*(\S+?)\.?(?:\s|$)/i)?.[1],
+        total: num(output.match(/Found (\d+) saved address/i)?.[1]),
+      };
+    }
+  }
+  const data = envelopeData(output);
+  const addresses = list(data?.addresses).flatMap((a) => {
+    const id = text(a.id);
+    const line = text(a.addressLine);
+    return id && line ? [{ id, line, label: text(a.addressTag) ?? text(a.addressCategory) ?? "Saved address" }] : [];
+  });
+  return addresses.length ? { kind: "addresses", addresses } : null;
+}
+
 function cardData(service: SwiggyService, tool: string, output: unknown): SwiggyCardData | null {
   if (tool === "get_food_cart" || tool === "update_food_cart" || tool === "get_cart" || tool === "update_cart") {
     const cart = parseCart(output, service);
     return cart && { kind: "cart", cart };
   }
+  if (tool === "get_addresses") return savedAddresses(output);
   const data = envelopeData(output);
   if (!data) return null;
   switch (tool) {
@@ -492,6 +592,12 @@ export function parseSwiggyCard(toolName: string, output: unknown): { service: S
 
 /** The line of one saved address, from `get_addresses` output. */
 export function addressLine(output: unknown, id: string): string | null {
+  if (typeof output === "string") {
+    for (const row of output.split("\n")) {
+      const found = row.match(ADDRESS_ROW);
+      if (found?.[4] === id) return `${found[1]}: ${found[3]}`;
+    }
+  }
   const data = envelopeData(output);
   const found = data && list(data.addresses).find((a) => a.id === id);
   if (!found) return null;

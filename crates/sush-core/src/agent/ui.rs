@@ -17,6 +17,8 @@ use crate::store::blob_sha;
 
 /// Result given for a tool call the user moved on from; providers reject a call without one.
 pub const UNANSWERED: &str = "No result: the user continued the conversation instead.";
+/// A tool output's field for its card alone, kept in the thread but not sent to the model.
+const CARD_ONLY: &str = "cardOnly";
 pub const STOPPED: &str = "Stopped by the user.";
 /// Media type of a folder attachment: one text blob holding all its files.
 pub const FOLDER_MEDIA_TYPE: &str = "text/x-sush-folder";
@@ -428,7 +430,13 @@ pub fn to_core(messages: &[Value], expansions: &HashMap<String, String>) -> Vec<
                         input: p.get("input").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!({})),
                     });
                     let (output, is_error) = match str_at(p, "state") {
-                        Some("output-available") => (p.get("output").cloned().unwrap_or(Value::Null), false),
+                        Some("output-available") => {
+                            let mut output = p.get("output").cloned().unwrap_or(Value::Null);
+                            if let Some(fields) = output.as_object_mut() {
+                                fields.remove(CARD_ONLY);
+                            }
+                            (output, false)
+                        }
                         Some("output-error") => (json!(str_at(p, "errorText").unwrap_or_default()), true),
                         _ => (json!(UNANSWERED), true),
                     };
@@ -611,6 +619,15 @@ mod tests {
                 Part::ToolResult { call_id: "c2".into(), output: json!(UNANSWERED), is_error: true },
             ]
         );
+    }
+
+    #[test]
+    fn a_card_only_field_stays_away_from_the_model() {
+        let messages = vec![json!({ "id": "a", "role": "assistant", "parts": [
+            { "type": "dynamic-tool", "toolName": "t", "toolCallId": "c1", "state": "output-available", "input": {}, "output": { "note": "n", "cardOnly": { "x": 1 } } },
+        ]})];
+        let core = to_core(&messages, &HashMap::new());
+        assert!(core[0].parts.contains(&Part::ToolResult { call_id: "c1".into(), output: json!({ "note": "n" }), is_error: false }));
     }
 
     #[test]

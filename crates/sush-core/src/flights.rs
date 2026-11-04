@@ -4,6 +4,7 @@
 //! user's money. The key goes in a header, never a URL, so it can't turn up in an
 //! error message.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -12,8 +13,23 @@ use serde_json::{json, Value};
 const API: &str = "https://ignav.com/api";
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
-/// How many fares a card shows and the model reads.
+/// Ignav's answer leans to the best few airlines and has no setting for more. So a
+/// wide search asks again without the airlines it has found, this many times. Each
+/// is a billed request, and a failed one only ends the looking.
+const EXTRA_SEARCHES: usize = 2;
+const EXTRA_TIMEOUT: Duration = Duration::from_secs(15);
+/// The waits before asking again after a temporary failure, as Ignav's docs advise. A
+/// failed request isn't billed.
+const RETRY_WAITS: [Duration; 2] = [Duration::from_secs(1), Duration::from_secs(3)];
+const TOO_LONG: &str = "it took too long to answer";
+/// How many fares a card shows as tiles and the model reads.
 const MAX_FARES: usize = 6;
+/// How many more the card can list below the tiles, and how many of those from one
+/// airline, so one airline's many departures don't crowd the others out.
+const MAX_MORE: usize = 40;
+const MAX_MORE_PER_AIRLINE: usize = 3;
+/// Daily rates with no key. Its terms ask for the credit the card shows.
+const RATES_API: &str = "https://open.er-api.com/v6/latest/USD";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -52,6 +68,9 @@ pub struct FlightSearch {
     pub max_stops: Option<u32>,
     /// The two-letter country to price in, which also sets the currency.
     pub market: String,
+    /// Also look for other airlines (`EXTRA_SEARCHES`). A price alert only needs the lowest fare.
+    #[serde(default)]
+    pub wide: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -62,6 +81,8 @@ pub struct FlightLeg {
     pub stops: usize,
     pub from: String,
     pub to: String,
+    /// The airports it stops at on the way, in order.
+    pub via: Vec<String>,
     /// Local time at the airport, e.g. `2026-12-03T08:00:00`.
     pub departs_at: String,
     pub arrives_at: String,
@@ -84,7 +105,9 @@ pub struct Fare {
 #[serde(rename_all = "camelCase")]
 pub struct FlightResults {
     pub fares: Vec<Fare>,
-    /// How many Ignav found, before keeping `MAX_FARES`.
+    /// Other fares for the card's list, cheapest first. Not for the model.
+    pub more: Vec<Fare>,
+    /// How many Ignav found, before keeping these.
     pub total: usize,
     pub observed_at: Option<String>,
 }
@@ -134,6 +157,7 @@ fn parse_leg(leg: &Value) -> Option<FlightLeg> {
         stops: segments.len() - 1,
         from: text(first, "departure_airport")?,
         to: text(last, "arrival_airport")?,
+        via: segments[..segments.len() - 1].iter().filter_map(|s| text(s, "arrival_airport")).collect(),
         departs_at: text(first, "departure_time_local")?,
         arrives_at: text(last, "arrival_time_local")?,
         flights: segments
@@ -165,29 +189,84 @@ fn total_minutes(fare: &Fare) -> u64 {
     leg(&fare.outbound) + fare.inbound.as_ref().map_or(0, leg)
 }
 
-/// The cheapest fares. The fastest stays too, even at a higher price, since the
-/// cheapest few can all be long trips with several stops.
-fn pick_fares(mut fares: Vec<Fare>) -> Vec<Fare> {
-    fares.sort_by(|a, b| a.amount.total_cmp(&b.amount));
-    if fares.len() > MAX_FARES {
-        let fastest = (0..fares.len()).min_by_key(|i| total_minutes(&fares[*i])).unwrap_or(0);
-        if fastest >= MAX_FARES {
-            let fare = fares.swap_remove(fastest);
-            fares[MAX_FARES - 1] = fare;
-        }
-        fares.truncate(MAX_FARES);
-    }
-    fares
+fn airline(fare: &Fare) -> &str {
+    fare.outbound.carrier.as_deref().or(fare.outbound.flights.first().map(String::as_str)).unwrap_or("")
 }
 
-fn parse_results(body: &Value) -> FlightResults {
-    let all = body.get("itineraries").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
-    let fares: Vec<Fare> = all.iter().filter_map(parse_fare).collect();
-    FlightResults {
-        total: fares.len(),
-        fares: pick_fares(fares),
-        observed_at: body.get("observed_at").and_then(Value::as_str).map(str::to_owned),
+/// The tiles and the list below them, each cheapest first. The tiles hold the cheapest
+/// fare, the fastest (the cheapest can all be long trips with several stops), then the
+/// cheapest from each other airline, so the user sees who flies the route and not one
+/// airline's departures. Any room left goes to the next cheapest.
+fn pick_fares(mut fares: Vec<Fare>) -> (Vec<Fare>, Vec<Fare>) {
+    fares.sort_by(|a, b| a.amount.total_cmp(&b.amount));
+    let mut picked: Vec<usize> = Vec::new();
+    if let Some(fastest) = (0..fares.len()).min_by_key(|i| total_minutes(&fares[*i])) {
+        picked.push(0);
+        if fastest != 0 {
+            picked.push(fastest);
+        }
     }
+    let mut seen: HashSet<&str> = picked.iter().map(|i| airline(&fares[*i])).collect();
+    for (i, fare) in fares.iter().enumerate() {
+        if picked.len() < MAX_FARES && seen.insert(airline(fare)) {
+            picked.push(i);
+        }
+    }
+    for i in 0..fares.len() {
+        if picked.len() < MAX_FARES && !picked.contains(&i) {
+            picked.push(i);
+        }
+    }
+
+    let (mut tiles, mut more) = (Vec::new(), Vec::new());
+    let mut per_airline: HashMap<String, usize> = HashMap::new();
+    for (i, fare) in fares.into_iter().enumerate() {
+        if picked.contains(&i) {
+            tiles.push(fare);
+            continue;
+        }
+        let count = per_airline.entry(airline(&fare).to_owned()).or_default();
+        if *count < MAX_MORE_PER_AIRLINE && more.len() < MAX_MORE {
+            *count += 1;
+            more.push(fare);
+        }
+    }
+    (tiles, more)
+}
+
+fn parse_fares(body: &Value) -> Vec<Fare> {
+    let all = body.get("itineraries").and_then(Value::as_array).map_or(&[][..], Vec::as_slice);
+    all.iter().filter_map(parse_fare).collect()
+}
+
+fn observed_at(body: &Value) -> Option<String> {
+    body.get("observed_at").and_then(Value::as_str).map(str::to_owned)
+}
+
+fn results_of(fares: Vec<Fare>, observed_at: Option<String>) -> FlightResults {
+    let total = fares.len();
+    let (fares, more) = pick_fares(fares);
+    FlightResults { total, fares, more, observed_at }
+}
+
+/// Every airline code on these fares, from flight numbers like "EK 225".
+fn carrier_codes(fares: &[Fare]) -> Vec<String> {
+    let legs = fares.iter().flat_map(|fare| std::iter::once(&fare.outbound).chain(fare.inbound.as_ref()));
+    let codes: HashSet<&str> = legs.flat_map(|leg| &leg.flights).filter_map(|flight| flight.split(' ').next()).collect();
+    let mut codes: Vec<String> = codes.into_iter().map(str::to_owned).collect();
+    codes.sort_unstable();
+    codes
+}
+
+/// Adds the fares not already there, and says whether there were any.
+fn add_new_fares(fares: &mut Vec<Fare>, found: Vec<Fare>) -> bool {
+    let before = fares.len();
+    for fare in found {
+        if !fares.iter().any(|f| f.id == fare.id) {
+            fares.push(fare);
+        }
+    }
+    fares.len() > before
 }
 
 /// A seller's address, as a web link or nothing: it comes from a third party and
@@ -242,18 +321,55 @@ async fn send(request: reqwest::RequestBuilder, key: &str) -> Result<(u16, Value
         .header("X-Api-Key", key)
         .send()
         .await
-        .map_err(|e| if e.is_timeout() { "it took too long to answer".to_string() } else { "couldn't reach Ignav".to_string() })?;
+        .map_err(|e| if e.is_timeout() { TOO_LONG.to_string() } else { "couldn't reach Ignav".to_string() })?;
     let status = resp.status().as_u16();
     Ok((status, resp.json().await.unwrap_or(Value::Null)))
 }
 
+/// Ignav's `unable_to_complete_request` (424) and a dropped connection are worth trying
+/// again. A timeout has already waited long enough, and any other answer won't change.
+fn worth_retrying(answer: &Result<(u16, Value), String>) -> bool {
+    match answer {
+        Ok((status, _)) => *status == 424,
+        Err(message) => message != TOO_LONG,
+    }
+}
+
+async fn search_once(http: &reqwest::Client, key: &str, url: &str, body: &Value, timeout: Duration) -> Result<(u16, Value), String> {
+    let mut waits = RETRY_WAITS.iter();
+    loop {
+        let answer = send(http.post(url).timeout(timeout).json(body), key).await;
+        match waits.next() {
+            Some(wait) if worth_retrying(&answer) => tokio::time::sleep(*wait).await,
+            _ => return answer,
+        }
+    }
+}
+
 pub async fn search_flights(http: &reqwest::Client, key: &str, search: &FlightSearch) -> Result<FlightResults, String> {
     let path = if search.return_date.is_some() { "round-trip" } else { "one-way" };
-    let request = http.post(format!("{API}/fares/{path}")).timeout(SEARCH_TIMEOUT).json(&search_body(search));
-    match send(request, key).await? {
-        (200..=299, body) => Ok(parse_results(&body)),
-        (status, body) => Err(error_message(status, &body)),
+    let url = format!("{API}/fares/{path}");
+    let body = match search_once(http, key, &url, &search_body(search), SEARCH_TIMEOUT).await? {
+        (200..=299, body) => body,
+        (status, body) => return Err(error_message(status, &body)),
+    };
+    let mut fares = parse_fares(&body);
+    let observed = observed_at(&body);
+    if search.wide {
+        for _ in 0..EXTRA_SEARCHES {
+            let found = carrier_codes(&fares);
+            if found.is_empty() {
+                break;
+            }
+            let mut without = search_body(search);
+            without["airlines_exclude"] = json!(found);
+            let Ok((200..=299, body)) = search_once(http, key, &url, &without, EXTRA_TIMEOUT).await else { break };
+            if !add_new_fares(&mut fares, parse_fares(&body)) {
+                break;
+            }
+        }
     }
+    Ok(results_of(fares, observed))
 }
 
 /// Where a fare can be bought. Ignav answers 404 for a fare with no links, which
@@ -265,6 +381,28 @@ pub async fn booking_links(http: &reqwest::Client, key: &str, fare_id: &str) -> 
         (404, _) => Ok(Vec::new()),
         (status, body) => Err(error_message(status, &body)),
     }
+}
+
+/// What one US dollar buys in each currency, by code.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExchangeRates {
+    pub rates: BTreeMap<String, f64>,
+    /// When the provider last updated them, in seconds.
+    pub updated_at: Option<i64>,
+}
+
+fn parse_rates(body: &Value) -> Option<ExchangeRates> {
+    let rates: BTreeMap<String, f64> =
+        body.get("rates")?.as_object()?.iter().filter_map(|(code, rate)| Some((code.clone(), rate.as_f64().filter(|r| *r > 0.0)?))).collect();
+    (!rates.is_empty()).then(|| ExchangeRates { rates, updated_at: body.get("time_last_update_unix").and_then(Value::as_i64) })
+}
+
+/// Today's exchange rates. Needs no key and sends nothing about the trip.
+pub async fn exchange_rates(http: &reqwest::Client) -> Result<ExchangeRates, String> {
+    let resp = http.get(RATES_API).timeout(LOOKUP_TIMEOUT).send().await.map_err(|_| "couldn't get exchange rates".to_string())?;
+    let body: Value = resp.json().await.map_err(|_| "couldn't read exchange rates".to_string())?;
+    parse_rates(&body).ok_or_else(|| "couldn't read exchange rates".to_string())
 }
 
 /// Try a key with an airport lookup, the smallest request there is (one billed
@@ -318,6 +456,7 @@ mod tests {
             cabin: Cabin::PremiumEconomy,
             max_stops: None,
             market: "GB".into(),
+            wide: false,
         }
     }
 
@@ -362,6 +501,7 @@ mod tests {
         assert!(fare.inbound.is_none());
         assert_eq!(fare.outbound.stops, 1);
         assert_eq!((fare.outbound.from.as_str(), fare.outbound.to.as_str()), ("SFO", "JFK"));
+        assert_eq!(fare.outbound.via, ["SLC"]);
         assert_eq!(fare.outbound.arrives_at, "2026-12-03T19:00:00");
         assert_eq!(fare.outbound.flights, ["DL 1", "DL 2"]);
     }
@@ -394,6 +534,57 @@ mod tests {
         cheap[2] = itinerary("f2", 102.0, 90);
         let results = parse_results(&json!({ "itineraries": cheap }));
         assert_eq!(results.fares[MAX_FARES - 1].id, "f5");
+    }
+
+    #[test]
+    fn only_temporary_failures_are_tried_again() {
+        assert!(worth_retrying(&Ok((424, Value::Null))));
+        assert!(worth_retrying(&Err("couldn't reach Ignav".into())));
+        assert!(!worth_retrying(&Err(TOO_LONG.into())));
+        for status in [200, 400, 401, 402, 404, 429] {
+            assert!(!worth_retrying(&Ok((status, Value::Null))));
+        }
+    }
+
+    fn parse_results(body: &Value) -> FlightResults {
+        results_of(parse_fares(body), observed_at(body))
+    }
+
+    #[test]
+    fn asking_again_excludes_what_was_found_and_adds_only_new_fares() {
+        let mut fares = parse_fares(&json!({ "itineraries": [itinerary("a", 100.0, 600), itinerary("b", 200.0, 600)] }));
+        assert_eq!(carrier_codes(&fares), ["AA"]);
+        assert!(!add_new_fares(&mut fares, parse_fares(&json!({ "itineraries": [itinerary("a", 100.0, 600)] }))));
+        assert!(add_new_fares(&mut fares, parse_fares(&json!({ "itineraries": [itinerary("a", 100.0, 600), itinerary("c", 300.0, 600)] }))));
+        assert_eq!(fares.iter().map(|f| f.id.as_str()).collect::<Vec<_>>(), ["a", "b", "c"]);
+    }
+
+    fn on_airline(id: &str, amount: f64, carrier: &str) -> Value {
+        let mut fare = itinerary(id, amount, 600);
+        fare["outbound"]["carrier"] = carrier.into();
+        fare
+    }
+
+    #[test]
+    fn dearer_airlines_get_a_tile_and_the_rest_go_in_the_list() {
+        let mut all: Vec<Value> = (0..9).map(|i| on_airline(&format!("cx{i}"), 100.0 + f64::from(i), "Cathay Pacific")).collect();
+        all.push(on_airline("ua", 500.0, "United"));
+        all.push(on_airline("sq", 800.0, "Singapore Airlines"));
+        let results = parse_results(&json!({ "itineraries": all }));
+        assert_eq!(results.total, 11);
+        let tiles: Vec<&str> = results.fares.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(tiles, ["cx0", "cx1", "cx2", "cx3", "ua", "sq"]);
+        // One airline's departures stop at the limit.
+        let more: Vec<&str> = results.more.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(more, ["cx4", "cx5", "cx6"]);
+    }
+
+    #[test]
+    fn exchange_rates_need_positive_figures() {
+        let rates = parse_rates(&json!({ "time_last_update_unix": 5, "rates": { "USD": 1, "INR": 94.8, "XXX": 0, "YYY": "no" } })).unwrap();
+        assert_eq!(rates.updated_at, Some(5));
+        assert_eq!(rates.rates.keys().map(String::as_str).collect::<Vec<_>>(), ["INR", "USD"]);
+        assert_eq!(parse_rates(&json!({ "result": "error" })), None);
     }
 
     #[test]

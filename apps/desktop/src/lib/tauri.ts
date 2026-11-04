@@ -86,6 +86,8 @@ export interface McpTool {
   inputSchema: unknown;
   /** The server's hints about what the tool does (MCP tool annotations). */
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } | null;
+  /** `ui.resourceUri` (MCP Apps) or `openai/outputTemplate` names a widget for the tool's results. */
+  _meta?: { ui?: { resourceUri?: string }; "openai/outputTemplate"?: string } | null;
 }
 
 export type ConnectOutcome =
@@ -813,6 +815,8 @@ export interface FlightSearch {
   cabin: Cabin;
   maxStops: number | null;
   market: string;
+  /** Also look for other airlines, at up to two more requests. */
+  wide?: boolean;
 }
 
 export interface FlightLeg {
@@ -821,6 +825,8 @@ export interface FlightLeg {
   stops: number;
   from: string;
   to: string;
+  /** The airports it stops at on the way. Absent on cards saved before routes were traced. */
+  via?: string[];
   departsAt: string;
   arrivesAt: string;
   flights: string[];
@@ -836,8 +842,16 @@ export interface Fare {
 
 export interface FlightResults {
   fares: Fare[];
+  /** Other fares for the card's list, cheapest first. */
+  more: Fare[];
   total: number;
   observedAt: string | null;
+}
+
+/** What one US dollar buys in each currency (`sush_core::flights`). */
+export interface ExchangeRates {
+  rates: Record<string, number>;
+  updatedAt: number | null;
 }
 
 export interface GeoPoint {
@@ -855,6 +869,53 @@ export interface DayWeather {
   lowC: number;
   /** The same date last year's figures, not a forecast. */
   lastYear: boolean;
+}
+
+export interface ForecastDay {
+  /** `YYYY-MM-DD`, in the place's own time zone. */
+  date: string;
+  code: number;
+  condition: string;
+  highC: number;
+  lowC: number;
+  /** The day's highest chance of rain or snow, in percent. */
+  precipitationChance: number | null;
+}
+
+export interface ForecastHour {
+  /** `YYYY-MM-DDTHH:MM`, in the place's own time zone. */
+  time: string;
+  temperatureC: number;
+  code: number;
+  isDay: boolean;
+  /** In percent. */
+  precipitationChance: number | null;
+}
+
+export type Phase = "day" | "night" | "dawn" | "dusk";
+
+/** The weather right now in a place (`sush_core::weather`). */
+export interface LocalWeather {
+  /** The place found for a name; coordinates have none. */
+  place: string | null;
+  temperatureC: number;
+  feelsLikeC: number;
+  code: number;
+  condition: string;
+  isDay: boolean;
+  phase: Phase;
+  /** In percent. */
+  humidity: number | null;
+  windKmh: number | null;
+  /** Today's highest. */
+  uvIndex: number | null;
+  /** Today's, as `YYYY-MM-DDTHH:MM` in the place's own time zone. */
+  sunrise: string | null;
+  sunset: string | null;
+  /** Today and the next seven days. */
+  days: ForecastDay[];
+  /** The next 24 hours, starting with this one. */
+  hours: ForecastHour[];
 }
 
 export interface BookingLink {
@@ -1050,6 +1111,14 @@ export const api = {
   /** The live cart and saved addresses, as Swiggy's own tool output, for the card that confirms an order. */
   swiggyOrderPreview: (id: string, addressId: string, instamart: boolean) =>
     invoke<{ cart: string; addresses: string }>("swiggy_order_preview", { id, addressId, instamart }),
+  /** The cart as Instamart has it, for the card to merge the user's change into. */
+  instamartCartRead: (id: string) => invoke<string>("instamart_cart_read", { id }),
+  /** Saves the user's change from the card; `update_cart`'s output, or `clear_cart`'s for no items. */
+  instamartCartWrite: (id: string, items: { spinId: string; skuId: string; quantity: number }[], addressId: string | undefined) =>
+    invoke<string>("instamart_cart_write", { id, items, addressId: addressId ?? null }),
+  /** The URL to frame a connector's own widget at, holding this tool call's result. */
+  connectorWidget: (id: string, uri: string, input: unknown, output: unknown, dark: boolean) =>
+    invoke<string>("connector_widget", { id, uri, input: input ?? {}, output: output ?? {}, dark }),
   /** `undefined` keeps a stored value, `""` clears it. */
   connectorSaveSecrets: (id: string, url: string, secrets: { token?: string; clientSecret?: string }) =>
     invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),
@@ -1071,7 +1140,12 @@ export const api = {
   flightsSearch: (search: FlightSearch) => invoke<FlightResults | null>("flights_search", { search }),
   flightsBookingLinks: (fareId: string) => invoke<BookingLink[]>("flights_booking_links", { fareId }),
   flightsWeather: (city: string, date: string) => invoke<DayWeather | null>("flights_weather", { city, date }),
+  /** A place's name or `latitude,longitude`. Null when it can't be found. */
+  weatherNow: (place: string) => invoke<LocalWeather | null>("weather_now", { place }),
   flightsLocate: (city: string) => invoke<GeoPoint | null>("flights_locate", { city }),
+  flightsRates: () => invoke<ExchangeRates>("flights_rates"),
+  /** macOS only; other platforms read the position through the webview (`lib/location.ts`). */
+  locationRead: () => invoke<{ latitude: number; longitude: number; accuracyMeters: number }>("location_read"),
   whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),

@@ -382,7 +382,7 @@ impl RunHost for Host {
                     _ = cancel.cancelled() => Err(STOPPED.into()),
                     result = connectors::call(&state, connector_id.clone(), tool.clone(), call.input.clone(), Some(self.thread_label())) => match result {
                         Ok(out) if out.is_error => Err(if out.text.is_empty() { "The tool reported an error.".into() } else { out.text }),
-                        Ok(out) => Ok(Value::String(out.text)),
+                        Ok(out) => Ok(connectors::instamart_output(&call.name, tool, out.text)),
                         Err(e) => Err(e.to_string()),
                     },
                 }

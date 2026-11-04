@@ -16,6 +16,7 @@
 //   image_generate  runs immediately with the image model from Settings → Images (images.ts)
 //   map_show        runs immediately: the chat shows a Google Map of a route or place (maps.ts)
 //   flights_search  runs immediately: the chat shows a flight card to book from (flights.ts)
+//   weather_show    runs immediately: the chat shows a pixel-art weather card (weather.ts)
 //   location_get    reads the device's position, after the user agrees in its card (location.ts)
 //   spawn_agent     offered and run by Rust: a sub-agent on a thread of its own (components/subagents.tsx)
 //   <connector>__*  sent to an MCP connector, after the user approves
@@ -48,6 +49,7 @@ import { loadSkill, SKILL, SKILL_SAVE, skillSaveTool, skillsPrompt, skillTool } 
 import { SLIDES_WRITE, slidesTool, validateSlides } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
+import { runWeatherShow, WEATHER_SHOW, weatherTool } from "@/lib/weather";
 
 export const MEMORY_WRITE = "memory_write";
 export const MEMORY_DELETE = "memory_delete";
@@ -118,13 +120,29 @@ export interface ConnectorTool {
   tool: string;
   spec: ToolSpec;
   annotations?: McpTool["annotations"];
+  /** The `ui://` page the server offers for this tool's results. */
+  widget?: string;
 }
 
 /** What the model should know about a tool that changes the user's Swiggy cart or spends their money. */
 function toolNote(connector: Connector, tool: string) {
   const service = swiggyService(connectorToolPrefix(connector));
+  // Results also say this, in place of Swiggy's instructions to draw tables (`instamart_for_model`).
+  const shownAsCard = " The app shows the user this result as a card with photos, prices and the bill, so don't repeat any of it in a table or list.";
+  if (service === "instamart" && (tool === "search_products" || tool === "your_go_to_items")) {
+    return `${shownAsCard} The user can add items from this card without sending a message, and you aren't told. When they say they've picked or selected something, call get_cart and work from that rather than asking them to choose again.`;
+  }
+  if (service === "instamart" && tool === "get_addresses") {
+    return " The app shows the user every address from this result as a card, and picking one sends you its ID in a message. Don't list or recommend the addresses: ask them in one short sentence to pick from the card, then wait. If they've already clearly named one, use its ID and carry on without asking. Once they've picked, don't call this again unless they want to change it.";
+  }
+  if (service === "instamart" && tool === "clear_cart") {
+    return " This empties the cart on the user's Swiggy account. Before saying it's cleared, call get_cart on its own, not alongside this call, and say what it shows. If items are still there, say so plainly and don't guess why.";
+  }
+  if (service === "instamart" && tool === "get_cart") {
+    return `${shownAsCard} Item prices and the bill are only on the card, so point the user there if they ask. The user can also change the cart from the card, so read it again rather than trusting an earlier result.`;
+  }
   if (service === "instamart" && tool === "update_cart") {
-    return " This replaces the whole cart on the user's Swiggy account, the same cart they see in the Swiggy app, where changes show after a refresh. It may hold items they added there. Call get_cart first and send every item to keep along with the new ones. Ask the user before removing anything they didn't ask to remove.";
+    return ` This replaces the whole cart on the user's Swiggy account, the same cart they see in the Swiggy app, where changes show after a refresh. It may hold items they added there. The user can also change it from a card without telling you, so always call get_cart first, even if you read it earlier, and send every item to keep along with the new ones. Ask the user before removing anything they didn't ask to remove. This result means Swiggy accepted the change, and the cart can still change afterwards, so say that it was accepted rather than promising it will stay. A later get_cart can show an older cart or lose items. If it does, or the user says something is missing, tell them what it shows, don't add the items again unless they ask, and don't guess why.${shownAsCard}`;
   }
   if (service === "food" && tool === "update_food_cart") {
     return " This is the cart on the user's Swiggy account, so items they added in the Swiggy app are in it too. It holds one restaurant: changing restaurant replaces everything in it. Call get_food_cart first, and if it holds items from another restaurant, ask the user before replacing them. Items added here may not show in the Swiggy app, even after reopening it, though items added in the app do show here. Don't tell the user to look for them in the app. If asked, say this plainly, don't offer other explanations, and don't suggest placing the order as a fix.";
@@ -152,6 +170,7 @@ export function connectorTools(): ConnectorTool[] {
         connector,
         tool: t.name,
         annotations: t.annotations,
+        widget: t._meta?.ui?.resourceUri ?? t._meta?.["openai/outputTemplate"],
         spec: {
           name,
           description: `[${connector.name}] ${t.description ?? t.name}${toolNote(connector, t.name)}`,
@@ -246,6 +265,7 @@ export function buildContext({
     ...(images ? [imageTool] : []),
     mapTool,
     flightsTool,
+    weatherTool,
     locationTool,
     ...(memory ? memoryTools : []),
     ...(referenceChats ? chatTools : []),
@@ -270,6 +290,7 @@ export type ToolKind =
   | "image"
   | "map"
   | "flights"
+  | "weather"
   | "location"
   | "workspace"
   | "browser"
@@ -316,6 +337,7 @@ export function toolKind(name: string): ToolKind {
   if (name === IMAGE_GENERATE) return "image";
   if (name === MAP_SHOW) return "map";
   if (name === FLIGHTS_SEARCH) return "flights";
+  if (name === WEATHER_SHOW) return "weather";
   if (name === LOCATION_GET) return "location";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
@@ -339,7 +361,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
   // An old "Always allow" never covers spending money.
@@ -372,7 +394,7 @@ export function runTools(specs: ToolSpec[]): RunTool[] {
   });
 }
 
-/** Run a memory, chats, skill, artifact, image, map or flights tool. Never throws; failures become error results the model can read. */
+/** Run a memory, chats, skill, artifact, image, map, flights or weather tool. Never throws; failures become error results the model can read. */
 export async function runTool(name: string, input: unknown): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
@@ -419,6 +441,7 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
     if (name === IMAGE_GENERATE) return runImageGenerate(args);
     if (name === MAP_SHOW) return runMapShow(args);
     if (name === FLIGHTS_SEARCH) return runFlightsSearch(args);
+    if (name === WEATHER_SHOW) return runWeatherShow(args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {
     return { errorText: e instanceof Error ? e.message : String(e) };

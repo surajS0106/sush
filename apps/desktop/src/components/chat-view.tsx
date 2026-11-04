@@ -2,6 +2,7 @@ import type { DynamicToolUIPart } from "ai";
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  CheckIcon,
   CopyIcon,
   CornerDownRightIcon,
   FolderKanbanIcon,
@@ -86,6 +87,7 @@ import {
   useThread,
 } from "@/lib/sessions";
 import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
+import { InstamartThread, instamartThread } from "@/lib/instamart-cart";
 import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
 import { errorMessage, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
@@ -172,6 +174,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const decks = useMemo(() => deckViews(messages), [messages]);
   // Cowork: the latest branch_status call is the live pull request card.
   const branchCall = useMemo(() => (cowork ? latestBranchCall(messages) : null), [cowork, messages]);
+  const instamart = useMemo(() => instamartThread(id, messages), [id, messages]);
   useEffect(() => {
     for (const deck of decks.byId.values()) autoOpenDeck(id, deck);
   }, [id, decks]);
@@ -491,9 +494,11 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   );
   return (
     <WatchingHost.Provider value={watchingContext}>
-      <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
-        {chat}
-      </WorkspaceFrame>
+      <InstamartThread.Provider value={instamart}>
+        <WorkspaceFrame workspace={workspace} panel={panel} hideChat={hideChat}>
+          {chat}
+        </WorkspaceFrame>
+      </InstamartThread.Provider>
     </WatchingHost.Provider>
   );
 }
@@ -730,6 +735,51 @@ function hasVisibleContent(message: SushUIMessage) {
 }
 
 /** Inline editor that replaces a user message's bubble. */
+/** An image the user sent: a square thumbnail, cropped to fit, that opens the whole image. */
+function UserImage({ url, name }: { url: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`View ${name}`}
+        onClick={() => setOpen(true)}
+        className="size-20 shrink-0 overflow-hidden rounded-lg border transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <img src={url} alt="" className="size-full object-cover" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="w-fit p-2 sm:max-w-[min(90vw,64rem)]">
+          <DialogTitle className="sr-only">{name}</DialogTitle>
+          <img src={url} alt={name} className="max-h-[85vh] max-w-full rounded-lg object-contain" />
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/** Shows a tick for a moment once the text is on the clipboard. */
+function CopyMessageAction({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const copy = () => {
+    navigator.clipboard.writeText(text).then(
+      () => {
+        setCopied(true);
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => setCopied(false), 1500);
+      },
+      () => toast.error("Couldn't copy that"),
+    );
+  };
+  return (
+    <MessageAction tooltip={copied ? "Copied" : "Copy"} onClick={copy}>
+      {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+    </MessageAction>
+  );
+}
+
 function UserTextEditor({ initial, onSave, onCancel }: { initial: string; onSave: (text: string) => void; onCancel: () => void }) {
   const [draft, setDraft] = useState(initial);
   const save = () => {
@@ -868,7 +918,22 @@ const ChatMessage = memo(function ChatMessage({
         );
       case "data-web":
         return <WebActivityPart key={key} activity={part.data} />;
-      case "file":
+      case "file": {
+        const isImage = (p?: SushUIMessage["parts"][number]) => p?.type === "file" && p.mediaType.startsWith("image/");
+        if (message.role === "user" && isImage(part)) {
+          // Images sent together sit in one row, drawn from the first of them.
+          if (isImage(message.parts[i - 1])) return null;
+          let end = i;
+          while (isImage(message.parts[end + 1])) end++;
+          const images = message.parts.slice(i, end + 1).filter((p) => p.type === "file");
+          return (
+            <div key={key} className="flex flex-wrap justify-end gap-2">
+              {images.map((image, n) => (
+                <UserImage key={n} url={image.url} name={image.filename ?? "attachment"} />
+              ))}
+            </div>
+          );
+        }
         return part.mediaType.startsWith("image/") ? (
           <img
             key={key}
@@ -881,6 +946,7 @@ const ChatMessage = memo(function ChatMessage({
             <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
           </div>
         );
+      }
       default:
         return null;
     }
@@ -921,9 +987,7 @@ const ChatMessage = memo(function ChatMessage({
         {fileTurn && <FileChanges threadId={threadId} workspaceId={workspaceId} turnId={fileTurn} />}
         {message.role === "user" && text && (
           <MessageActions className="justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-            <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
-              <CopyIcon className="size-3.5" />
-            </MessageAction>
+            <CopyMessageAction text={text} />
             {canEdit && (
               <MessageAction tooltip="Edit" onClick={() => setEditing(true)}>
                 <PencilIcon className="size-3.5" />
@@ -939,9 +1003,7 @@ const ChatMessage = memo(function ChatMessage({
         {message.role === "assistant" && !streaming && text && (
           <div className="flex items-center gap-2">
             <MessageActions>
-              <MessageAction tooltip="Copy" onClick={() => void navigator.clipboard.writeText(text)}>
-                <CopyIcon className="size-3.5" />
-              </MessageAction>
+              <CopyMessageAction text={text} />
               {canRegenerate && (
                 <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
                   <RefreshCcwIcon className="size-3.5" />

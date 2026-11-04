@@ -42,10 +42,15 @@ impl AppState {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
             Err(e) => return Err(e.into()),
         };
+        let store = Store::open(&data_dir)?;
+        // In case the last run ended before it could clear these on the way out.
+        if let Err(e) = store.forget_session_locations() {
+            eprintln!("Could not remove session-only locations: {e:?}");
+        }
         Ok(Self {
             providers_path,
             providers: RwLock::new(providers),
-            store: std::sync::Arc::new(Store::open(&data_dir)?),
+            store: std::sync::Arc::new(store),
             runs: Default::default(),
             memory: std::sync::Arc::new(MemoryDir::open(&data_dir.join("memory"))?),
             sandbox: std::sync::Arc::new(Sandbox::new(data_dir.join("sandbox"))),

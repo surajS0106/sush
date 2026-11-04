@@ -10,6 +10,7 @@ mod error;
 mod flights;
 mod images;
 mod library;
+mod location;
 #[cfg(unix)]
 mod login_env;
 mod maps;
@@ -22,7 +23,9 @@ mod speech;
 mod state;
 mod store;
 mod terminal;
+mod weather;
 mod whisper;
+mod widgets;
 mod windows;
 mod workspaces;
 
@@ -38,6 +41,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol(sush_core::store::BLOB_SCHEME, store::serve_blob)
+        .register_uri_scheme_protocol(widgets::SCHEME, widgets::serve)
         // Dictation records in the webview; the OS still asks the user for mic access.
         .on_permission_request(|_, kind| match kind {
             PermissionKind::Microphone => PermissionResponse::Allow,
@@ -178,6 +182,9 @@ pub fn run() {
             connectors::connector_disconnect,
             connectors::connector_forget,
             connectors::swiggy_order_preview,
+            connectors::instamart_cart_read,
+            connectors::instamart_cart_write,
+            widgets::connector_widget,
             connector_auth::connector_authorize,
             connector_auth::connector_cancel_authorize,
             connector_auth::connector_save_secrets,
@@ -194,6 +201,9 @@ pub fn run() {
             flights::flights_booking_links,
             flights::flights_weather,
             flights::flights_locate,
+            flights::flights_rates,
+            location::location_read,
+            weather::weather_now,
             whisper::whisper_model_status,
             whisper::whisper_model_download,
             whisper::transcribe_local,
@@ -209,6 +219,13 @@ pub fn run() {
             if let tauri::RunEvent::Ready = _event {
                 if let Some(window) = _app.get_webview_window("main") {
                     dock_icon::apply(window.theme().unwrap_or(tauri::Theme::Light));
+                }
+            }
+            if let tauri::RunEvent::Exit = _event {
+                if let Some(state) = _app.try_state::<state::AppState>() {
+                    if let Err(e) = state.store.forget_session_locations() {
+                        eprintln!("Could not remove session-only locations: {e:?}");
+                    }
                 }
             }
             #[cfg(not(debug_assertions))]

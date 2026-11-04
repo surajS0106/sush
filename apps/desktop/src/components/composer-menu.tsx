@@ -226,7 +226,6 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
           checked={prefs.research && researchAvailable}
           disabled={!researchAvailable}
           onCheckedChange={(on) => setPrefs({ research: on })}
-          onSelect={(e) => e.preventDefault()}
         >
           <TelescopeIcon /> Research
           {!researchAvailable && <span className="ml-auto text-xs font-normal">Claude only</span>}
@@ -234,11 +233,10 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
         <DropdownMenuCheckboxItem
           checked={prefs.memory}
           onCheckedChange={(on) => setPrefs({ memory: on })}
-          onSelect={(e) => e.preventDefault()}
         >
           <BrainIcon /> Memory
         </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem checked={askUser} onCheckedChange={setAskUser} onSelect={(e) => e.preventDefault()}>
+        <DropdownMenuCheckboxItem checked={askUser} onCheckedChange={setAskUser}>
           <MessageCircleQuestionMarkIcon /> Ask clarifying questions
         </DropdownMenuCheckboxItem>
 

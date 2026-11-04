@@ -4,13 +4,16 @@
 // One question at a time. The stack slides vertically as you move between
 // questions (the card's height animates to fit), the step counter rolls like an
 // odometer, and the footer uses pill actions: a quiet Skip and a dark Continue.
-// Single-choice answers auto-advance; multi-select waits.
+// Single-choice answers auto-advance; multi-select waits, and so do dates
+// (`date-question.tsx`), since a range takes more than one press.
 
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CornerDownLeftIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
+import { DateQuestion } from "@/components/date-question";
 import { Button } from "@/components/ui/button";
-import type { AskUserOutput, AskUserQuestion } from "@/lib/ask-user";
+import { travelText, type AskUserOutput, type AskUserQuestion, type TravelDetails } from "@/lib/ask-user";
+import { formatDay, isDay, type DayRange } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 
 const ROLL_MS = 400;
@@ -98,6 +101,9 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   const [qi, setQi] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number[]>>({});
   const [custom, setCustom] = useState<Record<number, string>>({});
+  const [dates, setDates] = useState<Record<number, DayRange | null>>({});
+  const [noEnd, setNoEnd] = useState<Record<number, boolean>>({});
+  const [travel, setTravel] = useState<Record<number, TravelDetails>>({});
 
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -111,14 +117,22 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
 
   const last = qi === questions.length - 1;
   const selected = answers[qi] ?? [];
-  const hasAnswer = selected.length > 0 || Boolean(custom[qi]?.trim());
+  /** A range isn't done until it has an end, unless the user chose to leave it out. */
+  const datesDone = (question: AskUserQuestion, range: DayRange | null | undefined, leftOut: boolean | undefined) =>
+    !!range?.start && (question.type !== "date-range" || !!range.end || !!leftOut);
+  const hasAnswer = selected.length > 0 || Boolean(custom[qi]?.trim()) || datesDone(questions[qi], dates[qi], noEnd[qi]);
+
+  // Rounded up: `offsetHeight` rounds down and would clip a fraction of a pixel.
+  const measure = (item: HTMLElement) => {
+    setViewportH(Math.ceil(item.getBoundingClientRect().height));
+    setTrackY(item.offsetTop);
+  };
 
   const sync = (withAnim: boolean) => {
     const item = questionRefs.current[qi];
     if (!item) return;
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    setViewportH(item.offsetHeight);
-    setTrackY(item.offsetTop);
+    measure(item);
     setAnimate(withAnim && !reduce);
   };
 
@@ -128,13 +142,23 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
     sync(withAnim);
     setReady(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qi, answers, custom]);
+  }, [qi, answers, custom, dates, noEnd]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => sync(measured.current));
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qi]);
+
+  // The active question can change size on its own, as when a font loads or the card
+  // changes width, and the card clips whatever doesn't fit.
+  useEffect(() => {
+    const item = questionRefs.current[qi];
+    if (!item) return;
+    const observer = new ResizeObserver(() => measure(item));
+    observer.observe(item);
+    return () => observer.disconnect();
+  }, [qi, ready]);
 
   useEffect(
     () => () => {
@@ -149,18 +173,22 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   };
 
   // Read the latest answers even when called from the auto-advance timer.
-  const latest = useRef({ answers, custom });
-  latest.current = { answers, custom };
+  const latest = useRef({ answers, custom, dates, noEnd, travel });
+  latest.current = { answers, custom, dates, noEnd, travel };
 
   const send = () => {
     if (advanceTimer.current) clearTimeout(advanceTimer.current);
-    const { answers, custom } = latest.current;
+    const { answers, custom, dates, noEnd, travel } = latest.current;
     onSubmit(
       questions.map((q, i) => {
+        const range = dates[i];
         const picked = (answers[i] ?? []).map((o) => q.options[o]);
         const typed = custom[i]?.trim();
-        const answer = typed ? [...picked, typed] : picked;
-        return { question: q.question, answer: answer.length > 0 ? answer : null };
+        const given = typed ? [...picked, typed] : picked;
+        const answer = range && datesDone(q, range, noEnd[i]) ? (range.end && !noEnd[i] ? [range.start, range.end] : [range.start]) : given.length > 0 ? given : null;
+        // Skipped dates mean the model asks again, so who's traveling goes with the answer.
+        const details = answer ? (travel[i] ?? q.travel) : undefined;
+        return details ? { question: q.question, answer, travel: details } : { question: q.question, answer };
       }),
     );
   };
@@ -168,6 +196,11 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   const advance = () => {
     if (last) send();
     else goTo(qi + 1);
+  };
+
+  const onDatesChange = (index: number) => (range: DayRange | null, typed: string) => {
+    setDates((current) => ({ ...current, [index]: range }));
+    setCustom((current) => ({ ...current, [index]: typed }));
   };
 
   const toggle = (index: number) => {
@@ -189,7 +222,7 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   };
 
   return (
-    <div className="w-full max-w-96">
+    <div className={cn("w-full transition-[max-width] duration-300", questions[qi].type === "choice" ? "max-w-96" : "max-w-2xl")}>
       <div
         className="relative overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm"
         style={{ animation: "fade-up 380ms cubic-bezier(0.23,1,0.32,1) both" }}
@@ -239,6 +272,22 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
                     {question.multiSelect && (
                       <div className="mt-0.5 text-xs text-muted-foreground">Pick any that apply</div>
                     )}
+                    {question.type !== "choice" ? (
+                      <DateQuestion
+                        question={question}
+                        range={dates[qIdx] ?? null}
+                        typed={custom[qIdx] ?? ""}
+                        active={active}
+                        noEnd={!!noEnd[qIdx]}
+                        onNoEnd={(value) => setNoEnd((current) => ({ ...current, [qIdx]: value }))}
+                        travel={travel[qIdx] ?? question.travel}
+                        onTravel={(value) => setTravel((current) => ({ ...current, [qIdx]: value }))}
+                        onChange={onDatesChange(qIdx)}
+                        onEnter={() => {
+                          if (hasAnswer) advance();
+                        }}
+                      />
+                    ) : (
                     <div className="mt-2.5 flex flex-col gap-0.5">
                       {question.options.map((option, i) => {
                         const on = picked.includes(i);
@@ -299,6 +348,7 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
                         className="rounded-md py-1.5 pr-2 pl-[30px] text-[13px] outline-none transition-colors duration-100 placeholder:text-muted-foreground hover:bg-accent focus:bg-accent"
                       />
                     </div>
+                    )}
                   </div>
                 );
               })}
@@ -346,6 +396,12 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   );
 }
 
+function answerText(answer: string[] | null) {
+  if (!answer) return "Skipped";
+  if (!answer.every(isDay)) return answer.join(", ");
+  return answer.map((day) => formatDay(day, { weekday: "short", month: "short", day: "numeric", year: "numeric" })).join(" to ");
+}
+
 /** What an answered (or dismissed) `ask_user` call looks like in the transcript. */
 export function AskUserSummary({ output }: { output: AskUserOutput | null }) {
   return (
@@ -358,10 +414,11 @@ export function AskUserSummary({ output }: { output: AskUserOutput | null }) {
       </span>
       {output && (
         <dl className="space-y-1.5 pl-1 text-[13px]">
-          {output.map(({ question, answer }, i) => (
+          {output.map(({ question, answer, travel }, i) => (
             <div key={i}>
               <dt className="text-muted-foreground">{question}</dt>
-              <dd className={cn(!answer && "text-muted-foreground italic")}>{answer ? answer.join(", ") : "Skipped"}</dd>
+              <dd className={cn(!answer && "text-muted-foreground italic")}>{answerText(answer)}</dd>
+              {travel && <dd>{travelText(travel)}</dd>}
             </div>
           ))}
         </dl>

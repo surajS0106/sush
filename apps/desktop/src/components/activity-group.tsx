@@ -10,6 +10,7 @@ import { Children, useState } from "react";
 import { toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
 import { SLIDES_WRITE } from "@/lib/slides";
+import { isInstamartCartTool } from "@/lib/instamart-cart";
 import { hasSwiggyCard } from "@/lib/swiggy";
 import type { SushUIMessage } from "@/lib/transport";
 import { cn } from "@/lib/utils";
@@ -17,18 +18,18 @@ import { cn } from "@/lib/utils";
 type Part = SushUIMessage["parts"][number];
 
 /** Settled calls whose results are a line, not a card the user acts on. */
-function groupableTool(p: Part): p is DynamicToolUIPart {
+function groupableTool(p: Part, supersededCart: boolean): p is DynamicToolUIPart {
   if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE) return false;
-  // Restaurants, a cart or an order stay in view; a failed call can collapse.
-  if (hasSwiggyCard(p.toolName) && p.state === "output-available") return false;
+  // Restaurants, a cart or an order stay in view; a failed call can collapse, and so can a cart a later call replaced.
+  if (hasSwiggyCard(p.toolName) && p.state === "output-available" && !supersededCart) return false;
   const kind = toolKind(p.toolName);
-  // A generated image, a map or a flight card stays in view; a failed one can collapse.
-  if ((kind === "image" || kind === "map" || kind === "flights") && p.state === "output-available") return false;
+  // A generated image, a map, a flight or weather card stays in view; a failed one can collapse.
+  if ((kind === "image" || kind === "map" || kind === "flights" || kind === "weather") && p.state === "output-available") return false;
   return kind !== "ask-user" && kind !== "agent" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
 }
 
-function groupable(p: Part) {
-  return p.type === "step-start" || (p.type === "reasoning" && p.state !== "streaming") || groupableTool(p);
+function groupable(p: Part, supersededCart: boolean) {
+  return p.type === "step-start" || (p.type === "reasoning" && p.state !== "streaming") || groupableTool(p, supersededCart);
 }
 
 /**
@@ -49,8 +50,10 @@ export function groupParts(parts: Part[], keep?: string): (number | number[])[] 
     else out.push(...run);
     run = [];
   };
+  const lastCart = parts.findLastIndex((p) => p.type === "dynamic-tool" && isInstamartCartTool(p.toolName));
   parts.forEach((p, i) => {
-    if (groupable(p) && !(keep && p.type === "dynamic-tool" && p.toolCallId === keep)) run.push(i);
+    const supersededCart = i !== lastCart && p.type === "dynamic-tool" && isInstamartCartTool(p.toolName);
+    if (groupable(p, supersededCart) && !(keep && p.type === "dynamic-tool" && p.toolCallId === keep)) run.push(i);
     else {
       flush();
       out.push(i);

@@ -49,11 +49,12 @@ const itemValue = (providerName: string, id: string, displayName?: string | null
 export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Groups start collapsed; this holds the ones the user opened.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   // While searching, show every group so matches are never hidden behind a collapsed header.
-  const isCollapsed = (id: string) => !search && collapsed.has(id);
+  const isCollapsed = (id: string) => !search && !expanded.has(id);
   const toggle = (id: string) =>
-    setCollapsed((prev) => {
+    setExpanded((prev) => {
       const next = new Set(prev);
       if (!next.delete(id)) next.add(id);
       return next;
@@ -148,7 +149,10 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
           data-lenis-prevent
           className="max-h-[min(28rem,60vh)] scrollbar-thin! scrollbar-gutter-stable"
         >
-          <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
+          {/* cmdk counts rendered rows, so collapsed groups alone would otherwise read as "no models". */}
+          {(search || catalog.every((c) => c.models.length === 0)) && (
+            <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
+          )}
           {catalog.map(({ provider, models, error }, i) => {
             const pLogo = providerLogo(provider);
             const folded = isCollapsed(provider.id);

@@ -411,11 +411,20 @@ function BudgetAdvice({ budget, status }: { budget: Budget; status: BudgetStatus
         <p className="text-sm font-medium">{advice.title}</p>
         <p className="mt-0.5 text-sm text-muted-foreground">{advice.body}</p>
       </div>
-      <Button variant="outline" size="sm" onClick={() => document.getElementById(LIMIT_INPUT_ID)?.focus()}>
+      <Button variant="outline" size="sm" onClick={revealLimitInput}>
         Raise limit
       </Button>
     </Card>
   );
+}
+
+/** The field is at the bottom of the page, so bring it into view rather than leaving that to focus(). */
+function revealLimitInput() {
+  const input = document.getElementById(LIMIT_INPUT_ID);
+  if (!input) return;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  input.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+  input.focus({ preventScroll: true });
 }
 
 const LIMIT_INPUT_ID = "usage-budget-limit";

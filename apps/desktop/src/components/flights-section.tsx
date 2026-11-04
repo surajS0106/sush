@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { CurrencySelect } from "@/components/currency-select";
 import { Group, Page, Setting } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -94,6 +95,11 @@ export function FlightsSection() {
           )}
         </Setting>
       </Group>
+      <Group title="Prices">
+        <Setting title="Currency" description="Shows prices on flight cards in this currency, at today's rate. Sellers still charge in their own.">
+          <CurrencySelect />
+        </Setting>
+      </Group>
       {alerts.length > 0 && (
         <Group title="Price alerts">
           {alerts.map((alert) => (
@@ -125,9 +131,9 @@ export function FlightsSection() {
           <li>Paste your API key above. It's kept in your system's secure storage and only sent to Ignav.</li>
         </ol>
         <p>
-          Each search, each time you press Book on a fare, and each check of a price alert (every 6 hours while Sush is open) is one request
-          to your Ignav account, along with the route, dates and passenger count. See <Link href={PRICING}>current pricing</Link>. Each search
-          also sends both cities and the departure date to Open-Meteo, with no key, for the globe and the weather tile.
+          Each search is up to three requests to your Ignav account, to find more airlines. Each time you press Book on a fare, and each check of
+          a price alert (every 6 hours while Sush is open), is one. They carry the route, dates and passenger count. See <Link href={PRICING}>current pricing</Link>. Each search
+          also sends both cities and the departure date to Open-Meteo, with no key, for the globe and the weather tile. Picking a currency gets daily rates from ExchangeRate-API, with no key and nothing about your trips.
         </p>
       </div>
     </Page>

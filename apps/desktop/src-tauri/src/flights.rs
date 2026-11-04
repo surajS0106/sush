@@ -2,7 +2,7 @@
 //! unlocks on a flight card. The key stays in the keyring; the webview only learns
 //! whether there is one.
 
-use sush_core::flights::{booking_links, check_key, search_flights, BookingLink, FlightResults, FlightSearch};
+use sush_core::flights::{booking_links, check_key, exchange_rates, search_flights, BookingLink, ExchangeRates, FlightResults, FlightSearch};
 use sush_core::weather::{day_weather, locate, DayWeather, GeoPoint};
 use tauri::State;
 
@@ -47,6 +47,12 @@ pub async fn flights_booking_links(state: State<'_, AppState>, fare_id: String) 
         return Err(AppError::Invalid("Add your Ignav key in Settings → Flights.".into()));
     };
     booking_links(&state.http, &key, &fare_id).await.map_err(AppError::Invalid)
+}
+
+/// Rates for showing a card's prices in the user's currency. Needs no key.
+#[tauri::command]
+pub async fn flights_rates(state: State<'_, AppState>) -> AppResult<ExchangeRates> {
+    exchange_rates(&state.http).await.map_err(AppError::Invalid)
 }
 
 /// Where a city is, for the card's globe. Needs no key.

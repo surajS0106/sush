@@ -1,7 +1,8 @@
-// The `flights_search` card, as a set of tiles that follow the app's theme: the trip
-// on top, with a plane flying its route, and a portrait tile per fare with the
-// airline's logo. Book looks up who sells a fare and lists them; each opens the
-// seller's site in the browser, where the user checks the price and pays.
+// The `flights_search` card, as a set of tiles that follow the app's theme and
+// the user's accent color: the trip on top, with a plane flying its route, a portrait tile per top fare
+// with the airline's logo, and the other airlines' fares listed below. Book looks up
+// who sells a fare and lists them; each opens the seller's site in the browser, where
+// the user checks the price and pays.
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -15,6 +16,7 @@ import {
   CloudSnowIcon,
   CloudSunIcon,
   ExternalLinkIcon,
+  GlobeIcon,
   PlaneIcon,
   PlaneLandingIcon,
   PlaneTakeoffIcon,
@@ -24,22 +26,58 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { motion, useInView, useReducedMotion } from "motion/react";
-import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 
+import { CurrencySelect } from "@/components/currency-select";
+import { Segmented } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
+import { airportStops, type AirportStop } from "@/lib/airports";
+import { useMoney } from "@/lib/currency";
 import { airlineCode, airlineLogoUrl, CABINS, googleFlightsUrl, kayakUrl, type FlightsOutput } from "@/lib/flights";
 import { openSettings } from "@/lib/library";
 import { addPriceAlert, MAX_PRICE_ALERTS, priceChange, removePriceAlert, usePriceAlerts, useTripAlert } from "@/lib/price-alerts";
 import { api, errorMessage, type BookingLink, type DayWeather, type Fare, type FlightLeg } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
+import { degrees, setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib/weather";
 
 /** With its world map, it's only worth loading once a card has a route to fly. */
 const FlightGlobe = lazy(() => import("@/components/flight-globe").then((m) => ({ default: m.FlightGlobe })));
 
-const TILE = "rounded-3xl border border-neutral-200 text-foreground dark:border-transparent";
-const LABEL = "text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-300";
-const BLUE_TEXT = "text-sky-600 dark:text-sky-400";
+const TILE = "rounded-3xl border border-border bg-card text-foreground";
+const LABEL = "text-xs font-medium tracking-wide text-muted-foreground uppercase";
+const ACCENT_TEXT = "text-brand";
+/** Filled with the user's accent. Accents are light in dark mode, so its text is near black there. */
+const ACCENT_FILL = "bg-brand text-brand-foreground dark:text-neutral-950";
+const ACCENT_BUTTON = cn(ACCENT_FILL, "rounded-xl transition-transform hover:bg-brand/90 active:scale-[0.97]");
+/** Book on every fare but the cheapest, so the one filled button is the cheapest's. */
+const QUIET_BUTTON = "rounded-xl bg-brand/15 text-foreground transition-transform hover:bg-brand/25 active:scale-[0.97]";
+/** The cheapest fare's tile. */
+const FEATURED_TILE = "border-brand/40 bg-linear-to-b from-brand/20 to-brand/5 shadow-lg shadow-brand/20";
+/** The tile on the globe. A ring thickens the border without moving what's inside out of line with its neighbours. */
+const PICKED_TILE = "border-brand ring-1 ring-brand";
+
+/** A click on the tile or row picks it, unless it was on something with its own job. */
+const pickOnClick = (onPick?: () => void) => (e: MouseEvent) => {
+  if (!(e.target as Element).closest("button, a")) onPick?.();
+};
+
+/** The way to pick a flight from the keyboard, and what says which one is picked. */
+function GlobeButton({ picked, onPick }: { picked: boolean; onPick: () => void }) {
+  return (
+    <Button
+      size="icon-sm"
+      variant="ghost"
+      aria-pressed={picked}
+      aria-label="Show this flight's route on the globe"
+      title="Show this flight's route on the globe"
+      className={cn("rounded-xl", picked && ACCENT_TEXT)}
+      onClick={onPick}
+    >
+      <GlobeIcon />
+    </Button>
+  );
+}
 
 const dayOf = (date: string) => new Date(`${date}T00:00:00`);
 
@@ -53,12 +91,24 @@ function nearDay(date: string) {
   return days === 0 ? "Today" : days === 1 ? "Tomorrow" : day(date);
 }
 
-/** A figure with its currency code small beside it: 6,244 AED. */
+const figure = (amount: number) => amount.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+/**
+ * A figure with its currency code small beside it: 6,244 AED. In a currency the seller
+ * didn't quote it's an estimate, so it says so, with the quoted price on hover.
+ */
 function Price({ amount, currency, className }: { amount: number; currency: string; className?: string }) {
+  const money = useMoney()(amount, currency);
   return (
-    <span className={cn("tabular-nums", className)}>
-      {amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-      <span className="ml-1 text-[0.65em] text-muted-foreground">{currency}</span>
+    <span className={cn("tabular-nums", className)} title={money.quoted ? `${figure(money.quoted.amount)} ${money.quoted.currency} as quoted` : undefined}>
+      {money.quoted && (
+        <>
+          <span aria-hidden>≈ </span>
+          <span className="sr-only">About </span>
+        </>
+      )}
+      {figure(money.amount)}
+      <span className="ml-1 text-[0.65em] text-muted-foreground">{money.currency}</span>
     </span>
   );
 }
@@ -119,11 +169,11 @@ function FlightPath({ loop = false, stops = 0, delay = 0 }: { loop?: boolean; st
       : { duration: 1.6, ease: [0.22, 1, 0.36, 1] as const, delay };
   return (
     <div ref={ref} className="relative mx-2.5 h-5" aria-hidden>
-      <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-slate-300 dark:border-slate-500" />
+      <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-muted-foreground/40" />
       {Array.from({ length: stops }, (_, i) => (
         <span
           key={i}
-          className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-400"
+          className="absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground"
           style={{ left: `${((i + 1) / (stops + 1)) * 100}%` }}
         />
       ))}
@@ -135,7 +185,7 @@ function FlightPath({ loop = false, stops = 0, delay = 0 }: { loop?: boolean; st
         transition={flying && loop ? { ...flight, times: [0, 0.08, 0.92, 1], ease: "linear" } : { duration: 0 }}
       >
         <motion.div
-          className="absolute top-1/2 left-0 h-0.5 -translate-y-1/2 rounded-full bg-sky-500 dark:bg-sky-400"
+          className="absolute top-1/2 left-0 h-0.5 -translate-y-1/2 rounded-full bg-brand"
           initial={{ width: reduced ? REST : "0%" }}
           animate={{ width: path }}
           transition={flight}
@@ -146,14 +196,14 @@ function FlightPath({ loop = false, stops = 0, delay = 0 }: { loop?: boolean; st
           animate={{ left: path }}
           transition={flight}
         >
-          <PlaneIcon className="size-4 rotate-45 fill-current text-slate-900 dark:text-white" />
+          <PlaneIcon className="size-4 rotate-45 fill-current text-foreground" />
         </motion.div>
       </motion.div>
     </div>
   );
 }
 
-const Dot = () => <span className="size-1.5 shrink-0 rounded-full bg-slate-400 dark:bg-slate-300" aria-hidden />;
+const Dot = () => <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" aria-hidden />;
 
 /** The trip's tile: labels, airports and the plane between them, a pill, and a footer. */
 function Route({ globe, origin, destination, originCity, destinationCity, topLeft, topRight, pill, footer }: {
@@ -168,8 +218,8 @@ function Route({ globe, origin, destination, originCity, destinationCity, topLef
   footer: ReactNode;
 }) {
   return (
-    <section className={cn(TILE, "flex flex-col gap-3 bg-linear-to-b from-white to-slate-100 p-5 dark:from-slate-700 dark:to-slate-900")}>
-      {globe && <div className="-mx-5 -mt-5 h-64 overflow-hidden rounded-t-3xl bg-slate-950/5 dark:bg-black/30">{globe}</div>}
+    <section className={cn(TILE, "flex flex-col gap-3 p-5")}>
+      {globe && <div className="-mx-5 -mt-5 h-64 overflow-hidden rounded-t-3xl bg-linear-to-b from-brand/15 to-transparent">{globe}</div>}
       <div>
         {(topLeft || topRight) && (
           <p className={cn(LABEL, "flex justify-between gap-3")}>
@@ -183,7 +233,7 @@ function Route({ globe, origin, destination, originCity, destinationCity, topLef
             <Dot />
             <div className="min-w-0 flex-1">
               {/* The plane flies on the globe when there is one, not twice over. */}
-              {globe ? <div className="mx-2.5 border-t border-dashed border-slate-300 dark:border-slate-500" /> : <FlightPath loop />}
+              {globe ? <div className="mx-2.5 border-t border-dashed border-muted-foreground/40" /> : <FlightPath loop />}
             </div>
             <Dot />
           </div>
@@ -202,15 +252,15 @@ function Route({ globe, origin, destination, originCity, destinationCity, topLef
       </div>
       {pill && (
         <div className="flex items-center gap-3">
-          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
-          <p className="flex shrink-0 divide-x divide-white/30 rounded-xl bg-sky-600 py-1.5 text-white">
+          <span className="h-px flex-1 bg-border" />
+          <p className={cn(ACCENT_FILL, "flex shrink-0 divide-x divide-current/25 rounded-xl py-1.5")}>
             {pill.map((text) => (
               <span key={text} className="px-3 tabular-nums">
                 {text}
               </span>
             ))}
           </p>
-          <span className="h-px flex-1 bg-slate-200 dark:bg-slate-600" />
+          <span className="h-px flex-1 bg-border" />
         </div>
       )}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">{footer}</div>
@@ -262,7 +312,7 @@ function Leg({ leg, carrier, delay }: { leg: FlightLeg; carrier?: string | null;
         <div className="text-right">
           <p className="text-xs text-muted-foreground">
             <Time at={leg.arrivesAt} />
-            {later && <span className={cn("ml-1", BLUE_TEXT)}>{later}</span>}
+            {later && <span className={cn("ml-1", ACCENT_TEXT)}>{later}</span>}
           </p>
           <p className="text-2xl leading-tight font-medium tracking-wide">{leg.to}</p>
         </div>
@@ -298,36 +348,85 @@ type Sellers = { state: "loading" } | { state: "failed"; error: string } | { sta
 type Tag = "Cheapest" | "Fastest";
 
 const TAG_STYLES: Record<Tag, string> = {
-  Cheapest: "bg-emerald-100 text-emerald-700 dark:bg-slate-700 dark:text-emerald-300",
-  Fastest: "bg-sky-100 text-sky-700 dark:bg-slate-700 dark:text-sky-300",
+  Cheapest: ACCENT_FILL,
+  Fastest: cn("bg-brand/15", ACCENT_TEXT),
 };
 
-function FareTile({ fare, index, tag }: { fare: Fare; index: number; tag: Tag | null }) {
+/** Who sells a fare, looked up on the first Book since each lookup is a billed request. */
+function useSellers(fareId: string) {
   const [open, setOpen] = useState(false);
   const [sellers, setSellers] = useState<Sellers | null>(null);
-
-  const load = () => {
+  const toggle = () => {
+    setOpen(!open);
+    if (open || (sellers && sellers.state !== "failed")) return;
     setSellers({ state: "loading" });
     api
-      .flightsBookingLinks(fare.id)
+      .flightsBookingLinks(fareId)
       .then((links) => setSellers({ state: "ready", links }))
       .catch((e) => setSellers({ state: "failed", error: errorMessage(e) }));
   };
+  return { open, sellers, toggle };
+}
 
-  const toggle = () => {
-    setOpen(!open);
-    if (!open && (!sellers || sellers.state === "failed")) load();
-  };
+function BookButton({ open, toggle, quiet = false }: { open: boolean; toggle: () => void; quiet?: boolean }) {
+  return open ? (
+    <Button size="sm" variant="ghost" aria-label="Hide sellers" aria-expanded onClick={toggle}>
+      <ChevronUpIcon />
+    </Button>
+  ) : (
+    <Button size="sm" aria-expanded={false} className={quiet ? QUIET_BUTTON : ACCENT_BUTTON} onClick={toggle}>
+      Book
+    </Button>
+  );
+}
+
+function SellerList({ sellers, roundTrip }: { sellers: Sellers; roundTrip: boolean }) {
+  return (
+    <div className="rounded-2xl bg-muted p-1">
+      {sellers.state === "loading" && (
+        <div className="px-2 py-1.5">
+          <LoadingState label="Finding sellers" />
+        </div>
+      )}
+      {sellers.state === "failed" && (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground" title={sellers.error}>
+          Couldn't find sellers for this fare. Try the search links below.
+        </p>
+      )}
+      {sellers.state === "ready" && sellers.links.length === 0 && (
+        <p className="px-2 py-1.5 text-xs text-muted-foreground">No seller links for this fare, or it's no longer available. Try the search links below.</p>
+      )}
+      {sellers.state === "ready" && sellers.links.map((link) => <SellerRow key={`${link.provider}:${link.url}`} link={link} roundTrip={roundTrip} />)}
+    </div>
+  );
+}
+
+function FareTile({ fare, index, tag, quiet, picked, onPick }: { fare: Fare; index: number; tag: Tag | null; quiet: boolean; picked: boolean; onPick?: () => void }) {
+  const { open, sellers, toggle } = useSellers(fare.id);
+  const reduced = useReducedMotion() || document.documentElement.dataset.motion === "reduced";
+  const featured = tag === "Cheapest";
+  // With no globe to pick for, the ring goes to the cheapest.
+  const ringed = onPick ? picked : featured;
 
   const delay = index * 0.12;
   const flightNumber = fare.outbound.flights[0]?.replace(" ", "");
   const otherCarrier = fare.inbound?.carrier && fare.inbound.carrier !== fare.outbound.carrier ? fare.inbound.carrier : null;
 
   return (
-    <li className={cn(TILE, "flex min-w-0 flex-col gap-3 bg-white p-4 dark:bg-neutral-900")}>
+    <motion.li
+      onClick={pickOnClick(onPick)}
+      className={cn(TILE, "flex min-w-0 flex-col gap-3 p-4 transition-colors", featured && FEATURED_TILE, ringed ? PICKED_TILE : "hover:border-brand/50", onPick && "cursor-pointer")}
+      initial={reduced ? false : { opacity: 0, transform: "translateY(8px)" }}
+      whileInView={{ opacity: 1, transform: "translateY(0px)" }}
+      viewport={{ once: true }}
+      transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1], delay: index * 0.05 }}
+    >
       <div className="flex items-start justify-between gap-2">
         <AirlineLogo leg={fare.outbound} />
-        {tag && <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium uppercase", TAG_STYLES[tag])}>{tag}</span>}
+        <div className="flex items-center gap-1">
+          {tag && <span className={cn("rounded-md px-1.5 py-0.5 text-[11px] font-medium uppercase", TAG_STYLES[tag])}>{tag}</span>}
+          {onPick && <GlobeButton picked={picked} onPick={onPick} />}
+        </div>
       </div>
       <div className="min-w-0">
         {flightNumber && <p className="text-xl font-medium tabular-nums">{flightNumber}</p>}
@@ -338,36 +437,70 @@ function FareTile({ fare, index, tag }: { fare: Fare; index: number; tag: Tag | 
       <Leg leg={fare.outbound} delay={delay} />
       {fare.inbound && <Leg leg={fare.inbound} carrier={otherCarrier} delay={delay + 0.2} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Price amount={fare.amount} currency={fare.currency} className="text-xl font-medium" />
-        {open ? (
-          <Button size="sm" variant="ghost" aria-label="Hide sellers" aria-expanded onClick={toggle}>
-            <ChevronUpIcon />
-          </Button>
-        ) : (
-          <Button size="sm" aria-expanded={false} className="rounded-xl bg-sky-600 text-white hover:bg-sky-700" onClick={toggle}>
-            Book
-          </Button>
-        )}
+        <Price amount={fare.amount} currency={fare.currency} className={cn("font-medium", featured ? "text-3xl leading-none" : "text-xl")} />
+        <BookButton open={open} toggle={toggle} quiet={quiet} />
       </div>
-      {open && sellers && (
-        <div className="rounded-2xl bg-neutral-100 p-1 dark:bg-neutral-950">
-          {sellers.state === "loading" && (
-            <div className="px-2 py-1.5">
-              <LoadingState label="Finding sellers" />
-            </div>
-          )}
-          {sellers.state === "failed" && (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground" title={sellers.error}>
-              Couldn't find sellers for this fare. Try the search links below.
-            </p>
-          )}
-          {sellers.state === "ready" && sellers.links.length === 0 && (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">No seller links for this fare, or it's no longer available. Try the search links below.</p>
-          )}
-          {sellers.state === "ready" && sellers.links.map((link) => <SellerRow key={`${link.provider}:${link.url}`} link={link} roundTrip={!!fare.inbound} />)}
+      {open && sellers && <SellerList sellers={sellers} roundTrip={!!fare.inbound} />}
+    </motion.li>
+  );
+}
+
+function LegLine({ leg }: { leg: FlightLeg }) {
+  const later = daysLater(leg);
+  return (
+    <p className="truncate text-xs text-muted-foreground" title={leg.flights.join(", ")}>
+      <Time at={leg.departsAt} /> – <Time at={leg.arrivesAt} />
+      {later && <span className={cn("ml-1", ACCENT_TEXT)}>{later}</span>}
+      {" · "}
+      {[leg.durationMinutes !== null ? duration(leg.durationMinutes) : null, stopsLabel(leg.stops)].filter(Boolean).join(" · ")}
+    </p>
+  );
+}
+
+function FareRow({ fare, picked, onPick }: { fare: Fare; picked: boolean; onPick?: () => void }) {
+  const { open, sellers, toggle } = useSellers(fare.id);
+  return (
+    <li onClick={pickOnClick(onPick)} className={cn("flex flex-col gap-2 p-3 transition-colors", picked && "bg-brand/10", onPick && "cursor-pointer")}>
+      <div className="flex items-center gap-3">
+        <AirlineLogo leg={fare.outbound} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium">{fare.outbound.carrier ?? "Airline"}</p>
+          <LegLine leg={fare.outbound} />
+          {fare.inbound && <LegLine leg={fare.inbound} />}
         </div>
-      )}
+        <Price amount={fare.amount} currency={fare.currency} className="shrink-0 font-medium" />
+        {onPick && <GlobeButton picked={picked} onPick={onPick} />}
+        <BookButton open={open} toggle={toggle} quiet />
+      </div>
+      {open && sellers && <SellerList sellers={sellers} roundTrip={!!fare.inbound} />}
     </li>
+  );
+}
+
+/** How many of the list show before "Show all". */
+const LIST_FIRST = 5;
+
+/** Fares that didn't make the tiles, usually dearer: still the user's to see and choose. */
+function MoreFares({ fares, pickedId, onPick }: { fares: Fare[]; pickedId?: string; onPick?: (fare: Fare) => void }) {
+  const [all, setAll] = useState(false);
+  const airlines = new Set(fares.map((fare) => fare.outbound.carrier ?? fare.outbound.flights[0])).size;
+  const shown = all ? fares : fares.slice(0, LIST_FIRST);
+  return (
+    <section aria-label="More flights" className="flex flex-col gap-2">
+      <p className={cn(LABEL, "px-2 pt-1")}>
+        {fares.length === 1 ? "1 more flight" : `${fares.length} more flights`}, {airlines === 1 ? "1 airline" : `${airlines} airlines`}, cheapest first
+      </p>
+      <ul className={cn(TILE, "divide-y divide-border overflow-hidden")}>
+        {shown.map((fare) => (
+          <FareRow key={fare.id} fare={fare} picked={fare.id === pickedId} onPick={onPick && (() => onPick(fare))} />
+        ))}
+      </ul>
+      {fares.length > LIST_FIRST && (
+        <Button variant="ghost" size="sm" className={cn("self-center rounded-xl", ACCENT_TEXT)} aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? "Show fewer" : `Show all ${fares.length}`}
+        </Button>
+      )}
+    </section>
   );
 }
 
@@ -380,38 +513,31 @@ const WEATHER_ICONS: [(code: number) => boolean, LucideIcon][] = [
   [(c) => (c >= 51 && c <= 67) || (c >= 80 && c <= 82), CloudRainIcon],
 ];
 
-/** Degrees in the units of the user's region. */
-function degrees(celsius: number) {
-  let fahrenheit = false;
-  try {
-    fahrenheit = new Intl.Locale(navigator.language).region === "US";
-  } catch {
-    // An unreadable language setting gets Celsius.
-  }
-  return `${Math.round(fahrenheit ? (celsius * 9) / 5 + 32 : celsius)}°`;
-}
-
 function WeatherTile({ weather }: { weather: DayWeather }) {
+  const unit = useTemperatureUnit();
   const Icon = WEATHER_ICONS.find(([matches]) => matches(weather.code))?.[1] ?? CloudIcon;
   return (
-    <section className={cn(TILE, "flex flex-col gap-3 bg-linear-to-b from-sky-100 to-sky-200 p-5 dark:from-slate-600 dark:to-slate-700")}>
+    <section className={cn(TILE, "flex flex-col gap-3 bg-linear-to-b from-brand/20 to-brand/5 p-5")}>
       <div className="flex items-start justify-between gap-3">
         <PlaneLandingIcon className="size-5 shrink-0" aria-hidden />
-        <p className="text-4xl leading-none font-medium tabular-nums">{degrees(weather.highC)}</p>
+        <div className="flex flex-col items-end gap-2">
+          <p className="text-4xl leading-none font-medium tabular-nums">{degrees(weather.highC, unit)}</p>
+          <Segmented label="Temperature unit" value={unit} onChange={setTemperatureUnit} options={TEMPERATURE_UNITS} />
+        </div>
       </div>
-      <Icon className="mx-auto size-14 text-slate-700 dark:text-slate-100" aria-label={weather.condition} strokeWidth={1.25} />
+      <Icon className={cn("mx-auto size-14", ACCENT_TEXT)} aria-label={weather.condition} strokeWidth={1.25} />
       <div className="mt-auto min-w-0">
         <p className="truncate text-xl font-medium" title={weather.place}>
           {weather.place}
         </p>
-        <p className="text-xs text-slate-600 dark:text-slate-300">
-          {weather.condition} · low {degrees(weather.lowC)}
+        <p className="text-xs text-muted-foreground">
+          {weather.condition} · low {degrees(weather.lowC, unit)}
         </p>
-        <p className="text-xs text-slate-600 dark:text-slate-300">{weather.lastYear ? `On ${day(weather.date)} last year` : `Forecast for ${day(weather.date)}`}</p>
+        <p className="text-xs text-muted-foreground">{weather.lastYear ? `On ${day(weather.date)} last year` : `Forecast for ${day(weather.date)}`}</p>
         <button
           type="button"
           onClick={() => void openUrl("https://open-meteo.com/")}
-          className="mt-1 text-[11px] text-slate-500 underline-offset-2 hover:underline dark:text-slate-400"
+          className="mt-1 text-[11px] text-muted-foreground underline-offset-2 hover:underline"
         >
           Weather by Open-Meteo
         </button>
@@ -425,10 +551,10 @@ function PriceAlertTile({ trip, price, currency }: { trip: FlightsOutput; price:
   const full = usePriceAlerts().length >= MAX_PRICE_ALERTS;
   const change = alert ? priceChange(alert) : 0;
   return (
-    <section className={cn(TILE, "flex flex-col gap-3 bg-linear-to-b from-white to-slate-100 p-5 dark:from-neutral-900 dark:to-slate-900")}>
+    <section className={cn(TILE, "flex flex-col gap-3 p-5")}>
       <div className="flex items-center justify-between gap-3">
         <p className="text-base font-medium">Price alert</p>
-        {alert ? <BellRingIcon className={cn("size-4 shrink-0", BLUE_TEXT)} aria-hidden /> : <BellIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
+        {alert ? <BellRingIcon className={cn("size-4 shrink-0", ACCENT_TEXT)} aria-hidden /> : <BellIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />}
       </div>
       <p className="flex items-center gap-2 text-2xl font-medium tracking-wide">
         {trip.origin}
@@ -438,7 +564,7 @@ function PriceAlertTile({ trip, price, currency }: { trip: FlightsOutput; price:
       {alert ? (
         <div className="mt-auto flex flex-col gap-1">
           {change !== 0 && (
-            <p className={cn("flex items-center gap-1 font-medium tabular-nums", change > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
+            <p className={cn("flex items-center gap-1 font-medium tabular-nums", change > 0 ? ACCENT_TEXT : "text-coral")}>
               {change > 0 ? <TrendingDownIcon className="size-4" aria-hidden /> : <TrendingUpIcon className="size-4" aria-hidden />}
               {Math.abs(change)}% {change > 0 ? "lower" : "higher"}
             </p>
@@ -455,7 +581,7 @@ function PriceAlertTile({ trip, price, currency }: { trip: FlightsOutput; price:
           <p className="text-xs text-muted-foreground">
             {full ? `You're watching ${MAX_PRICE_ALERTS} trips, the most at once. Remove one in Settings → Flights.` : "Get a notice in the app if this trip gets cheaper."}
           </p>
-          <Button size="sm" disabled={full} className="mt-1 rounded-xl bg-sky-600 text-white hover:bg-sky-700" onClick={() => addPriceAlert(trip, price, currency)}>
+          <Button size="sm" disabled={full} className={cn(ACCENT_BUTTON, "mt-1")} onClick={() => addPriceAlert(trip, price, currency)}>
             Watch this price
           </Button>
         </div>
@@ -464,42 +590,108 @@ function PriceAlertTile({ trip, price, currency }: { trip: FlightsOutput; price:
   );
 }
 
-function Status({ trip }: { trip: FlightsOutput }) {
-  if (trip.error) {
-    return (
-      <p className="text-xs text-muted-foreground" title={trip.error}>
-        Couldn't load fares. Check your key in Settings → Flights.
+const NO_FARES: Record<"failed" | "noKey" | "none", [string, string]> = {
+  failed: ["Fares unavailable", "Couldn't get prices right now. You can still compare this trip on these sites."],
+  noKey: ["Live fares", "Add an Ignav key to see prices here, or compare this trip on these sites."],
+  none: ["No fares found", "Nothing came back for these dates. Try other dates, or compare on these sites."],
+};
+
+/** Holds the price alert's place in the layout when there are no fares, and says why. */
+function NoFaresTile({ trip }: { trip: FlightsOutput }) {
+  const reason = trip.error ? "failed" : trip.fetchedAt === undefined ? "noKey" : "none";
+  const [title, detail] = NO_FARES[reason];
+  return (
+    <section className={cn(TILE, "flex flex-col gap-3 p-5")}>
+      <p className="text-base font-medium">{title}</p>
+      <p className="flex items-center gap-2 text-2xl font-medium tracking-wide">
+        {trip.origin}
+        <PlaneIcon className="size-4 rotate-45 fill-current text-muted-foreground" aria-label="to" />
+        {trip.destination}
       </p>
-    );
-  }
-  if (trip.fetchedAt === undefined) {
-    return (
-      <button
-        type="button"
-        onClick={() => openSettings({ section: "flights" })}
-        className="text-left text-xs text-muted-foreground underline-offset-4 hover:underline"
-      >
-        Add an Ignav key in Settings to see fares here
-      </button>
-    );
-  }
-  if (trip.fares?.length === 0) return <p className="text-xs text-muted-foreground">No fares found for this trip.</p>;
-  const when = new Date(trip.fetchedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  return <p className="text-xs text-muted-foreground">Prices from {when}. Confirm the final price and pay on the seller's site.</p>;
+      <div className="mt-auto flex flex-col gap-2">
+        <p className="text-xs text-muted-foreground" title={trip.error}>
+          {detail}
+        </p>
+        <div className="flex flex-wrap items-center gap-1">
+          <Button variant="outline" size="sm" className="rounded-xl" onClick={() => void openUrl(googleFlightsUrl(trip))}>
+            Google Flights
+            <ExternalLinkIcon />
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-xl" onClick={() => void openUrl(kayakUrl(trip))}>
+            Kayak
+            <ExternalLinkIcon />
+          </Button>
+          {reason === "noKey" && (
+            <Button size="sm" className={ACCENT_BUTTON} onClick={() => openSettings({ section: "flights" })}>
+              Add key
+            </Button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
 }
 
-const SHELL = "flex w-full flex-col gap-2 text-sm";
+/** Only while a price on the card is converted: what that means, and the credit the rates' terms ask for. */
+function ConversionNote({ fare }: { fare: Fare }) {
+  const money = useMoney()(fare.amount, fare.currency);
+  if (!money.quoted) return null;
+  return (
+    <p className="text-xs text-muted-foreground">
+      Shown in {money.currency} at today's rate. Sellers charge in their own currency, so the final price will differ a little.{" "}
+      <button type="button" onClick={() => void openUrl("https://www.exchangerate-api.com")} className="underline-offset-2 hover:underline">
+        Rates by ExchangeRate-API
+      </button>
+    </p>
+  );
+}
+
+const SHELL = "flex w-full max-w-3xl flex-col gap-2 text-sm";
 
 /** While a search runs: the route as far as it's known, with the plane flying it. */
 export function FlightSearching({ origin, destination }: { origin?: string; destination?: string }) {
   return (
-    <div className={cn(SHELL, "max-w-md")}>
+    <div className={SHELL}>
       <Route origin={origin || "···"} destination={destination || "···"} footer={<LoadingState label="Looking for flights" />} />
     </div>
   );
 }
 
 const totalMinutes = (fare: Fare) => (fare.outbound.durationMinutes ?? Infinity) + (fare.inbound?.durationMinutes ?? 0);
+
+/**
+ * Where a flight stops, for the globe. Null until the first answer. Keeps the last answer
+ * while the next is found, so the globe changes route once, when it has the whole route.
+ */
+function useStopovers(codes: string[]) {
+  const [found, setFound] = useState<{ key: string; stops: AirportStop[] } | null>(null);
+  const key = codes.join(",");
+  useEffect(() => {
+    let current = true;
+    // Without the table, the route is still right from end to end.
+    const lookup = codes.length > 0 ? airportStops(codes).catch(() => []) : Promise.resolve([]);
+    void lookup.then((stops) => {
+      if (current) setFound({ key, stops });
+    });
+    return () => {
+      current = false;
+    };
+  }, [key]);
+  return { stops: found?.stops ?? null, settled: found?.key === key };
+}
+
+/** Says when the line on the globe leaves out stops, rather than letting it pass for a direct flight. */
+function UnplacedStops({ fare, placed }: { fare: Fare; placed: number }) {
+  const count = fare.outbound.stops - placed;
+  if (count <= 0) return null;
+  return (
+    <p className="pointer-events-none absolute top-4 left-4 max-w-[calc(100%-2rem)] rounded-md bg-card/80 px-2 py-1 text-xs text-foreground">
+      {count === 1 ? "1 stop isn't shown." : `${count} stops aren't shown.`}
+      {/* Cards saved before stops were kept don't know the airports; a new search does. */}
+      {!fare.outbound.via && ` Search again to trace ${count === 1 ? "it" : "them"}.`}
+    </p>
+  );
+}
 
 export function FlightCard({ trip }: { trip: FlightsOutput }) {
   const travellers = trip.adults + trip.children;
@@ -512,21 +704,35 @@ export function FlightCard({ trip }: { trip: FlightsOutput }) {
     if (fare === cheapest) return "Cheapest";
     return fare === fastest ? "Fastest" : null;
   };
-  const fastestMinutes = fastest?.outbound.durationMinutes ?? null;
+  const moreFares = trip.cardOnly?.moreFares ?? [];
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const hasGlobe = !!trip.originPoint && !!trip.destinationPoint;
+  // The globe starts on the cheapest. The pill describes the flight it's showing.
+  const picked = [...fares, ...moreFares].find((fare) => fare.id === pickedId) ?? cheapest;
+  const { stops: stopovers, settled } = useStopovers(picked?.outbound.via ?? []);
+  const onPick = hasGlobe ? (fare: Fare) => setPickedId(fare.id) : undefined;
+  const pillFare = hasGlobe ? picked : fastest;
+  const pillMinutes = pillFare?.outbound.durationMinutes ?? null;
   const pill: [string, string] =
-    fastest && fastestMinutes !== null
-      ? [duration(fastestMinutes), stopsLabel(fastest.outbound.stops)]
+    pillFare && pillMinutes !== null
+      ? [duration(pillMinutes), stopsLabel(pillFare.outbound.stops)]
       : [trip.returnDate ? "Round trip" : "One way", CABINS[trip.cabin]];
   return (
-    <figure className={cn(SHELL, fares.length > 0 ? "max-w-3xl" : "max-w-md")}>
+    <figure className={SHELL}>
       <Route
         globe={
           trip.originPoint && trip.destinationPoint ? (
             <Suspense fallback={null}>
-              <FlightGlobe
-                from={{ point: trip.originPoint, name: trip.originCity ?? trip.origin }}
-                to={{ point: trip.destinationPoint, name: trip.destinationCity ?? trip.destination }}
-              />
+              {stopovers && (
+                <div className="relative size-full">
+                  <FlightGlobe
+                    from={{ point: trip.originPoint, name: trip.originCity ?? trip.origin }}
+                    via={stopovers}
+                    to={{ point: trip.destinationPoint, name: trip.destinationCity ?? trip.destination }}
+                  />
+                  {picked && settled && <UnplacedStops fare={picked} placed={stopovers.length} />}
+                </div>
+              )}
             </Suspense>
           ) : undefined
         }
@@ -555,42 +761,43 @@ export function FlightCard({ trip }: { trip: FlightsOutput }) {
           </>
         }
       />
-      {(trip.weather || cheapest) && (
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-2">
-          {trip.weather && <WeatherTile weather={trip.weather} />}
-          {cheapest && <PriceAlertTile trip={trip} price={cheapest.amount} currency={cheapest.currency} />}
-        </div>
-      )}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(14rem,1fr))] gap-2">
+        {trip.weather && <WeatherTile weather={trip.weather} />}
+        {cheapest ? <PriceAlertTile trip={trip} price={cheapest.amount} currency={cheapest.currency} /> : <NoFaresTile trip={trip} />}
+      </div>
       {fares.length > 0 && (
         <>
-          {trip.total !== undefined && trip.total > fares.length && (
-            <p className={cn(LABEL, "px-2 pt-1")}>
-              Best {fares.length} of {trip.total} flights
-            </p>
-          )}
+          <div className="flex flex-wrap items-center justify-between gap-2 px-2 pt-1">
+            <p className={LABEL}>{trip.total !== undefined && trip.total > fares.length ? `Top picks, ${fares.length} of ${trip.total} flights` : "Flights"}</p>
+            <CurrencySelect quoted={cheapest?.currency} />
+          </div>
           {/* `items-start`: opening one fare's sellers doesn't stretch the others. */}
           <ul className="grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] items-start gap-2">
             {fares.map((fare, i) => (
-              <FareTile key={fare.id} fare={fare} index={i} tag={tagOf(fare)} />
+              <FareTile key={fare.id} fare={fare} index={i} tag={tagOf(fare)} quiet={fares.length > 1 && fare !== cheapest} picked={fare === picked} onPick={onPick && (() => onPick(fare))} />
             ))}
           </ul>
+          {moreFares.length > 0 && <MoreFares fares={moreFares} pickedId={picked?.id} onPick={onPick} />}
         </>
       )}
-      <figcaption className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2">
-        <div className="min-w-0 flex-1 basis-48">
-          <Status trip={trip} />
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button variant="outline" size="sm" onClick={() => void openUrl(googleFlightsUrl(trip))}>
-            Google Flights
-            <ExternalLinkIcon />
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void openUrl(kayakUrl(trip))}>
-            Kayak
-            <ExternalLinkIcon />
-          </Button>
-        </div>
-      </figcaption>
+      {cheapest && trip.fetchedAt !== undefined && (
+        <figcaption className="flex flex-wrap items-center gap-x-3 gap-y-1 px-2">
+          <div className="min-w-0 flex-1 basis-48 text-xs text-muted-foreground">
+            <p>Prices from {new Date(trip.fetchedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}. Confirm the final price and pay on the seller's site.</p>
+            <ConversionNote fare={cheapest} />
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button variant="outline" size="sm" onClick={() => void openUrl(googleFlightsUrl(trip))}>
+              Google Flights
+              <ExternalLinkIcon />
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => void openUrl(kayakUrl(trip))}>
+              Kayak
+              <ExternalLinkIcon />
+            </Button>
+          </div>
+        </figcaption>
+      )}
     </figure>
   );
 }

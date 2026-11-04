@@ -135,8 +135,9 @@ function CartLines({ cart }: { cart: SwiggyCart }) {
     <>
       <ul className="space-y-2">
         {cart.items.map((item) => (
-          <li key={item.id} className="flex justify-between gap-3 text-sm">
-            <div className="min-w-0">
+          <li key={item.id} className="flex items-center justify-between gap-3 text-sm">
+            <Photo src={item.imageUrl} className="size-8 bg-white object-contain" />
+            <div className="min-w-0 flex-1">
               <span>
                 {item.quantity} × {item.name}
               </span>
@@ -329,6 +330,9 @@ export function SwiggyCard({ card, service }: { card: SwiggyCardData; service: S
           <PoweredBy service={service} />
         </Frame>
       );
+    case "addresses":
+      // Instamart's picker is in instamart-card.tsx, and Food's `get_addresses` has no card.
+      return null;
     case "order":
       return <OrderCard order={card.order} service={service} />;
     case "tracking":

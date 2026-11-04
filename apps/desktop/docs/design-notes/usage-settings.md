@@ -1,8 +1,11 @@
 # Usage Settings — Design Notes
 
-Last updated: 2026-10-12
+Last updated: 2026-11-04
 
 ## What changed
+
+### 2026-11-04
+- "Raise limit" now scrolls the limit field to the middle of the Usage page before focusing it (`revealLimitInput`). It used to rely on `focus()` alone to bring the field into view, and the field sits at the bottom of the page, so the button could look like it did nothing. The scroll is instant under reduced motion.
 
 ### 2026-10-12 (budgets)
 - New `src/lib/budget.ts`: a budget preference (`sush.budget` in localStorage) with a unit (spend in USD or tokens), a limit, a period (daily, weekly, monthly; weeks start Monday, periods start at local midnight), alert thresholds (choices 25/50/75/80/90/100%, default 50/80/100), a notifications switch and "Pause at limit".
@@ -34,6 +37,8 @@ While building the page it turned out each step of a tool-using reply overwrote 
 Period filtering needs a time per reply; messages had none. New replies record when they started. Older replies fall back to their chat's last activity, which is approximate for long chats. The trade-off was accepted over leaving old usage out entirely.
 
 Budgets answer the follow-up question: not just what was spent, but whether that is too much. The meter treats the limit as capacity, the way the Storage bar treats disk size, so how full it is reads at a glance. Alerts are toasts rather than OS notifications because they only matter while the app is open, when the spending happens. Blocking is opt-in and only stops new requests: cutting off a turn halfway through a tool call would leave a Cowork change half done. Budgets are a local preference, not stored in core, since usage is already derivable from the chats.
+
+"Raise limit" sits at the top of the page and its field at the bottom, so the button has to visibly move the user there. An explicit scroll makes that independent of how the webview handles `focus()` inside the dialog's scroller. The trade-off is that the button still sends the user to the settings group instead of editing the limit in the card, which keeps one limit field with one set of parsing and error handling.
 
 ## What makes it stand out
 

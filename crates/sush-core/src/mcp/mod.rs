@@ -89,6 +89,9 @@ pub struct McpTool {
     /// Hints like `readOnlyHint` and `destructiveHint`, passed through for the UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<Value>,
+    /// The tool's `_meta`; `ui.resourceUri` names a widget a client can show its results in.
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 fn empty_schema() -> Value {
@@ -321,6 +324,11 @@ impl McpClient {
     pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, McpError> {
         let result = self.request("tools/call", json!({ "name": name, "arguments": arguments }), CALL_TIMEOUT).await?;
         Ok(flatten_result(&result))
+    }
+
+    /// One resource as the server sends it (`contents`), such as a `ui://` widget's HTML.
+    pub async fn read_resource(&self, uri: &str) -> Result<Value, McpError> {
+        self.request("resources/read", json!({ "uri": uri }), CALL_TIMEOUT).await
     }
 
     /// `call_tool` with request `_meta` for a server that reads it (Plinth wants to know which thread is

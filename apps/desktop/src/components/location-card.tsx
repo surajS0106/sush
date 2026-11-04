@@ -10,14 +10,16 @@ import { readLocation, savedLocationOutput, useSavedLocation, type LocationOutpu
 
 export function LocationCard({ onShare, onDecline }: { onShare: (output: LocationOutput) => void; onDecline: () => void }) {
   const address = useSavedLocation();
-  const [busy, setBusy] = useState(false);
+  /** Which device button is waiting on a position: kept in the chat, or for this session only. */
+  const [finding, setFinding] = useState<"keep" | "session" | null>(null);
+  const busy = finding !== null;
   const [error, setError] = useState<string | null>(null);
 
-  const shareDevice = () => {
-    setBusy(true);
+  const shareDevice = (mode: "keep" | "session") => {
+    setFinding(mode);
     setError(null);
-    readLocation().then(onShare, (e: Error) => {
-      setBusy(false);
+    readLocation(mode === "session").then(onShare, (e: Error) => {
+      setFinding(null);
       setError(e.message);
     });
   };
@@ -36,7 +38,10 @@ export function LocationCard({ onShare, onDecline }: { onShare: (output: Locatio
             <div className="text-sm font-medium">Share your location?</div>
             {address && <p className="mt-0.5 truncate text-sm" title={address}>{address}</p>}
             <p className="mt-0.5 text-xs text-muted-foreground">
-              It goes to this chat's model and is saved in the chat. A map of it also loads from Google.
+              It goes to this chat's model and is saved in the chat. A map of it also loads from Google, and its weather from Open-Meteo.
+            </p>
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              For this session only, it's removed from the chat when you quit Sush. The model will already have seen it.
             </p>
             {!address && (
               <p className="mt-1.5 text-xs text-muted-foreground">
@@ -57,8 +62,11 @@ export function LocationCard({ onShare, onDecline }: { onShare: (output: Locatio
           <Button variant="ghost" size="sm" className="rounded-full" disabled={busy} onClick={onDecline}>
             {error ? "I'll type it" : "Not now"}
           </Button>
-          <Button variant={address ? "outline" : "default"} size="sm" className="rounded-full" disabled={busy} onClick={shareDevice}>
-            {busy ? "Finding you…" : error ? "Try again" : address ? "Use device location" : "Share device location"}
+          <Button variant="outline" size="sm" className="rounded-full" disabled={busy} onClick={() => shareDevice("session")}>
+            {finding === "session" ? "Finding you…" : address ? "Use device for this session" : "Share for this session"}
+          </Button>
+          <Button variant={address ? "outline" : "default"} size="sm" className="rounded-full" disabled={busy} onClick={() => shareDevice("keep")}>
+            {finding === "keep" ? "Finding you…" : error ? "Try again" : address ? "Use device location" : "Share device location"}
           </Button>
           {address && (
             <Button size="sm" className="rounded-full" disabled={busy} onClick={() => onShare(savedLocationOutput(address))}>

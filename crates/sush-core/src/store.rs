@@ -223,6 +223,46 @@ impl Store {
         Ok(())
     }
 
+    /// Remove every location shared "for this session" from the stored chats and
+    /// their search index. Runs when the app quits, and again at launch in case it
+    /// crashed before it could.
+    pub fn forget_session_locations(&self) -> StoreResult<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let metas = {
+            let mut stmt = tx.prepare(
+                r#"SELECT id, title, created_at, updated_at, target, pinned, workspace_id, project_id, parent_id FROM threads
+                   WHERE id IN (SELECT thread_id FROM messages WHERE data LIKE '%"temporary":true%')"#,
+            )?;
+            let metas = stmt.query_map([], meta_row)?.collect::<Result<Vec<_>, _>>()?;
+            metas
+        };
+        for meta in metas {
+            let rows = {
+                let mut stmt = tx.prepare("SELECT seq, data FROM messages WHERE thread_id = ?1 ORDER BY seq")?;
+                let rows = stmt
+                    .query_map([&meta.id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+            let seqs: Vec<i64> = rows.iter().map(|(seq, _)| *seq).collect();
+            let mut messages = rows
+                .iter()
+                .map(|(_, data)| Ok(serde_json::from_str(data)?))
+                .collect::<StoreResult<Vec<Value>>>()?;
+            forget_locations_in(&mut messages);
+            for (seq, m) in seqs.iter().zip(&messages) {
+                tx.execute(
+                    "UPDATE messages SET data = ?3 WHERE thread_id = ?1 AND seq = ?2",
+                    params![meta.id, seq, serde_json::to_string(m)?],
+                )?;
+            }
+            index(&tx, &meta, &messages)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// One conversation's messages; empty if it isn't stored yet.
     pub fn messages(&self, id: &str) -> StoreResult<Vec<Value>> {
         let conn = self.conn.lock().unwrap();
@@ -746,6 +786,75 @@ fn index(conn: &Connection, meta: &ThreadMeta, messages: &[Value]) -> StoreResul
     Ok(())
 }
 
+const LOCATION_REMOVED: &str = "[location removed]";
+
+/// Take session-only locations out of a thread: the `location_get` results, any
+/// map or weather card drawn from one, and the exact place wherever else it was
+/// repeated. The model's own rewording of a place can't be recognised, so it stays.
+fn forget_locations_in(messages: &mut [Value]) {
+    let mut places: Vec<String> = Vec::new();
+    for part in tool_parts(messages, "location_get") {
+        if part["output"]["temporary"] != true {
+            continue;
+        }
+        if let Some(place) = part["output"]["place"].as_str().filter(|p| !p.is_empty()) {
+            // The model may space a `latitude,longitude` when it passes it on.
+            places.push(place.replace(',', ", "));
+            places.push(place.to_string());
+        }
+        part["output"] = serde_json::json!({
+            "removed": true,
+            "note": "The user shared their location for an earlier session only, and it has been removed. Call location_get if it's needed again.",
+        });
+    }
+    if places.is_empty() {
+        return;
+    }
+
+    for (tool, what) in [("map_show", "map"), ("weather_show", "weather card")] {
+        for part in tool_parts(messages, tool) {
+            let input = part["input"].to_string();
+            if !places.iter().any(|p| input.contains(p.as_str())) {
+                continue;
+            }
+            part["input"] = serde_json::json!({});
+            part["state"] = "output-error".into();
+            part["errorText"] = format!("This {what} used a location shared for one session, so it was removed.").into();
+            if let Some(part) = part.as_object_mut() {
+                part.remove("output");
+            }
+        }
+    }
+
+    for message in messages.iter_mut() {
+        replace_strings(message, &places);
+    }
+}
+
+/// A thread's calls of one tool.
+fn tool_parts<'a>(messages: &'a mut [Value], name: &'a str) -> impl Iterator<Item = &'a mut Value> {
+    messages
+        .iter_mut()
+        .filter_map(|m| m.get_mut("parts")?.as_array_mut())
+        .flatten()
+        .filter(move |part| part["type"] == "dynamic-tool" && part["toolName"] == name)
+}
+
+fn replace_strings(value: &mut Value, places: &[String]) {
+    match value {
+        Value::String(s) => {
+            for place in places {
+                if s.contains(place.as_str()) {
+                    *s = s.replace(place.as_str(), LOCATION_REMOVED);
+                }
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| replace_strings(v, places)),
+        Value::Object(map) => map.values_mut().for_each(|v| replace_strings(v, places)),
+        _ => {}
+    }
+}
+
 /// The text of a conversation: `ROLE:` then its text parts, per message.
 pub fn transcript(messages: &[Value]) -> String {
     messages
@@ -859,6 +968,54 @@ mod tests {
         assert_eq!(threads.iter().map(|t| t.meta.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
         assert_eq!(threads[1].meta, a);
         assert_eq!(threads[1].messages, vec![text("user", "hello")]);
+    }
+
+    #[test]
+    fn session_locations_are_forgotten_and_others_kept() {
+        let tool = |name: &str, input: Value, output: Value| {
+            json!({ "type": "dynamic-tool", "toolName": name, "toolCallId": name, "state": "output-available", "input": input, "output": output })
+        };
+        let place = "13.08270,80.27070";
+        let session = json!({ "id": "a1", "role": "assistant", "parts": [
+            tool("location_get", json!({}), json!({ "place": place, "source": "device", "temporary": true })),
+            tool("map_show", json!({ "origin": place, "destination": "Airport" }), json!({ "origin": place })),
+            tool("map_show", json!({ "destination": "Beach" }), json!({ "destination": "Beach" })),
+            { "type": "text", "text": format!("Starting from {place} today") },
+            tool("weather_show", json!({ "place": place, "label": "Chennai" }), json!({ "place": "Chennai", "temperatureC": 29.0 })),
+        ]});
+        let kept = json!({ "id": "a2", "role": "assistant", "parts": [
+            tool("location_get", json!({}), json!({ "place": "9.92520,78.11980", "source": "device" })),
+            tool("map_show", json!({ "origin": "9.92520,78.11980" }), json!({ "origin": "9.92520,78.11980" })),
+        ]});
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.save_thread(&meta("session", "Weather", 1), Some(vec![session])).unwrap();
+        store.save_thread(&meta("kept", "Directions", 2), Some(vec![kept.clone()])).unwrap();
+
+        store.forget_session_locations().unwrap();
+
+        let messages = store.messages("session").unwrap();
+        let parts = &messages[0]["parts"];
+        assert!(!serde_json::to_string(&messages).unwrap().contains("13.08270"));
+        assert_eq!(parts[0]["output"]["removed"], true);
+        assert_eq!(parts[1]["state"], "output-error");
+        assert_eq!(parts[1]["input"], json!({}));
+        assert!(parts[1].get("output").is_none());
+        // A map that didn't use the location is left alone.
+        assert_eq!(parts[2]["state"], "output-available");
+        assert_eq!(parts[3]["text"], "Starting from [location removed] today");
+        // The card's output names the place, so it goes along with the coordinates.
+        assert_eq!(parts[4]["state"], "output-error");
+        assert_eq!(parts[4]["input"], json!({}));
+        assert!(parts[4].get("output").is_none());
+        assert!(store.search("13.08270", 10).unwrap().is_empty());
+        // A location shared the ordinary way stays, as the card says.
+        assert_eq!(store.messages("kept").unwrap(), vec![kept]);
+
+        // Running it again changes nothing.
+        store.forget_session_locations().unwrap();
+        assert_eq!(store.messages("session").unwrap(), messages);
     }
 
     #[test]

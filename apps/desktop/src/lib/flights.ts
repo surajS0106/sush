@@ -17,14 +17,14 @@ export const CABINS: Record<Cabin, string> = {
   first: "First",
 };
 
-const MAX_PASSENGERS = 9;
+export const MAX_PASSENGERS = 9;
 
 export const flightsTool: ToolSpec = {
   name: FLIGHTS_SEARCH,
   description:
     "Show the user a flight card in the chat, to find and book a flight. Use it whenever they want to fly somewhere, " +
     "compare flights or book a ticket. You need where from, where to and the date: if you don't know one, ask; don't " +
-    "guess. Neither you nor the app can buy a ticket or hold a seat: the user books on the seller's site from the card, " +
+    "guess. Ask for dates with ask_user's date-range type if you have it (question 'When are you traveling?', startLabel Depart, endLabel Return, noEndLabel One way, withEndLabel Round trip, unit nights), and don't ask separately for the return date, trip type, passengers or class: that card asks for them all, and its answer's `travel` holds the adults, children and cabin to call this with. If the user already said any of those, set them on the question. Neither you nor the app can buy a ticket or hold a seat: the user books on the seller's site from the card, " +
     "so never say a flight is booked. The result may hold `fares`, which are on the card. If it doesn't, you have no " +
     "prices or schedules, so don't state any as fact. Don't link to the card's sites; it has its own links.",
   inputSchema: {
@@ -76,6 +76,8 @@ export interface FlightsOutput {
   fares?: Fare[];
   /** How many fares were found, of which `fares` is the best few. */
   total?: number;
+  /** For the card alone: the model never gets this field (`CARD_ONLY` in `agent/ui.rs`). */
+  cardOnly?: { moreFares: Fare[] };
   /** When the fares were fetched, in ms: they go stale in a saved chat. */
   fetchedAt?: number;
   /** Why there are no fares, when a search with a key failed. */
@@ -168,7 +170,7 @@ export async function runFlightsSearch(input: unknown): Promise<{ output: Flight
   };
   // Each runs on its own, and the card's links still work if both fail.
   const fares = api
-    .flightsSearch({ origin, destination, departureDate, returnDate: returnDate ?? null, adults, children, cabin, maxStops: maxStops ?? null, market })
+    .flightsSearch({ origin, destination, departureDate, returnDate: returnDate ?? null, adults, children, cabin, maxStops: maxStops ?? null, market, wide: true })
     .then(
       (results) => ({ results, error: undefined }),
       (e: unknown) => ({ results: null, error: errorMessage(e) }),
@@ -185,11 +187,13 @@ export async function runFlightsSearch(input: unknown): Promise<{ output: Flight
       ...withWeather,
       fares: results.fares,
       total: results.total,
+      cardOnly: { moreFares: results.more },
       fetchedAt: Date.now(),
       note:
         (results.fares.length > 0
-          ? "The fares are on the card, so don't repeat them all. The user books with its Book buttons, on the seller's " +
-            "site, and can turn on a price alert there; you can't. Prices can change until then."
+          ? "The fares are on the card, so don't repeat them all. It also lists other airlines' fares you don't get, so " +
+            "don't say these are the only airlines. The user books with its Book buttons, on the seller's site, can " +
+            "turn on a price alert there and can change the currency and temperature unit; you can't. Prices can change until then."
           : "Ignav found no fares for this trip. Suggest other dates or airports. The card links to Google Flights and Kayak.") + weatherNote,
     },
   };

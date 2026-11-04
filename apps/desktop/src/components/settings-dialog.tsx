@@ -59,6 +59,7 @@ import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars"
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import type { ProviderView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
+import { setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib/weather";
 
 interface NavItem {
   id: SettingsSection;
@@ -72,7 +73,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Settings",
     items: [
-      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation" },
+      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation units temperature celsius fahrenheit weather" },
       { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out delete account" },
       { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
@@ -295,7 +296,19 @@ function GeneralSection() {
           />
         </Setting>
       </Group>
+      <TemperatureGroup />
     </Page>
+  );
+}
+
+function TemperatureGroup() {
+  const unit = useTemperatureUnit();
+  return (
+    <Group title="Units">
+      <Setting title="Temperature" description="Used on weather and flight cards.">
+        <Segmented label="Temperature" value={unit} onChange={setTemperatureUnit} options={TEMPERATURE_UNITS} />
+      </Setting>
+    </Group>
   );
 }
 

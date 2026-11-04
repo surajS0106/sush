@@ -31,8 +31,9 @@ pub const MASK: &str = "[redacted]";
 /// where they are. A map counts because its start or end can be the host's saved
 /// address, which is ordinary text that nothing here could tell from any other place.
 /// A flight search counts because it gives away when and where they're travelling.
-const PRIVATE_TOOLS: [&str; 8] =
-    ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read", "location_get", "map_show", "flights_search"];
+/// A weather card counts because its place is usually where they are.
+const PRIVATE_TOOLS: [&str; 9] =
+    ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read", "location_get", "map_show", "flights_search", "weather_show"];
 
 /// Swiggy's Food and Instamart tools (`swiggy__…`, `instamart__…`, from the
 /// connector's name) hold the host's addresses, phone number, cart and orders.
@@ -178,6 +179,9 @@ mod tests {
         assert!(p["input"].get("origin").is_none());
         let streaming = json!({ "type": "dynamic-tool", "toolName": "map_show", "state": "input-streaming", "input": { "origin": "12 Ma" } });
         assert!(part(&streaming)["input"].get("origin").is_none());
+        let p = part(&tool("weather_show", json!({ "place": "13.03,80.21" }), json!({ "place": "Chennai" })));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("place").is_none());
     }
 
     #[test]
