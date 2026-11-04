@@ -733,7 +733,8 @@ impl LandMethod {
     }
 }
 
-/// The tree merging `theirs` into `ours` makes, written without touching the folder (git 2.38+).
+/// The tree merging `theirs` into `ours` makes, written without touching the folder
+/// (git 2.38+; a `merge_base`, which a rebase's replay passes, needs git 2.40+).
 fn merged_tree(root: &Path, ours: &str, theirs: &str, merge_base: Option<&str>, base: &str) -> Result<String, String> {
     let at = merge_base.map(|b| format!("--merge-base={b}"));
     let mut args = vec!["merge-tree", "--write-tree", "--no-messages"];
@@ -743,6 +744,9 @@ fn merged_tree(root: &Path, ours: &str, theirs: &str, merge_base: Option<&str>, 
     match out.code {
         0 => Ok(out.stdout.lines().next().unwrap_or_default().trim().to_string()),
         1 => Err(format!("This branch conflicts with {base}. Merge {base} into it first (git_merge) and resolve the conflicts, then land it.")),
+        _ if merge_base.is_some() && out.stderr.contains("unknown option") => {
+            Err("Landing with a rebase needs git 2.40 or later. Update git, or land with a merge commit or a squash.".into())
+        }
         _ => Err(if out.stderr.is_empty() { "git merge-tree failed (needs git 2.38 or later).".into() } else { out.stderr }),
     }
 }
