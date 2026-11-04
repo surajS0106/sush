@@ -177,6 +177,7 @@ pub fn run() {
             connectors::connector_connect,
             connectors::connector_disconnect,
             connectors::connector_forget,
+            connectors::swiggy_order_preview,
             connector_auth::connector_authorize,
             connector_auth::connector_cancel_authorize,
             connector_auth::connector_save_secrets,

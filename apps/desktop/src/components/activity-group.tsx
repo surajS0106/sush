@@ -10,6 +10,7 @@ import { Children, useState } from "react";
 import { toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
 import { SLIDES_WRITE } from "@/lib/slides";
+import { hasSwiggyCard } from "@/lib/swiggy";
 import type { SushUIMessage } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +19,8 @@ type Part = SushUIMessage["parts"][number];
 /** Settled calls whose results are a line, not a card the user acts on. */
 function groupableTool(p: Part): p is DynamicToolUIPart {
   if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE) return false;
+  // Restaurants, a cart or an order stay in view; a failed call can collapse.
+  if (hasSwiggyCard(p.toolName) && p.state === "output-available") return false;
   const kind = toolKind(p.toolName);
   // A generated image, a map or a flight card stays in view; a failed one can collapse.
   if ((kind === "image" || kind === "map" || kind === "flights") && p.state === "output-available") return false;

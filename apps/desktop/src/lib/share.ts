@@ -16,6 +16,7 @@ import { toast } from "sonner";
 
 import { setToolRunning } from "@/lib/agent";
 import { AUTH_URL, getAuthToken } from "@/lib/auth";
+import { placesOrder } from "@/lib/connector-catalog";
 import { forgetThreads, onShareFrames, seedThread, sessionRunConfig } from "@/lib/sessions";
 import { createStore, threadMeta } from "@/lib/store";
 import {
@@ -78,6 +79,8 @@ function approvalClass(name: string, input: Record<string, unknown>): ApprovalCl
   if (name === "fs_read") return typeof input.path === "string" && looksSecret(input.path.replace(/\\/g, "/")) ? "secret-read" : "read";
   if (name === "browser_navigate") return "browser";
   if (name === "ask_user") return "ask-user";
+  const connectorTool = name.split("__").slice(1).join("__");
+  if (connectorTool && placesOrder(connectorTool)) return "owner-only";
   if (name.includes("__")) return "connector";
   return "owner-only";
 }

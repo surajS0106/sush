@@ -41,6 +41,7 @@ import {
   CATALOG,
   CATEGORIES,
   catalogEntry,
+  brandLogo,
   connectorIcon,
   normalizeHost,
   setupUrl,
@@ -67,18 +68,21 @@ import { cn } from "@/lib/utils";
 
 // --- logo ----------------------------------------------------------------------------
 
-/** A brand logo on a neutral tile, or the name's initial when there's no logo. */
+/** A full-colour logo as it comes, or a brand logo on a neutral tile, or the name's initial when there's no logo. */
 function ConnectorLogo({
+  brand,
   src,
   color,
   name,
   className,
 }: {
+  brand?: string;
   src?: string;
   color?: string;
   name: string;
   className?: string;
 }) {
+  if (brand) return <img src={brand} alt="" className={cn("size-10 shrink-0 rounded-[20%] object-cover", className)} />;
   return (
     <span
       aria-hidden
@@ -283,7 +287,7 @@ function RemoteEditor({
     >
       {entry ? (
         <div className="flex items-center gap-3">
-          <ConnectorLogo src={connectorIcon(entry)} color={entry.color} name={entry.name} />
+          <ConnectorLogo brand={brandLogo(entry)} src={connectorIcon(entry)} color={entry.color} name={entry.name} />
           <div className="min-w-0">
             <p className="text-sm font-medium">{entry.name}</p>
             <p className="text-sm text-muted-foreground">{entry.description}</p>
@@ -534,7 +538,7 @@ function ConnectorRow({ c, status, onEdit }: { c: Connector; status?: ConnectorS
   const { src, color } = logoFor(c);
   return (
     <div className="flex items-center gap-3 px-6 py-3">
-      <ConnectorLogo src={src} color={color} name={c.name} className="size-9" />
+      <ConnectorLogo brand={brandLogo(c)} src={src} color={color} name={c.name} className="size-9" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{c.name}</span>
@@ -609,7 +613,7 @@ function ConnectorRow({ c, status, onEdit }: { c: Connector; status?: ConnectorS
 function CatalogCard({ entry, added, onAdd }: { entry: CatalogEntry; added: boolean; onAdd: () => void }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border bg-card p-3">
-      <ConnectorLogo src={connectorIcon(entry)} color={entry.color} name={entry.name} />
+      <ConnectorLogo brand={brandLogo(entry)} src={connectorIcon(entry)} color={entry.color} name={entry.name} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium">{entry.name}</p>
         <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>

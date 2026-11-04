@@ -5,7 +5,7 @@ description: Add a built-in tool the chat model can call (like memory_write, cha
 
 # Add a built-in model tool
 
-Built-in tools run in the **UI**, not in Rust. The run lives in Rust (`runs.rs`); for a UI-owned tool (`exec: client`) it sends a `client-tool` frame to the leader window, `sessions.ts` calls `runTool`, and the result goes back with `tool_result`. A tool that waits for the user instead holds the run as `awaiting` until its card answers through `respond` (`sessions.ts`). Connector tools (`<connector>__<tool>`) are generated from MCP servers, so you never add them by hand.
+Built-in tools run in the **UI**, not in Rust. The run lives in Rust (`runs.rs`); for a UI-owned tool (`exec: client`) it sends a `client-tool` frame to the leader window, `sessions.ts` calls `runTool`, and the result goes back with `tool_result`. A tool that waits for the user instead holds the run as `awaiting` until its card answers through `respond` (`sessions.ts`). Connector tools (`<connector>__<tool>`) are generated from MCP servers, so you never add them by hand; to give one a card or a confirm step, see the `swiggy` skill.
 
 All dispatch lives in `apps/desktop/src/lib/agent.ts`. Follow how the existing tools are built.
 

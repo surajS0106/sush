@@ -4,6 +4,8 @@
 // browser to sign in. Servers that live on the user's own host (Databricks)
 // have a `setup`: the editor asks for the host and which server, and builds the URL.
 
+import instamartLogo from "@/assets/brands/instamart-square.jpg";
+import swiggyLogo from "@/assets/brands/swiggy-square.jpg";
 import type { Connector } from "@/lib/library";
 
 export type CatalogAuth =
@@ -21,7 +23,7 @@ export interface CatalogEntry {
   publisher: string;
   url: string;
   auth: CatalogAuth;
-  category: "Productivity" | "Developer tools" | "Data & docs" | "Business";
+  category: "Productivity" | "Lifestyle" | "Developer tools" | "Data & docs" | "Business";
   /** Brand color for the logo; omitted where it's too dark or light for either theme. */
   color?: string;
   /** For `token` auth: where to create one, and what it needs. */
@@ -103,6 +105,12 @@ export function setupValues(setup: ConnectorSetup, url: string): SetupValues | n
   return null;
 }
 
+/** Logos shown as they are, in full colour: Swiggy's brand rules forbid recolouring them, which the icons below get as masks. */
+const BRAND_LOGOS: Record<string, string> = { swiggy: swiggyLogo, instamart: instamartLogo };
+
+/** The full-colour logo of a catalog entry or a connector, if it has one. */
+export const brandLogo = (item: { id?: string; catalogId?: string }): string | undefined => BRAND_LOGOS[item.catalogId ?? item.id ?? ""];
+
 const icons = import.meta.glob<string>("../assets/connectors/*.svg", {
   eager: true,
   query: "?url",
@@ -112,7 +120,32 @@ const ICONS: Record<string, string> = Object.fromEntries(
   Object.entries(icons).map(([path, url]) => [path.split("/").pop()!.replace(".svg", ""), url]),
 );
 
+/**
+ * Whether a connector tool, by its name on the server, places an order or spends the user's
+ * money. These always ask. Mirrors `sush_core::share::policy::places_order`.
+ */
+export const placesOrder = (tool: string) => /^(place|checkout|book|buy|purchase|pay|order)($|[_-])/i.test(tool);
+
 export const CATALOG: CatalogEntry[] = [
+  // Lifestyle
+  {
+    id: "swiggy",
+    name: "Swiggy",
+    description: "Order food with Swiggy: find restaurants, build a cart, place and track orders",
+    publisher: "Swiggy",
+    url: "https://mcp.swiggy.com/food",
+    auth: "oauth",
+    category: "Lifestyle",
+  },
+  {
+    id: "instamart",
+    name: "Instamart",
+    description: "Shop groceries with Instamart: find products, build a cart, place and track orders",
+    publisher: "Swiggy",
+    url: "https://mcp.swiggy.com/im",
+    auth: "oauth",
+    category: "Lifestyle",
+  },
   // Productivity
   {
     // Plinth, Sush's design app, on this computer: Plinth asks you before it lets Sush connect, and
@@ -573,7 +606,7 @@ export const CATALOG: CatalogEntry[] = [
   },
 ];
 
-export const CATEGORIES = ["Productivity", "Developer tools", "Data & docs", "Business"] as const;
+export const CATEGORIES = ["Productivity", "Lifestyle", "Developer tools", "Data & docs", "Business"] as const;
 
 export const catalogEntry = (id?: string) => CATALOG.find((e) => e.id === id);
 

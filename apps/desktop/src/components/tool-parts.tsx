@@ -47,6 +47,7 @@ import { LocationCard } from "@/components/location-card";
 import { MapCard } from "@/components/map-card";
 import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
+import { SwiggyCard, SwiggyOrderApproval } from "@/components/swiggy-card";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -62,7 +63,8 @@ import { parseAskUserInput, type AskUserOutput } from "@/lib/ask-user";
 import { parseAutomationSave } from "@/lib/automation-save";
 import { createAutomation, describeSchedule, formatWhen, nextRunOf } from "@/lib/automations";
 import { WatchingHost } from "@/lib/share";
-import { connectorIcon } from "@/lib/connector-catalog";
+import { brandLogo, connectorIcon, placesOrder } from "@/lib/connector-catalog";
+import { isSwiggyOrder, parseSwiggyCard, swiggyService } from "@/lib/swiggy";
 import type { FlightsOutput } from "@/lib/flights";
 import { parseCommits, parsePullRequest } from "@/lib/github";
 import { saveImage, type ImageInput, type ImageOutput } from "@/lib/images";
@@ -808,9 +810,11 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
     ? [found.connector.name, found.tool]
     : [part.toolName.split("__")[0], part.toolName.split("__").slice(1).join("__") || part.toolName];
   const icon = found ? connectorIcon(found.connector) : connectorIcon({ id: part.toolName.split("__")[0] });
+  const brand = brandLogo(found ? found.connector : { id: part.toolName.split("__")[0] });
   const label = (
     <>
-      <ConnectorIcon src={icon} />
+      {/* 24px and 8px from the text: the least Swiggy's brand guidelines allow. */}
+      {brand ? <img src={brand} alt="" className="mr-0.5 size-6 shrink-0 rounded-[20%] object-cover" /> : <ConnectorIcon src={icon} />}
       <span>
         {connectorName} · {toolName}
       </span>
@@ -821,11 +825,13 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
     case "input-streaming":
       return <LoadingState label={`Preparing ${toolName}`} />;
     case "output-available": {
-      const pr = parsePullRequest(part.output, part.input);
-      const commits = pr ? null : parseCommits(part.output, part.input);
+      const swiggy = parseSwiggyCard(part.toolName, part.output);
+      const pr = swiggy ? null : parsePullRequest(part.output, part.input);
+      const commits = pr || swiggy ? null : parseCommits(part.output, part.input);
       return (
         <div className="space-y-3">
           <ToolResultRow label={label} detail={String(part.output ?? "")} />
+          {swiggy && <SwiggyCard {...swiggy} />}
           {pr && <PullRequestCard pr={pr} />}
           {commits && <CommitsCard set={commits} />}
         </div>
@@ -852,13 +858,27 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
         return <LoadingState label={`Running ${toolName}`} />;
       }
       if (!canAnswer || (!found && !watching)) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
+      if (found && !watching && isSwiggyOrder(part.toolName)) {
+        return (
+          <SwiggyOrderApproval
+            connectorId={found.connector.id}
+            service={swiggyService(part.toolName)!}
+            input={part.input}
+            onDeny={() => onResult({ errorText: DENIED })}
+            onConfirm={() => {
+              setRunning(true);
+              onApprove();
+            }}
+          />
+        );
+      }
       return (
         <ToolApprovalCard
           connector={connectorName}
           tool={toolName}
           description={found?.spec.description.replace(/^\[[^\]]*\] /, "")}
           input={part.input}
-          allowAlways={!watching && !!found}
+          allowAlways={!watching && !!found && !placesOrder(found.tool)}
           onDeny={() => onResult({ errorText: DENIED })}
           onAllow={(always) => {
             if (always && found) allowTool(found.connector.id, found.tool);

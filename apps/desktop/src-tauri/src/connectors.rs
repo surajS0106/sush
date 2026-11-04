@@ -113,6 +113,34 @@ pub(crate) async fn call(state: &AppState, id: String, tool: String, arguments: 
     }
 }
 
+/// What Swiggy itself says an order would be, for the card that confirms it.
+#[derive(Serialize)]
+pub struct SwiggyOrderPreview {
+    cart: String,
+    addresses: String,
+}
+
+/// Read the live cart and saved addresses for the confirm card, so it shows
+/// Swiggy's figures rather than the model's. Only these reads: the webview
+/// doesn't get to call connector tools itself. `instamart` picks its cart tool
+/// over Food's.
+#[tauri::command]
+pub async fn swiggy_order_preview(state: State<'_, AppState>, id: String, address_id: String, instamart: bool) -> AppResult<SwiggyOrderPreview> {
+    let read = |tool: &str, arguments: Value| {
+        let (state, id, tool) = (&*state, id.clone(), tool.to_string());
+        async move {
+            let out = call(state, id, tool, arguments, None).await?;
+            if out.is_error {
+                return Err(AppError::Invalid(if out.text.is_empty() { "Swiggy couldn't read this order.".into() } else { out.text }));
+            }
+            Ok::<String, AppError>(out.text)
+        }
+    };
+    let cart = if instamart { read("get_cart", serde_json::json!({})) } else { read("get_food_cart", serde_json::json!({ "addressId": address_id })) };
+    let (cart, addresses) = tokio::try_join!(cart, read("get_addresses", serde_json::json!({ "pageSize": 10 })))?;
+    Ok(SwiggyOrderPreview { cart, addresses })
+}
+
 #[tauri::command]
 pub async fn connector_disconnect(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.connectors.lock().await.remove(&id);

@@ -1047,6 +1047,9 @@ export const api = {
     return invoke<void>("connector_authorize", { id, url, clientId: clientId || null, assertion: assertion || null, onCode: channel });
   },
   connectorCancelAuthorize: (id: string) => invoke<void>("connector_cancel_authorize", { id }),
+  /** The live cart and saved addresses, as Swiggy's own tool output, for the card that confirms an order. */
+  swiggyOrderPreview: (id: string, addressId: string, instamart: boolean) =>
+    invoke<{ cart: string; addresses: string }>("swiggy_order_preview", { id, addressId, instamart }),
   /** `undefined` keeps a stored value, `""` clears it. */
   connectorSaveSecrets: (id: string, url: string, secrets: { token?: string; clientSecret?: string }) =>
     invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),

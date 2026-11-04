@@ -64,6 +64,15 @@ pub enum ApprovalClass {
     OwnerOnly,
 }
 
+/// Whether a connector tool, by its name on the server, places an order or
+/// spends the user's money (`place_food_order`, `checkout`, `book_table`). These
+/// always ask the owner: no standing permission covers them, and no one else
+/// answers for them. `placesOrder` in `connector-catalog.ts` mirrors this.
+pub fn places_order(tool: &str) -> bool {
+    let verb = tool.split(['_', '-']).next().unwrap_or_default().to_ascii_lowercase();
+    matches!(verb.as_str(), "place" | "checkout" | "book" | "buy" | "purchase" | "pay" | "order")
+}
+
 /// What kind of approval a call needs. `contained`: the host's sandbox is
 /// available and blocks the network.
 pub fn classify(name: &str, input: &Value, contained: bool) -> ApprovalClass {
@@ -77,6 +86,7 @@ pub fn classify(name: &str, input: &Value, contained: bool) -> ApprovalClass {
         crate::browser::BROWSER_NAVIGATE => ApprovalClass::Browser,
         "ask_user" => ApprovalClass::AskUser,
         _ if ws::is_workspace_tool(name) || crate::browser::is_browser_tool(name) => ApprovalClass::Read,
+        _ if name.split_once("__").is_some_and(|(_, tool)| places_order(tool)) => ApprovalClass::OwnerOnly,
         _ if name.contains("__") => ApprovalClass::Connector,
         _ => ApprovalClass::OwnerOnly,
     }
@@ -646,5 +656,17 @@ mod tests {
         assert_eq!(c("location_get", json!({}), true), ApprovalClass::OwnerOnly);
         assert!(floored(ApprovalClass::Edit) && floored(ApprovalClass::Connector) && floored(ApprovalClass::Browser));
         assert!(!floored(ApprovalClass::Read) && !floored(ApprovalClass::AskUser));
+    }
+
+    #[test]
+    fn orders_are_only_the_owners_to_approve() {
+        let c = |name: &str| classify(name, &json!({}), true);
+        assert_eq!(c("swiggy__place_food_order"), ApprovalClass::OwnerOnly);
+        assert_eq!(c("instamart__checkout"), ApprovalClass::OwnerOnly);
+        assert_eq!(c("dineout__book_table"), ApprovalClass::OwnerOnly);
+        assert_eq!(c("swiggy__get_food_orders"), ApprovalClass::Connector);
+        assert_eq!(c("swiggy__track_food_order"), ApprovalClass::Connector);
+        assert_eq!(c("swiggy__update_food_cart"), ApprovalClass::Connector);
+        assert!(!may_answer(Role::Driver, c("swiggy__place_food_order"), &Delegation { connectors: true, ..Delegation::default() }));
     }
 }

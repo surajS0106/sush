@@ -25,6 +25,8 @@ import { useSyncExternalStore } from "react";
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
+import { placesOrder } from "@/lib/connector-catalog";
+import { ORDER_TOOL, swiggyService } from "@/lib/swiggy";
 import { FLIGHTS_SEARCH, flightsTool, runFlightsSearch } from "@/lib/flights";
 import { IMAGE_GENERATE, imagesEnabled, IMAGES_OFF, imageTool, runImageGenerate } from "@/lib/images";
 import { activeConnectors, activeDesignSystem, isToolAllowed, library, type Connector } from "@/lib/library";
@@ -118,6 +120,25 @@ export interface ConnectorTool {
   annotations?: McpTool["annotations"];
 }
 
+/** What the model should know about a tool that changes the user's Swiggy cart or spends their money. */
+function toolNote(connector: Connector, tool: string) {
+  const service = swiggyService(connectorToolPrefix(connector));
+  if (service === "instamart" && tool === "update_cart") {
+    return " This replaces the whole cart on the user's Swiggy account, the same cart they see in the Swiggy app, where changes show after a refresh. It may hold items they added there. Call get_cart first and send every item to keep along with the new ones. Ask the user before removing anything they didn't ask to remove.";
+  }
+  if (service === "food" && tool === "update_food_cart") {
+    return " This is the cart on the user's Swiggy account, so items they added in the Swiggy app are in it too. It holds one restaurant: changing restaurant replaces everything in it. Call get_food_cart first, and if it holds items from another restaurant, ask the user before replacing them. Items added here may not show in the Swiggy app, even after reopening it, though items added in the app do show here. Don't tell the user to look for them in the app. If asked, say this plainly, don't offer other explanations, and don't suggest placing the order as a fix.";
+  }
+  if (!placesOrder(tool)) return "";
+  const retry =
+    " This places a real order. The app asks the user to confirm it before it runs. After a server error, check the user's recent orders before trying again, because the order may have gone through.";
+  if (!service || tool !== ORDER_TOOL[service]) return retry;
+  const upi = `For UPI, this is a desktop app: use scan-QR, don't draw a QR code or repeat the link, tell the user to pay from the card, then poll check_payment_status and call confirm_order. Don't say the order is placed until confirm_order succeeds.`;
+  const confirmed = `${retry} The confirmation shows the live cart, address and payment method, so don't ask again once the user has settled on the order. ${upi}`;
+  if (service === "food") return confirmed;
+  return `${confirmed} Always pass paymentMethod with the method the user chose, or the order can't be confirmed. Never set confirmDuplicate to retry a failed or timed-out checkout, because that can charge the user twice: set it only when a rejection tells you to and the user has said they want another order. A cart across stores becomes one order per store, so report each one's result.`;
+}
+
 /** Tools of every active connector that's connected. */
 export function connectorTools(): ConnectorTool[] {
   const status = library.connectorStatus();
@@ -133,7 +154,7 @@ export function connectorTools(): ConnectorTool[] {
         annotations: t.annotations,
         spec: {
           name,
-          description: `[${connector.name}] ${t.description ?? t.name}`,
+          description: `[${connector.name}] ${t.description ?? t.name}${toolNote(connector, t.name)}`,
           inputSchema: t.inputSchema ?? { type: "object" },
         },
       };
@@ -308,6 +329,7 @@ const RISKY = /(^|_|-)(delete|remove|destroy|drop|purge|erase|wipe|revoke|reset|
  * doesn't say it's harmless and its name sounds risky.
  */
 export function looksUnsafe(t: ConnectorTool): boolean {
+  if (placesOrder(t.tool)) return true;
   const a = t.annotations ?? {};
   if (a.readOnlyHint === true) return false;
   if (a.destructiveHint === true) return true;
@@ -320,6 +342,8 @@ export function runsWithoutApproval(name: string): boolean {
   if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
+  // An old "Always allow" never covers spending money.
+  if (placesOrder(t.tool)) return false;
   if (isToolAllowed(t.connector.id, t.tool)) return true;
   return library.prefs().permissionMode === "auto" && !looksUnsafe(t);
 }

@@ -458,6 +458,10 @@ impl RunHost for Host {
     }
 
     fn approval(&self, call: &ToolCall, tool: &RunTool) -> Approval {
+        // Spending the user's money always asks, whatever the UI's config says.
+        if matches!(&tool.exec, ToolExec::Connector { tool: name, .. } if share_policy::places_order(name)) {
+            return Approval::Ask;
+        }
         let approval = match (&tool.exec, &self.live.cowork) {
             (ToolExec::Workspace, Some(cowork)) => {
                 let command = (call.name == ws_tools::SHELL_RUN).then(|| call.input.get("command").and_then(Value::as_str)).flatten();

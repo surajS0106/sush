@@ -4,7 +4,7 @@
 //! each part where it is (only its content changes), so later ops that name a
 //! part by index still land on the right one.
 //!
-//! - Private tools (memory, past chats, location, maps, flights): their input and output are replaced.
+//! - Private tools (memory, past chats, location, maps, flights, food delivery): their input and output are replaced.
 //! - `fs_read` of a secret-looking file: its output is replaced.
 //! - `fs_search`: matches in secret-looking files are dropped.
 //! - Every tool's text output and error: well-known credential formats and
@@ -33,6 +33,12 @@ pub const MASK: &str = "[redacted]";
 /// A flight search counts because it gives away when and where they're travelling.
 const PRIVATE_TOOLS: [&str; 8] =
     ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read", "location_get", "map_show", "flights_search"];
+
+/// Swiggy's Food and Instamart tools (`swiggy__…`, `instamart__…`, from the
+/// connector's name) hold the host's addresses, phone number, cart and orders.
+fn is_delivery_tool(name: &str) -> bool {
+    (name.starts_with("swiggy") || name.starts_with("instamart")) && name.contains("__")
+}
 
 pub fn op(op: &Op) -> Op {
     match op {
@@ -64,7 +70,7 @@ pub fn part(part: &Value) -> Value {
     }
     let mut out = part.clone();
     let name = part.get("toolName").and_then(Value::as_str).unwrap_or_default();
-    if PRIVATE_TOOLS.contains(&name) {
+    if PRIVATE_TOOLS.contains(&name) || is_delivery_tool(name) {
         out["input"] = json!({ "title": PRIVATE, "query": PRIVATE });
         if out.get("output").is_some() {
             out["output"] = json!(PRIVATE);
@@ -180,6 +186,19 @@ mod tests {
         let p = part(&tool("flights_search", input, json!({ "origin": "BLR", "destination": "DEL" })));
         assert_eq!(p["output"], PRIVATE);
         assert!(p["input"].get("origin").is_none());
+    }
+
+    #[test]
+    fn the_hosts_food_orders_are_hidden() {
+        let output = json!({ "success": true, "data": { "addresses": [{ "addressLine": "12 Main Road", "phoneNumber": "98xxxxxx" }] } });
+        let p = part(&tool("swiggy__get_addresses", json!({}), output));
+        assert_eq!(p["output"], PRIVATE);
+        let p = part(&tool("swiggy__place_food_order", json!({ "addressId": "a1", "noteToRestaurant": "no onions" }), json!("ok")));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("addressId").is_none());
+        let p = part(&tool("instamart__checkout", json!({ "addressId": "a1" }), json!({ "deliveryAddress": "12 Main Road" })));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("addressId").is_none());
     }
 
     #[test]
