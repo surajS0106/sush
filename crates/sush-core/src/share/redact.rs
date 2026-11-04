@@ -4,7 +4,7 @@
 //! each part where it is (only its content changes), so later ops that name a
 //! part by index still land on the right one.
 //!
-//! - Private tools (memory, past chats): their input and output are replaced.
+//! - Private tools (memory, past chats, location, maps, flights): their input and output are replaced.
 //! - `fs_read` of a secret-looking file: its output is replaced.
 //! - `fs_search`: matches in secret-looking files are dropped.
 //! - Every tool's text output and error: well-known credential formats and
@@ -27,8 +27,12 @@ pub const SECRET_FILE: &str = "[hidden from guests: secret file]";
 pub const PRIVATE: &str = "[private to the host]";
 pub const MASK: &str = "[redacted]";
 
-/// Tools whose calls hold the host's own data: memory and other conversations.
-const PRIVATE_TOOLS: [&str; 5] = ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read"];
+/// Tools whose calls hold the host's own data: memory, other conversations and
+/// where they are. A map counts because its start or end can be the host's saved
+/// address, which is ordinary text that nothing here could tell from any other place.
+/// A flight search counts because it gives away when and where they're travelling.
+const PRIVATE_TOOLS: [&str; 8] =
+    ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read", "location_get", "map_show", "flights_search"];
 
 pub fn op(op: &Op) -> Op {
     match op {
@@ -155,6 +159,27 @@ mod tests {
         assert_eq!(p["output"], PRIVATE);
         let p = part(&tool("chat_read", json!({ "id": "x" }), json!("the other chat")));
         assert_eq!(p["output"], PRIVATE);
+    }
+
+    #[test]
+    fn the_hosts_position_is_hidden() {
+        let p = part(&tool("location_get", json!({}), json!({ "place": "12 Main Road, Chennai" })));
+        assert_eq!(p["output"], PRIVATE);
+        let input = json!({ "origin": "12 Main Road, Chennai", "destination": "Adyar, Chennai" });
+        let output = json!({ "origin": "12 Main Road, Chennai", "destination": "Adyar, Chennai", "mode": "driving" });
+        let p = part(&tool("map_show", input, output));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("origin").is_none());
+        let streaming = json!({ "type": "dynamic-tool", "toolName": "map_show", "state": "input-streaming", "input": { "origin": "12 Ma" } });
+        assert!(part(&streaming)["input"].get("origin").is_none());
+    }
+
+    #[test]
+    fn the_hosts_travel_plans_are_hidden() {
+        let input = json!({ "origin": "BLR", "destination": "DEL", "departureDate": "2026-12-20" });
+        let p = part(&tool("flights_search", input, json!({ "origin": "BLR", "destination": "DEL" })));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("origin").is_none());
     }
 
     #[test]

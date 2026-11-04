@@ -10,9 +10,11 @@ import {
   ImageIcon,
   KeyRoundIcon,
   LogOutIcon,
+  MapIcon,
   MicIcon,
   PaletteIcon,
   PencilIcon,
+  PlaneIcon,
   PlugIcon,
   ScrollTextIcon,
   SearchIcon,
@@ -28,7 +30,9 @@ import { toast } from "sonner";
 
 import { ConnectorsSection } from "@/components/connectors-section";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
+import { FlightsSection } from "@/components/flights-section";
 import { ImagesSection } from "@/components/images-section";
+import { MapsSection } from "@/components/maps-section";
 import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
 import { SharingSection } from "@/components/sharing-section";
@@ -75,6 +79,8 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
       { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
+      { id: "maps", label: "Maps", icon: MapIcon, keywords: "google directions route location address home api key travel" },
+      { id: "flights", label: "Flights", icon: PlaneIcon, keywords: "flight fares booking airline ticket ignav api key travel" },
       { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
       { id: "sharing", label: "Sharing", icon: UsersIcon, keywords: "share live multiplayer relay invite watch team guests lan" },
       { id: "design", label: "Design systems", icon: PaletteIcon, keywords: "brand style guidelines" },
@@ -194,6 +200,8 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "usage" && <UsageSection providers={providers} />}
           {state?.section === "speech" && <SpeechSection providers={providers} />}
           {state?.section === "images" && <ImagesSection providers={providers} />}
+          {state?.section === "maps" && <MapsSection />}
+          {state?.section === "flights" && <FlightsSection />}
           {state?.section === "memory" && <MemorySection />}
           {state?.section === "sharing" && <SharingSection />}
           {state?.section === "design" && <DesignSection />}

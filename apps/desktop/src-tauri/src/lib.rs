@@ -7,10 +7,12 @@ mod connectors;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
+mod flights;
 mod images;
 mod library;
 #[cfg(unix)]
 mod login_env;
+mod maps;
 mod paths;
 mod reports;
 mod runs;
@@ -180,6 +182,17 @@ pub fn run() {
             connector_auth::connector_save_secrets,
             speech::transcribe,
             images::image_generate,
+            maps::maps_key_status,
+            maps::maps_key_set,
+            maps::maps_key_delete,
+            maps::maps_details,
+            flights::flights_key_status,
+            flights::flights_key_set,
+            flights::flights_key_delete,
+            flights::flights_search,
+            flights::flights_booking_links,
+            flights::flights_weather,
+            flights::flights_locate,
             whisper::whisper_model_status,
             whisper::whisper_model_download,
             whisper::transcribe_local,

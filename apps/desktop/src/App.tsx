@@ -38,6 +38,7 @@ import {
 import { useShare } from "@/lib/share";
 import { errorMessage, type ShareView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
+import { startPriceAlerts } from "@/lib/price-alerts";
 import { whenLeader } from "@/lib/windows";
 import { addWorkspace, getWorkspaces } from "@/lib/workspaces";
 
@@ -175,6 +176,7 @@ export default function App() {
   useEffect(() => {
     void syncConnectors();
     whenLeader(startScheduler);
+    whenLeader(startPriceAlerts);
   }, []);
 
   // Alert as usage crosses the budget's thresholds.

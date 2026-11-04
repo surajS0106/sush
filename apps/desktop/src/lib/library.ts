@@ -342,6 +342,8 @@ export type SettingsSection =
   | "usage"
   | "speech"
   | "images"
+  | "maps"
+  | "flights"
   | "memory"
   | "sharing"
   | "design"

@@ -19,8 +19,8 @@ type Part = SushUIMessage["parts"][number];
 function groupableTool(p: Part): p is DynamicToolUIPart {
   if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE) return false;
   const kind = toolKind(p.toolName);
-  // A generated image stays in view; a failed one can collapse.
-  if (kind === "image" && p.state === "output-available") return false;
+  // A generated image, a map or a flight card stays in view; a failed one can collapse.
+  if ((kind === "image" || kind === "map" || kind === "flights") && p.state === "output-available") return false;
   return kind !== "ask-user" && kind !== "agent" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
 }
 

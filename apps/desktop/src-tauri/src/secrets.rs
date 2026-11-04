@@ -157,6 +157,36 @@ pub fn share_link_delete(share_id: &str) -> AppResult<()> {
     remove(&share_link_name(share_id))
 }
 
+/// The user's own Google Maps Platform key (`maps.rs`).
+const MAPS_KEY: &str = "maps:key";
+
+pub fn maps_key_get() -> AppResult<Option<String>> {
+    read(MAPS_KEY)
+}
+
+pub fn maps_key_set(value: &str) -> AppResult<()> {
+    write(MAPS_KEY, value)
+}
+
+pub fn maps_key_delete() -> AppResult<()> {
+    remove(MAPS_KEY)
+}
+
+/// The user's own Ignav key (`flights.rs`).
+const FLIGHTS_KEY: &str = "flights:key";
+
+pub fn flights_key_get() -> AppResult<Option<String>> {
+    read(FLIGHTS_KEY)
+}
+
+pub fn flights_key_set(value: &str) -> AppResult<()> {
+    write(FLIGHTS_KEY, value)
+}
+
+pub fn flights_key_delete() -> AppResult<()> {
+    remove(FLIGHTS_KEY)
+}
+
 // Connector credentials can outgrow one Windows credential (2560 bytes,
 // stored as UTF-16), so they're split into parts; the first entry holds the
 // part count.

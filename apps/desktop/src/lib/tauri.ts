@@ -784,6 +784,90 @@ export interface GeneratedImage {
   revisedPrompt: string | null;
 }
 
+export type TravelMode = "driving" | "walking" | "bicycling" | "transit";
+
+/** What the Google Maps key adds to a map card (`sush_core::maps`). */
+export interface MapDetails {
+  route: { duration: string | null; distance: string | null } | null;
+  place: {
+    name: string | null;
+    address: string | null;
+    kind: string | null;
+    rating: number | null;
+    ratingCount: number | null;
+    openNow: boolean | null;
+  } | null;
+  error: string | null;
+}
+
+export type Cabin = "economy" | "premium-economy" | "business" | "first";
+
+/** A search for flight fares (`sush_core::flights`). */
+export interface FlightSearch {
+  origin: string;
+  destination: string;
+  departureDate: string;
+  returnDate: string | null;
+  adults: number;
+  children: number;
+  cabin: Cabin;
+  maxStops: number | null;
+  market: string;
+}
+
+export interface FlightLeg {
+  carrier: string | null;
+  durationMinutes: number | null;
+  stops: number;
+  from: string;
+  to: string;
+  departsAt: string;
+  arrivesAt: string;
+  flights: string[];
+}
+
+export interface Fare {
+  id: string;
+  amount: number;
+  currency: string;
+  outbound: FlightLeg;
+  inbound: FlightLeg | null;
+}
+
+export interface FlightResults {
+  fares: Fare[];
+  total: number;
+  observedAt: string | null;
+}
+
+export interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+/** A day's weather at a flight's destination (`sush_core::weather`). */
+export interface DayWeather {
+  place: string;
+  date: string;
+  code: number;
+  condition: string;
+  highC: number;
+  lowC: number;
+  /** The same date last year's figures, not a forecast. */
+  lastYear: boolean;
+}
+
+export interface BookingLink {
+  provider: string;
+  isAirline: boolean;
+  exact: boolean;
+  fareName: string | null;
+  amount: number | null;
+  currency: string | null;
+  url: string;
+  legs: string[];
+}
+
 export const api = {
   listPresets: () => invoke<ProviderConfig[]>("list_presets"),
   listProviders: () => invoke<ProviderView[]>("list_providers"),
@@ -970,6 +1054,21 @@ export const api = {
     invoke<string>("transcribe", { providerId, model, api, audioBase64Wav }),
   imageGenerate: (providerId: string, model: string, api: ImageApi, prompt: string, aspect: ImageAspect | null) =>
     invoke<GeneratedImage>("image_generate", { providerId, model, api, prompt, aspect }),
+  mapsKeyStatus: () => invoke<boolean>("maps_key_status"),
+  /** Saves the key and tries it; returns what's wrong with it, if anything. */
+  mapsKeySet: (key: string) => invoke<string[]>("maps_key_set", { key }),
+  mapsKeyDelete: () => invoke<void>("maps_key_delete"),
+  mapsDetails: (origin: string | null, destination: string, mode: TravelMode) =>
+    invoke<MapDetails | null>("maps_details", { origin, destination, mode }),
+  flightsKeyStatus: () => invoke<boolean>("flights_key_status"),
+  /** Saves the key and tries it; returns what's wrong with it, if anything. */
+  flightsKeySet: (key: string) => invoke<string | null>("flights_key_set", { key }),
+  flightsKeyDelete: () => invoke<void>("flights_key_delete"),
+  /** Null without a key. */
+  flightsSearch: (search: FlightSearch) => invoke<FlightResults | null>("flights_search", { search }),
+  flightsBookingLinks: (fareId: string) => invoke<BookingLink[]>("flights_booking_links", { fareId }),
+  flightsWeather: (city: string, date: string) => invoke<DayWeather | null>("flights_weather", { city, date }),
+  flightsLocate: (city: string) => invoke<GeoPoint | null>("flights_locate", { city }),
   whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),

@@ -15,8 +15,11 @@ import {
   GlobeIcon,
   ImageIcon,
   KeyboardIcon,
+  LocateFixedIcon,
+  MapIcon,
   MessagesSquareIcon,
   MousePointerClickIcon,
+  PlaneIcon,
   PlugIcon,
   ScrollTextIcon,
   SearchIcon,
@@ -39,6 +42,9 @@ import {
   ToolResultRow,
   WorkspaceApprovalCard,
 } from "@/components/tool-approval-card";
+import { FlightCard, FlightSearching } from "@/components/flight-card";
+import { LocationCard } from "@/components/location-card";
+import { MapCard } from "@/components/map-card";
 import { CommitsCard } from "@/components/ui/CommitCard";
 import { LoadingState } from "@/components/ui/loading-state";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
@@ -57,9 +63,12 @@ import { parseAutomationSave } from "@/lib/automation-save";
 import { createAutomation, describeSchedule, formatWhen, nextRunOf } from "@/lib/automations";
 import { WatchingHost } from "@/lib/share";
 import { connectorIcon } from "@/lib/connector-catalog";
+import type { FlightsOutput } from "@/lib/flights";
 import { parseCommits, parsePullRequest } from "@/lib/github";
 import { saveImage, type ImageInput, type ImageOutput } from "@/lib/images";
 import { allowTool } from "@/lib/library";
+import type { LocationOutput } from "@/lib/location";
+import type { MapOutput } from "@/lib/maps";
 import { applySkillSave, parseSkillSave, skillToReplace, slugify } from "@/lib/skills";
 import { getConversations } from "@/lib/store";
 import { errorMessage, type SandboxStatus } from "@/lib/tauri";
@@ -81,7 +90,7 @@ interface ToolPartProps {
 export type ToolAnswer = NonNullable<SushMetadata["sushAnswers"]>[string];
 
 /** Calls that wait for whoever runs the session (an approval, an answer). */
-const ASKS = new Set(["ask-user", "skill-save", "automation-save", "workspace", "browser", "connector"]);
+const ASKS = new Set(["ask-user", "skill-save", "automation-save", "location", "workspace", "browser", "connector"]);
 
 const ANSWERED = { approve: "Approved", deny: "Denied", answer: "Answered" } as const;
 
@@ -132,6 +141,12 @@ function ToolCard(props: ToolPartProps) {
       return <BrowserPart {...props} />;
     case "image":
       return <ImagePart part={props.part} />;
+    case "map":
+      return <MapPart part={props.part} />;
+    case "flights":
+      return <FlightsPart part={props.part} />;
+    case "location":
+      return <LocationPart {...props} />;
     case "agent":
       // Shown with the rest of its step's sub-agents (`components/subagents.tsx`).
       return null;
@@ -227,6 +242,105 @@ function ImagePart({ part }: { part: DynamicToolUIPart }) {
       </figcaption>
     </figure>
   );
+}
+
+// --- maps --------------------------------------------------------------------------
+
+function MapPart({ part }: { part: DynamicToolUIPart }) {
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    return (
+      <div className="flex w-full max-w-3xl flex-col gap-2">
+        <Skeleton className="aspect-[16/10] w-full rounded-xl" />
+        <LoadingState label="Finding the route" />
+      </div>
+    );
+  }
+  if (part.state === "output-error") {
+    return (
+      <ToolResultRow
+        error
+        detail={part.errorText}
+        label={
+          <>
+            <MapIcon className="size-4 shrink-0" />
+            <span className="line-clamp-1 text-left">Couldn't show the map</span>
+          </>
+        }
+      />
+    );
+  }
+  // A guest gets a placeholder: a map can show the host's address (`share/redact.rs`).
+  if (typeof part.output !== "object" || part.output === null) {
+    return (
+      <ToolResultRow
+        label={
+          <>
+            <MapIcon className="size-4 shrink-0" />
+            <span className="line-clamp-1 text-left">Map hidden: private to the host</span>
+          </>
+        }
+      />
+    );
+  }
+  return <MapCard map={part.output as MapOutput} />;
+}
+
+// --- flights -----------------------------------------------------------------------
+
+function FlightsPart({ part }: { part: DynamicToolUIPart }) {
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    // The input arrives in pieces, so a code shows only once it's whole.
+    const { origin, destination } = (part.input ?? {}) as { origin?: unknown; destination?: unknown };
+    const known = (code: unknown) => (typeof code === "string" && code.trim().length === 3 ? code.trim().toUpperCase() : undefined);
+    return <FlightSearching origin={known(origin)} destination={known(destination)} />;
+  }
+  const row = (text: string, detail?: string, error?: boolean) => (
+    <ToolResultRow
+      error={error}
+      detail={detail}
+      label={
+        <>
+          <PlaneIcon className="size-4 shrink-0" />
+          <span className="line-clamp-1 text-left">{text}</span>
+        </>
+      }
+    />
+  );
+  if (part.state === "output-error") return row("Couldn't look for flights", part.errorText, true);
+  // A guest gets a placeholder: a search gives away the host's travel plans (`share/redact.rs`).
+  if (typeof part.output !== "object" || part.output === null) return row("Flights hidden: private to the host");
+  return <FlightCard trip={part.output as FlightsOutput} />;
+}
+
+// --- location ----------------------------------------------------------------------
+
+const LOCATION_DECLINED = "The user didn't share their location. Ask them to name a place instead.";
+
+function LocationPart({ part, canAnswer, onResult }: ToolPartProps) {
+  const row = (text: string, detail?: string) => (
+    <ToolResultRow
+      detail={detail}
+      label={
+        <>
+          <LocateFixedIcon className="size-4 shrink-0" />
+          <span className="line-clamp-1 text-left">{text}</span>
+        </>
+      }
+    />
+  );
+  switch (part.state) {
+    case "input-streaming":
+      return <LoadingState label="Asking for your location" />;
+    case "output-available": {
+      const shared = part.output as Partial<LocationOutput>;
+      return row(shared.source === "saved" ? "Shared saved address" : "Shared location", shared.place);
+    }
+    case "output-error":
+      return row("Location not shared");
+    default:
+      if (!canAnswer) return row("Location not shared");
+      return <LocationCard onShare={(output) => onResult({ output })} onDecline={() => onResult({ errorText: LOCATION_DECLINED })} />;
+  }
 }
 
 // --- memory -----------------------------------------------------------------------

@@ -6,5 +6,10 @@
 	     ignores it and keeps using CFBundleIconFile (icon.icns). -->
 	<key>CFBundleIconName</key>
 	<string>AppIcon</string>
+	<!-- Asked for when a chat's `location_get` is approved in its card. -->
+	<key>NSLocationUsageDescription</key>
+	<string>Sush uses your location when you choose to share it with a chat, such as for directions.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sush uses your location when you choose to share it with a chat, such as for directions.</string>
 </dict>
 </plist>

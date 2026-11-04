@@ -6,7 +6,9 @@ pub mod agent;
 pub mod browser;
 pub mod clis;
 pub mod error;
+pub mod flights;
 pub mod imagegen;
+pub mod maps;
 pub mod mcp;
 pub mod memory;
 pub mod message;
@@ -17,6 +19,7 @@ pub mod share;
 pub mod sse;
 pub mod store;
 pub mod transcribe;
+pub mod weather;
 pub mod workspace;
 
 pub use error::ProviderError;

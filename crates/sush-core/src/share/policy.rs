@@ -643,6 +643,7 @@ mod tests {
         assert_eq!(c("github__create_issue", json!({}), true), ApprovalClass::Connector);
         assert_eq!(c("ask_user", json!({}), true), ApprovalClass::AskUser);
         assert_eq!(c("skill_save", json!({}), true), ApprovalClass::OwnerOnly);
+        assert_eq!(c("location_get", json!({}), true), ApprovalClass::OwnerOnly);
         assert!(floored(ApprovalClass::Edit) && floored(ApprovalClass::Connector) && floored(ApprovalClass::Browser));
         assert!(!floored(ApprovalClass::Read) && !floored(ApprovalClass::AskUser));
     }

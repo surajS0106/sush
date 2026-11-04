@@ -281,11 +281,13 @@ mod tests {
     #[test]
     fn a_sealed_body_opens_only_where_it_belongs() {
         let key = ShareKey::generate(1);
-        let body = seal(&key, "s1", Direction::ToGuests, r#"{"v":1,"type":"op"}"#);
+        // A long marker: a short one turns up in the random base64 by chance.
+        let plain = r#"{"v":1,"type":"op","text":"readableplaintext"}"#;
+        let body = seal(&key, "s1", Direction::ToGuests, plain);
         assert!(is_sealed(&body));
-        assert!(!body.contains("op"), "the relay can't read it");
+        assert!(!body.contains("readableplaintext"), "the relay can't read it");
         let keys = |g: u32| (g == 1).then_some(key.key);
-        assert_eq!(open(keys, "s1", Direction::ToGuests, &body).unwrap(), r#"{"v":1,"type":"op"}"#);
+        assert_eq!(open(keys, "s1", Direction::ToGuests, &body).unwrap(), plain);
         // Another share, the other direction, or a changed byte: refused.
         assert!(open(keys, "s2", Direction::ToGuests, &body).is_err());
         assert!(open(keys, "s1", Direction::ToHost, &body).is_err());
