@@ -28,7 +28,7 @@ export interface ModelInfo {
 
 export type CorePart =
   | { type: "text"; text: string }
-  | { type: "reasoning"; text: string }
+  | { type: "reasoning"; text: string; item?: unknown }
   | { type: "image"; mediaType: string; data: string }
   | { type: "document"; mediaType: string; data: string; name?: string | null }
   | { type: "tool-call"; id: string; name: string; input: unknown }
@@ -54,13 +54,18 @@ export interface ChatRequest {
   tools?: ToolSpec[];
   /** Provider-run web search and fetch (Anthropic only). */
   research?: boolean;
+  thinking?: boolean | null;
+  effort?: Effort | null;
 }
+
+export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
 export type FinishReason = "stop" | "length" | "tool-calls" | "content-filter" | "other";
 
 export type ChatEvent =
   | { type: "text-delta"; delta: string }
   | { type: "reasoning-delta"; delta: string }
+  | { type: "reasoning-item"; item: unknown }
   | { type: "tool-call-delta"; index: number; id?: string | null; name?: string | null; argsDelta: string }
   | { type: "usage"; inputTokens?: number | null; outputTokens?: number | null }
   | { type: "server-tool-call"; id: string; name: string; input: unknown }
@@ -764,6 +769,9 @@ export interface RunConfig {
   system: string | null;
   tools: RunTool[];
   research: boolean;
+  /** Left out keeps the model's default, as does `effort`. */
+  thinking?: boolean;
+  effort?: Effort;
   /** Text sent to the model in place of a user message's first text, by message id. */
   expansions: Record<string, string>;
   /** Shell commands the button that started this run already approved; exactly these run without asking. */
@@ -895,6 +903,29 @@ export interface ForecastHour {
 export type Phase = "day" | "night" | "dawn" | "dusk";
 
 /** The weather right now in a place (`sush_core::weather`). */
+export interface TopicImage {
+  thumb: string;
+  full: string;
+  caption: string | null;
+  /** The file's page, with its credit and licence. */
+  page: string;
+}
+
+export interface TopicReference {
+  title: string;
+  url: string;
+  publisher: string | null;
+}
+
+export interface Topic {
+  title: string;
+  description: string | null;
+  extract: string;
+  url: string;
+  images: TopicImage[];
+  references: TopicReference[];
+}
+
 export interface LocalWeather {
   /** The place found for a name; coordinates have none. */
   place: string | null;
@@ -1142,6 +1173,8 @@ export const api = {
   flightsWeather: (city: string, date: string) => invoke<DayWeather | null>("flights_weather", { city, date }),
   /** A place's name or `latitude,longitude`. Null when it can't be found. */
   weatherNow: (place: string) => invoke<LocalWeather | null>("weather_now", { place }),
+  /** Null when no article matches. */
+  topicLookup: (query: string) => invoke<Topic | null>("topic_lookup", { query }),
   flightsLocate: (city: string) => invoke<GeoPoint | null>("flights_locate", { city }),
   flightsRates: () => invoke<ExchangeRates>("flights_rates"),
   /** macOS only; other platforms read the position through the webview (`lib/location.ts`). */

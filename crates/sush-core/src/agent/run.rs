@@ -105,6 +105,10 @@ pub struct RunConfig {
     pub tools: Vec<RunTool>,
     #[serde(default)]
     pub research: bool,
+    #[serde(default)]
+    pub thinking: Option<bool>,
+    #[serde(default)]
+    pub effort: Option<crate::Effort>,
     /// Text sent to the model in place of a user message's first text, by message id.
     #[serde(default)]
     pub expansions: HashMap<String, String>,
@@ -492,6 +496,8 @@ impl Runner<'_> {
             temperature: None,
             tools: self.config.tools.iter().map(|t| t.spec.clone()).collect(),
             research: self.config.research,
+            thinking: self.config.thinking,
+            effort: self.config.effort,
         };
         // Steps after tool calls continue the same assistant message, like the AI SDK does.
         let metadata = json!({ "providerId": self.config.provider_id, "model": self.config.model });

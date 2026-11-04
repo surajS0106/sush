@@ -19,7 +19,13 @@ pub enum Role {
 #[serde(tag = "type", rename_all = "kebab-case", rename_all_fields = "camelCase")]
 pub enum Part {
     Text { text: String },
-    Reasoning { text: String },
+    Reasoning {
+        text: String,
+        /// The provider's own record of this reasoning, sent back as it came so the
+        /// model can carry on from it across tool calls (OpenAI Responses).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<Value>,
+    },
     /// Base64-encoded image data.
     Image { media_type: String, data: String },
     /// Base64-encoded document the model reads natively (PDF).
@@ -71,6 +77,24 @@ pub struct ChatRequest {
     /// tools. Only Anthropic offers these; other formats ignore the flag.
     #[serde(default)]
     pub research: bool,
+    /// Turn the model's thinking on or off. None keeps its default.
+    #[serde(default)]
+    pub thinking: Option<bool>,
+    /// How hard the model works. None keeps its default. The UI only offers what
+    /// the model accepts (`lib/reasoning.ts`).
+    #[serde(default)]
+    pub effort: Option<Effort>,
+}
+
+/// The levels both wire formats share. "Off" is `thinking: false`, not a level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Effort {
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
 }
 
 /// A tool definition: name, what it's for, and a JSON Schema for its input.
@@ -105,6 +129,9 @@ pub struct WebSource {
 pub enum ChatEvent {
     TextDelta { delta: String },
     ReasoningDelta { delta: String },
+    /// A finished reasoning record to send back later. Not shown: its summary, if
+    /// any, came as `ReasoningDelta`s.
+    ReasoningItem { item: Value },
     /// Incremental tool call. `id`/`name` arrive on the first delta for an index.
     ToolCallDelta { index: u32, id: Option<String>, name: Option<String>, args_delta: String },
     Usage { input_tokens: Option<u64>, output_tokens: Option<u64> },

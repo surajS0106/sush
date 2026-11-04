@@ -6,6 +6,7 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use super::openai_responses as responses;
 use crate::provider::{check_status, decode_response, Decoder, Endpoint, EventStream, ModelInfo, Provider};
 use crate::sse::SseEvent;
 use crate::{ChatEvent, ChatRequest, FinishReason, Message, Part, ProviderError, Role};
@@ -21,15 +22,53 @@ impl OpenAiProvider {
     pub(crate) fn new(endpoint: Endpoint, http: reqwest::Client) -> Self {
         Self { endpoint, http }
     }
+
+    async fn post(&self, path: &str, body: &Value) -> Result<reqwest::Response, reqwest::Error> {
+        let rb = self.http.post(self.endpoint.url(path)).json(body);
+        self.endpoint.apply(rb).send().await
+    }
+
+    async fn stream_responses(&self, req: &ChatRequest) -> Result<EventStream, ProviderError> {
+        let mut body = responses::request_body(req);
+        let resp = match check_status(NAME, self.post("responses", &body).await?).await {
+            Err(ProviderError::Http { status, message, .. }) if responses::rejects_summary(status, &message) => {
+                responses::drop_summary(&mut body);
+                check_status(NAME, self.post("responses", &body).await?).await?
+            }
+            other => other?,
+        };
+        Ok(decode_response(resp, responses::ResponsesDecoder::default()))
+    }
+}
+
+/// Some OpenAI models reason by default yet refuse function tools on Chat
+/// Completions unless `reasoning_effort` is `none`, even when the request never
+/// set it. Not every host accepts the field, so it's only sent when asked for.
+fn asks_for_no_reasoning(status: u16, message: &str) -> bool {
+    status == 400 && message.contains("reasoning_effort") && message.contains("'none'")
 }
 
 #[async_trait]
 impl Provider for OpenAiProvider {
     async fn stream_chat(&self, req: ChatRequest) -> Result<EventStream, ProviderError> {
-        let body = request_body(&req);
-        let rb = self.http.post(self.endpoint.url("chat/completions")).json(&body);
-        let resp = self.endpoint.apply(rb).send().await?;
-        let resp = check_status(NAME, resp).await?;
+        if responses::uses_responses(&req.model) {
+            match self.stream_responses(&req).await {
+                // A compatible host serving one of these ids may only have Chat Completions.
+                Err(ProviderError::Http { status: 404, .. }) => {}
+                other => return other,
+            }
+        }
+        let mut body = request_body(&req);
+        let resp = match check_status(NAME, self.post("chat/completions", &body).await?).await {
+            // Only when the user left it to the model: a level they picked isn't quietly dropped.
+            Err(ProviderError::Http { status, message, .. })
+                if body.get("reasoning_effort").is_none() && asks_for_no_reasoning(status, &message) =>
+            {
+                body["reasoning_effort"] = json!("none");
+                check_status(NAME, self.post("chat/completions", &body).await?).await?
+            }
+            other => other?,
+        };
         Ok(decode_response(resp, OpenAiDecoder::default()))
     }
 
@@ -71,6 +110,12 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
     }
     if let Some(n) = req.max_tokens {
         body["max_tokens"] = json!(n);
+    }
+    // One field covers both settings here: thinking off is the `none` level.
+    if req.thinking == Some(false) {
+        body["reasoning_effort"] = json!("none");
+    } else if let Some(effort) = req.effort {
+        body["reasoning_effort"] = json!(effort);
     }
     if !req.tools.is_empty() {
         let tools: Vec<Value> = req
@@ -306,6 +351,8 @@ data: [DONE]
                 input_schema: json!({"type": "object"}),
             }],
             research: false,
+            thinking: None,
+            effort: None,
             messages: vec![
                 Message::text(Role::User, "hi"),
                 Message {
@@ -341,6 +388,34 @@ data: [DONE]
     }
 
     #[test]
+    fn request_body_sends_thinking_and_effort_as_reasoning_effort() {
+        let req = |thinking, effort| ChatRequest {
+            model: "gpt-x".into(),
+            messages: vec![Message::text(Role::User, "hi")],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![],
+            research: false,
+            thinking,
+            effort,
+        };
+        assert!(request_body(&req(None, None)).get("reasoning_effort").is_none());
+        assert!(request_body(&req(Some(true), None)).get("reasoning_effort").is_none());
+        assert_eq!(request_body(&req(None, Some(crate::Effort::Xhigh)))["reasoning_effort"], "xhigh");
+        assert_eq!(request_body(&req(Some(false), Some(crate::Effort::High)))["reasoning_effort"], "none");
+    }
+
+    #[test]
+    fn retries_without_reasoning_only_when_asked() {
+        let asked = "Function tools with reasoning_effort are not supported for gpt-5.6-sol in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.";
+        assert!(asks_for_no_reasoning(400, asked));
+        assert!(!asks_for_no_reasoning(500, asked));
+        assert!(!asks_for_no_reasoning(400, "Unsupported value for reasoning_effort: use 'low' or 'high'."));
+        assert!(!asks_for_no_reasoning(400, "Invalid model: none"));
+    }
+
+    #[test]
     fn request_body_omits_tools_when_none_offered() {
         let req = ChatRequest {
             model: "gpt-x".into(),
@@ -350,6 +425,8 @@ data: [DONE]
             temperature: None,
             tools: vec![],
             research: false,
+            thinking: None,
+            effort: None,
         };
         assert!(request_body(&req).get("tools").is_none());
     }

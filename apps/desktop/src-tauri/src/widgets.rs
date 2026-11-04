@@ -139,6 +139,6 @@ mod tests {
     fn script_goes_first_in_the_head_and_output_cant_close_it() {
         assert_eq!(with_script("<html><HEAD lang=\"en\"><title>a</title>", "S"), "<html><HEAD lang=\"en\">S<title>a</title>");
         assert_eq!(with_script("<div>a</div>", "S"), "S<div>a</div>");
-        assert_eq!(script_json(&json!({ "a": "</script>" })), r#"{"a":"</script>"}"#);
+        assert_eq!(script_json(&json!({ "a": "</script>" })), r#"{"a":"\u003c/script>"}"#);
     }
 }

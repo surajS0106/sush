@@ -51,6 +51,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ResizeHandle } from "@/components/ui/resize-handle";
+import { TopicPhotos } from "@/components/topic-card";
 import { SourcesProvider } from "@/components/ui/Sources";
 import { Suggestion } from "@/components/ui/Suggestion";
 import { Textarea } from "@/components/ui/textarea";
@@ -60,7 +61,8 @@ import { BRANCH_STATUS, type ToolResult } from "@/lib/agent";
 import { setAppearance } from "@/lib/appearance";
 import { ARTIFACT_WRITE, artifactViews, type ArtifactView } from "@/lib/artifacts";
 import { useSession } from "@/lib/auth";
-import { citedSources, stripCitations } from "@/lib/citations";
+import { citedSources, splitPhotos, stripCitations } from "@/lib/citations";
+import { autoPlacedPhotos, placedPhotos } from "@/lib/topic";
 import { usePrefs } from "@/lib/library";
 import { modelLogo, providerLogo } from "@/lib/logos";
 import { mentionSegments } from "@/lib/mentions";
@@ -78,6 +80,7 @@ import {
   sendMessage,
   sendQueued,
   sessionTarget,
+  setProviderFormats,
   setSessionResearch,
   setSessionTarget,
   stop,
@@ -144,6 +147,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // Research uses Anthropic's server-side web tools, so only Claude providers get it.
   const researchAvailable = catalog.find((c) => c.provider.id === target?.providerId)?.provider.format === "anthropic-messages";
   setSessionResearch(id, prefs.research && researchAvailable);
+  setProviderFormats(catalog.map((c) => c.provider));
 
   // `streaming` also covers tools running between model steps.
   const busy = runStatus === "submitted" || runStatus === "streaming";
@@ -840,6 +844,8 @@ const ChatMessage = memo(function ChatMessage({
   // Stable while the cited pages stay the same, so streamed text doesn't re-create the renderers.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const markdownComponents = useMemo(() => citationComponents(sources), [sourceKey]);
+  // Photos for a reply whose model didn't place any, once its text has settled.
+  const autoPlaced = useMemo(() => (message.role === "assistant" && !streaming ? autoPlacedPhotos(message.parts) : null), [message, streaming]);
   // Failed or aborted turns can leave an assistant message with no content.
   if (!hasVisibleContent(message)) return null;
   // A background sub-agent's report, sent to the model as a user message.
@@ -884,6 +890,22 @@ const ChatMessage = memo(function ChatMessage({
           </Reasoning>
         );
       case "text":
+        // Photos the model placed between its sections split the text around them.
+        if (message.role === "assistant" && (part.text.includes("[") || autoPlaced?.has(i))) {
+          return splitPhotos(autoPlaced?.get(i) ?? part.text, streaming).map((segment, n) => {
+            if ("text" in segment) {
+              return (
+                <MessageContent key={`${key}-${n}`}>
+                  <MessageResponse className="transcript-prose" isAnimating={streaming} components={markdownComponents}>
+                    {segment.text}
+                  </MessageResponse>
+                </MessageContent>
+              );
+            }
+            const placed = placedPhotos(message.parts, i, segment.photos);
+            return placed && <TopicPhotos key={`${key}-${n}`} images={placed.images} title={placed.title} />;
+          });
+        }
         return (
           <MessageContent key={key}>
             {message.role === "assistant" ? (

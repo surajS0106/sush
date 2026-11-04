@@ -18,6 +18,7 @@ import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { MENTION_MENU_ID, MentionMenu, useMentionMenu } from "@/components/mention-menu";
 import { PermissionModePicker } from "@/components/permission-mode-picker";
+import { ReasoningPicker } from "@/components/reasoning-picker";
 import { hasHighlight, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } from "@/components/slash-menu";
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
@@ -268,6 +269,7 @@ export function Composer({
               <div className="composer-pill [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
                 <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
               </div>
+              <ReasoningPicker catalog={catalog} target={target} />
               <span aria-hidden className="mx-0.5 h-4 w-px bg-foreground/10 dark:bg-white/10" />
               <Tooltip>
                 <TooltipTrigger asChild>

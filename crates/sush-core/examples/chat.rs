@@ -38,6 +38,8 @@ async fn main() -> anyhow::Result<()> {
         temperature: None,
         tools: vec![],
         research: false,
+        thinking: None,
+        effort: None,
     };
     let mut stream = provider.stream_chat(req).await?;
     while let Some(ev) = stream.next().await {

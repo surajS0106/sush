@@ -12,7 +12,32 @@ const CITE_RE = /\s?\[cite\]\((\S+?)(?: "([^"]*)")?\)/g;
 export const isCitationText = (text: unknown) => text === CITE_TEXT;
 
 /** Text without its citation markers, for copying and for sending back to the model. */
-export const stripCitations = (text: string) => text.replace(CITE_RE, "");
+export const stripCitations = (text: string) => text.replace(CITE_RE, "").replace(PHOTOS_RE, "");
+
+/** A piece of assistant text, or the `topic_lookup` photos the model placed there by number. */
+export type TextSegment = { text: string } | { photos: number[] };
+
+// The model writes `[photos](4,5)` between sections (`lib/topic.ts`).
+const PHOTOS_RE = /\n*\[photos\]\(([\d,\s]*)\)/g;
+// The start of a marker still arriving, held back so it never shows as text.
+const PARTIAL_PHOTOS_RE = /\n*\[(?:p(?:h(?:o(?:t(?:o(?:s(?:\](?:\([\d,\s]*)?)?)?)?)?)?)?)?$/;
+
+export function splitPhotos(text: string, streaming: boolean): TextSegment[] {
+  const whole = streaming ? text.replace(PARTIAL_PHOTOS_RE, "") : text;
+  const segments: TextSegment[] = [];
+  const pushText = (piece: string) => {
+    if (piece.trim()) segments.push({ text: piece });
+  };
+  let from = 0;
+  for (const m of whole.matchAll(PHOTOS_RE)) {
+    const start = m.index ?? 0;
+    pushText(whole.slice(from, start));
+    segments.push({ photos: m[1].split(",").map(Number).filter((n) => Number.isInteger(n) && n > 0) });
+    from = start + m[0].length;
+  }
+  pushText(whole.slice(from));
+  return segments;
+}
 
 export interface CitedSource {
   n: number;

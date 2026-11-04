@@ -20,8 +20,11 @@ Last updated: 2026-11-04
 - Answers keep the existing shape, so `check_answer` in `crates/sush-core/src/share/policy.rs` needs no change: `["2027-01-15", "2027-03-10"]`. The transcript's summary shows them as readable dates (`answerText` in `src/components/ask-user-card.tsx`).
 - The keyboard works in the calendar: arrow keys, Home and End for the week, Page Up and Page Down for the month, Enter to pick. Days are in `role="grid"` with full dates as labels.
 - Colors use `brand`, so the picker follows the user's accent.
+- `isDay` now returns `boolean` and is no longer a type guard (`src/lib/dates.ts`). Runtime behavior is unchanged.
 
 ## Why
+
+`isDay` declared `value is string`, so TypeScript read a `false` result on a string as "not a string" and narrowed it to `never`, which failed typecheck at each string caller (`parseOne`, `shortcutLabel`, `answerText`). A guard can't say "this string is a day" without a branded type, and no caller needs one: `parseAskUserInput` and `parseSuggestions` read model input as `any`, so they compile without narrowing. The trade-off is that the dates they accept stay `any` where the guard had made them `string`.
 
 The model asked for dates with radio buttons of months, which can't express a day, and then had to ask again. A date is a value with its own input, so the question type belongs in the tool and not in how the model words its options.
 

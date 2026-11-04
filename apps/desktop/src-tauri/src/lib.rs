@@ -23,6 +23,7 @@ mod speech;
 mod state;
 mod store;
 mod terminal;
+mod topic;
 mod weather;
 mod whisper;
 mod widgets;
@@ -203,6 +204,7 @@ pub fn run() {
             flights::flights_locate,
             flights::flights_rates,
             location::location_read,
+            topic::topic_lookup,
             weather::weather_now,
             whisper::whisper_model_status,
             whisper::whisper_model_download,

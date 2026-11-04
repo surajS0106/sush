@@ -2,23 +2,25 @@
 // in, then the camera follows the plane along the great circle, pulling back as far as
 // the route needs and pushing in on the destination, where it rests (hovering flies it
 // again). A flight with stops lands at each, so the leg-by-leg route is plain, and a
-// change of route flies the new one from the start. It's drawn on a canvas from maps in
+// change of route flies the new one from the start. The Earth is a satellite photo
+// (`lib/earth-imagery.ts`) with borders and the route drawn over it on a canvas, all from
 // the bundle, so it needs no network, and it's loaded with the card only when there's a
 // route to show (`flight-card.tsx`). The legs are great circles between the airports:
 // the plane shows the route, not a real flight's position or track.
 //
-// This all runs on the UI thread, so a moving camera only ever draws the simplest map:
-// that takes about 4 ms, where the detailed one takes over 25 ms. The detailed map is
-// painted once, after landing, while the camera is still, and fades in over the simple
-// one. Nothing runs off screen, at rest or with reduced motion.
+// This all runs on the UI thread, so a moving camera only ever draws the simplest borders.
+// The detailed ones are painted once, after landing, while the camera is still, and fade
+// in over the simple ones. If the photo can't be shown, the land is drawn from the same
+// maps. Nothing runs off screen, at rest or with reduced motion.
 
-import { geoCentroid, geoDistance, geoInterpolate, geoOrthographic, geoPath, type GeoPermissibleObjects, type GeoProjection } from "d3-geo";
+import { geoCentroid, geoDistance, geoInterpolate, geoOrthographic, geoPath, type GeoPath, type GeoPermissibleObjects, type GeoProjection } from "d3-geo";
 import { useInView, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { feature, mesh } from "topojson-client";
 import type { GeometryCollection, Topology } from "topojson-specification";
 import coarseAtlas from "world-atlas/countries-110m.json";
 
+import { acquireEarth, releaseEarth, type Earth } from "@/lib/earth-imagery";
 import type { GeoPoint } from "@/lib/tauri";
 import { useTemperatureUnit } from "@/lib/weather";
 
@@ -85,21 +87,35 @@ function rgbOf(color: string): Rgb {
   return [r, g, b];
 }
 
-/** The picture's colors, from the user's accent: the route in it, and the sea and land neutrals with a little of it. */
-function paletteOf(dark: boolean, accent: string) {
+/**
+ * The picture's colors: the route in the user's accent over the Earth as it looks from
+ * space, the same in both themes. A light edge keeps a dark accent readable on the night-dark sea.
+ */
+function paletteOf(accent: string) {
   const brand = rgbOf(accent);
   const css = ([r, g, b]: Rgb, alpha = 1) => `rgb(${r} ${g} ${b} / ${alpha})`;
-  const tinted = (level: number, amount = 0.12) => css(brand.map((c) => Math.round(level + (c - level) * amount)) as Rgb);
-  const shared = { route: css(brand), glow: css(brand, dark ? 0.35 : 0.3), clear: css(brand, 0) };
-  return dark
-    ? { ...shared, sea: tinted(27), land: tinted(60), border: tinted(80), limb: "rgb(10 12 14 / 0.5)", limbClear: "rgb(10 12 14 / 0)", ahead: "#aeb3b5", plane: "#ffffff", halo: "#16191a", text: "#f8fafa" }
-    : { ...shared, sea: tinted(234), land: tinted(251, 0.03), border: tinted(214), limb: "rgb(60 65 70 / 0.07)", limbClear: "rgb(60 65 70 / 0)", ahead: "#6b7072", plane: "#16191a", halo: "#ffffff", text: "#16191a" };
+  return {
+    route: css(brand),
+    glow: css(brand, 0.35),
+    edge: "rgb(255 255 255 / 0.9)",
+    // The drawn map, for when the photo can't be shown.
+    sea: "#0e2a4d",
+    land: "#44603f",
+    air: "rgb(92 153 255 / 0.5)",
+    airClear: "rgb(92 153 255 / 0)",
+    limb: "rgb(4 10 24 / 0.5)",
+    limbClear: "rgb(4 10 24 / 0)",
+    border: "rgb(255 255 255 / 0.3)",
+    ahead: "#e4eaec",
+    plane: "#ffffff",
+    halo: "#0c1014",
+    text: "#f8fafa",
+  };
 }
 type Colors = ReturnType<typeof paletteOf>;
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 const ease = (t: number) => (1 - Math.cos(Math.PI * clamp(t, 0, 1))) / 2;
-const isDark = () => document.documentElement.classList.contains("dark");
 const accentColor = () => getComputedStyle(document.documentElement).getPropertyValue("--brand").trim();
 
 export interface GlobeStop {
@@ -120,16 +136,28 @@ function projectionOf(width: number, height: number, center: [number, number], r
     .precision(0.4);
 }
 
-function paintMap(ctx: CanvasRenderingContext2D, projection: GeoProjection, map: WorldMap, colors: Colors, borders: boolean) {
+function paintBorders(ctx: CanvasRenderingContext2D, path: GeoPath<any, GeoPermissibleObjects>, map: WorldMap, colors: Colors) {
+  ctx.beginPath();
+  path(map.borders);
+  ctx.strokeStyle = colors.border;
+  ctx.lineWidth = 0.75;
+  ctx.stroke();
+}
+
+function paintMap(ctx: CanvasRenderingContext2D, projection: GeoProjection, map: WorldMap, colors: Colors, earth: Earth | null) {
   const path = geoPath(projection, ctx);
+  if (earth?.draw(ctx, projection)) {
+    paintBorders(ctx, path, map, colors);
+    return;
+  }
   const radius = projection.scale();
   const [centerX, centerY] = projection.translate();
   // A soft atmosphere outside the Earth and a darker edge inside it, while the edge shows.
   const edgeShows = radius < Math.hypot(centerX, centerY);
   if (edgeShows) {
     const air = ctx.createRadialGradient(centerX, centerY, radius * 0.96, centerX, centerY, radius * 1.1);
-    air.addColorStop(0, colors.glow);
-    air.addColorStop(1, colors.clear);
+    air.addColorStop(0, colors.air);
+    air.addColorStop(1, colors.airClear);
     ctx.fillStyle = air;
     ctx.fillRect(0, 0, centerX * 2, centerY * 2);
   }
@@ -141,12 +169,7 @@ function paintMap(ctx: CanvasRenderingContext2D, projection: GeoProjection, map:
   path(map.land);
   ctx.fillStyle = colors.land;
   ctx.fill();
-  if (!borders) return;
-  ctx.beginPath();
-  path(map.borders);
-  ctx.strokeStyle = colors.border;
-  ctx.lineWidth = 0.75;
-  ctx.stroke();
+  paintBorders(ctx, path, map, colors);
   if (!edgeShows) return;
   const edge = ctx.createRadialGradient(centerX, centerY, radius * 0.6, centerX, centerY, radius);
   edge.addColorStop(0, colors.limbClear);
@@ -302,7 +325,7 @@ function paintStop(ctx: CanvasRenderingContext2D, at: Point | null, name: string
   ctx.globalAlpha *= opacity;
   ctx.beginPath();
   ctx.arc(at.x, at.y, 4, 0, Math.PI * 2);
-  ctx.fillStyle = colors.halo;
+  ctx.fillStyle = colors.edge;
   ctx.fill();
   ctx.beginPath();
   ctx.arc(at.x, at.y, 2.5, 0, Math.PI * 2);
@@ -345,6 +368,7 @@ function paintFlight(ctx: CanvasRenderingContext2D, plan: Plan, moment: Moment, 
     if (leg < moment.leg || (flying && progress > 0)) {
       const flown = flying ? [...points.slice(0, index + 1), plane] : points;
       strokeRoute(ctx, flown, colors.glow, 6, []);
+      strokeRoute(ctx, flown, colors.edge, 3.5, []);
       strokeRoute(ctx, flown, colors.route, 2, []);
     }
   });
@@ -396,7 +420,7 @@ function paintRing(ctx: CanvasRenderingContext2D, spread: number, width: number,
   ctx.globalAlpha *= 1 - spread;
   ctx.beginPath();
   ctx.arc(width / 2, height / 2, 8 + spread * 32, 0, Math.PI * 2);
-  ctx.strokeStyle = colors.route;
+  ctx.strokeStyle = colors.edge;
   ctx.lineWidth = 2;
   ctx.stroke();
   ctx.restore();
@@ -412,9 +436,10 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
   const inView = useInView(canvas);
   const reduced = useReducedMotion() || document.documentElement.dataset.motion === "reduced";
   const [size, setSize] = useState({ width: 0, height: 0 });
-  const [dark, setDark] = useState(isDark);
   const [accent, setAccent] = useState(accentColor);
   const [detail, setDetail] = useState<WorldMap | null>(null);
+  // Undefined while the photo loads, null if it can't be shown.
+  const [earth, setEarth] = useState<Earth | null>();
   // Someone who reads Fahrenheit usually reads miles too.
   const imperial = useTemperatureUnit() === "f";
   // Where the animation is, so a resize or going off screen carries on from there.
@@ -435,13 +460,21 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
     return () => observer.disconnect();
   }, []);
 
-  // The map is only repainted when the theme or accent actually changes.
   useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setDark(isDark());
-      setAccent(accentColor());
+    let mounted = true;
+    void acquireEarth().then((loaded) => {
+      if (mounted) setEarth(loaded);
     });
-    // A custom accent's color is set in `style` (`lib/appearance.ts`).
+    return () => {
+      mounted = false;
+      releaseEarth();
+    };
+  }, []);
+
+  // The map is only repainted when the accent actually changes.
+  useEffect(() => {
+    const observer = new MutationObserver(() => setAccent(accentColor()));
+    // The accent differs by theme, and a custom one's color is set in `style` (`lib/appearance.ts`).
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-accent", "style"] });
     return () => observer.disconnect();
   }, []);
@@ -450,14 +483,15 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
     const element = canvas.current;
     const ctx = element?.getContext("2d");
     const { width, height } = size;
-    if (!element || !ctx || width === 0 || height === 0) return;
+    // Waiting for the photo keeps the first frames, and the flight, from starting without it.
+    if (!element || !ctx || width === 0 || height === 0 || earth === undefined) return;
 
     const scale = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
     element.width = Math.round(width * scale);
     element.height = Math.round(height * scale);
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
 
-    const colors = paletteOf(dark, accent);
+    const colors = paletteOf(accent);
     const plan = planFlight(height, stops);
     const projectionFor = (camera: Moment) => projectionOf(width, height, camera.center, camera.radius, camera.roll);
     const closeOverview = plan.overview.radius / plan.wholeGlobe >= DETAIL_FROM_ZOOM;
@@ -478,13 +512,13 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
       const intro = ease(t / INTRO_MS);
       const radius = plan.wholeGlobe * (firstCamera.radius / plan.wholeGlobe) ** intro;
       ctx.clearRect(0, 0, width, height);
-      paintMap(ctx, projectionOf(width, height, toStart(intro), radius), COARSE, colors, true);
+      paintMap(ctx, projectionOf(width, height, toStart(intro), radius), COARSE, colors, earth);
     };
     const paintMoving = (t: number) => {
       const moment = plan.momentAt(t);
       const projection = projectionFor(moment);
       ctx.clearRect(0, 0, width, height);
-      paintMap(ctx, projection, COARSE, colors, true);
+      paintMap(ctx, projection, COARSE, colors, earth);
       // The route and the cities come in as the camera sets off, not all at once.
       ctx.globalAlpha = clamp(t / 0.04, 0, 1);
       if (moment.stopping !== null) paintRing(ctx, moment.stopping, width, height, colors);
@@ -504,10 +538,10 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
         landedMap.height = element.height;
         const landedCtx = landedMap.getContext("2d");
         landedCtx?.setTransform(scale, 0, 0, scale, 0, 0);
-        if (landedCtx) paintMap(landedCtx, lastProjection, detail, colors, true);
+        if (landedCtx) paintMap(landedCtx, lastProjection, detail, colors, earth);
       }
       ctx.clearRect(0, 0, width, height);
-      if (!landedMap || sharpness < 1) paintMap(ctx, lastProjection, COARSE, colors, true);
+      if (!landedMap || sharpness < 1) paintMap(ctx, lastProjection, COARSE, colors, earth);
       if (landedMap) {
         ctx.globalAlpha = sharpness;
         ctx.drawImage(landedMap, 0, 0, width, height);
@@ -520,7 +554,7 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
     const paintStill = () => {
       const projection = projectionFor(plan.overview);
       ctx.clearRect(0, 0, width, height);
-      paintMap(ctx, projection, closeOverview && detail ? detail : COARSE, colors, true);
+      paintMap(ctx, projection, closeOverview && detail ? detail : COARSE, colors, earth);
       paintFlight(ctx, plan, plan.overview, projection, stops, width, height, colors);
       paintReadout(ctx, distance(plan.km), width, height, colors);
     };
@@ -632,7 +666,7 @@ export function FlightGlobe({ from, via = [], to }: { from: GlobeStop; via?: Glo
         landedMap.height = 0;
       }
     };
-  }, [size, dark, accent, detail, reduced, imperial, routeKey]);
+  }, [size, accent, detail, earth, reduced, imperial, routeKey]);
 
   // Scrolling past only pauses and resumes: it mustn't repaint the map.
   useEffect(() => setOnScreen.current(inView), [inView]);

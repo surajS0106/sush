@@ -23,8 +23,8 @@ function groupableTool(p: Part, supersededCart: boolean): p is DynamicToolUIPart
   // Restaurants, a cart or an order stay in view; a failed call can collapse, and so can a cart a later call replaced.
   if (hasSwiggyCard(p.toolName) && p.state === "output-available" && !supersededCart) return false;
   const kind = toolKind(p.toolName);
-  // A generated image, a map, a flight or weather card stays in view; a failed one can collapse.
-  if ((kind === "image" || kind === "map" || kind === "flights" || kind === "weather") && p.state === "output-available") return false;
+  // A generated image, a map, a flight, weather or topic card stays in view; a failed one can collapse.
+  if ((kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic") && p.state === "output-available") return false;
   return kind !== "ask-user" && kind !== "agent" && kind !== "skill-save" && kind !== "automation-save" && (p.state === "output-available" || p.state === "output-error");
 }
 

@@ -26,8 +26,10 @@ import { toast } from "sonner";
 
 import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
 import { budgetBlock } from "@/lib/budget";
+import { library } from "@/lib/library";
 import { expandMentions } from "@/lib/mentions";
 import { getProject } from "@/lib/projects";
+import { reasoningCaps, reasoningRequest } from "@/lib/reasoning";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
 import {
@@ -54,6 +56,7 @@ import {
   type ShareIntent,
   type ThreadOp,
   type ToolResponse,
+  type WireFormat,
 } from "@/lib/tauri";
 import type { ModelTarget, SushMetadata, SushUIMessage } from "@/lib/transport";
 import { notifyFilesChanged } from "@/lib/workspaces";
@@ -295,14 +298,27 @@ export function setSessionResearch(id: string, on: boolean) {
   research.set(id, on);
 }
 
+/** Each provider's wire format, which decides the thinking options a run can send. */
+const formats = new Map<string, WireFormat>();
+
+export function setProviderFormats(providers: { id: string; format: WireFormat }[]) {
+  for (const p of providers) formats.set(p.id, p.format);
+}
+
 /** Everything a request needs besides the messages; built fresh for every action. */
 function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   const target = sessionTarget(id);
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
+  // Worked out here, not at render: a retry can switch model and send in one go.
+  const prefs = library.prefs();
+  const reasoning = reasoningRequest(reasoningCaps(formats.get(target.providerId), target.model), {
+    thinking: prefs.thinking,
+    effort: prefs.reasoningEffort,
+  });
   // A report's run is held to reading: Rust gives it its own instructions and tools.
   const report = reportForThread(id);
   if (report) {
-    return { providerId: target.providerId, model: target.model, system: null, tools: reportRunTools(report, id), research: false, expansions: {} };
+    return { providerId: target.providerId, model: target.model, system: null, tools: reportRunTools(report, id), research: false, ...reasoning, expansions: {} };
   }
   const convo = getConversations().find((c) => c.id === id);
   const ctx = buildContext({
@@ -327,6 +343,7 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
     system: ctx.system ?? null,
     tools: runTools(ctx.tools),
     research: ctx.research,
+    ...reasoning,
     expansions,
     // What the button behind the latest message approved by being pressed.
     approved: messages.findLast((m) => m.role === "user")?.metadata?.instruction?.approves ?? [],

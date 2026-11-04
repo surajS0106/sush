@@ -66,9 +66,15 @@ export interface Prefs {
   research: boolean;
   designSystemId: string | null;
   permissionMode: PermissionMode;
+  /** The composer's thinking switch; null follows the model. `lib/reasoning.ts` fits it to each model. */
+  thinking: boolean | null;
+  /** The composer's effort level; null follows the model. */
+  reasoningEffort: import("@/lib/tauri").Effort | null;
 }
 
 const DEFAULT_PREFS: Prefs = {
+  thinking: null,
+  reasoningEffort: null,
   memory: true,
   referenceChats: true,
   memorySensitive: false,

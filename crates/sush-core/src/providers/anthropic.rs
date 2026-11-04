@@ -131,12 +131,11 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
     if let Some(t) = req.temperature {
         body["temperature"] = json!(t);
     }
-    // These models think on every request but stream empty thinking text
-    // unless asked for a summary. Requesting it changes visibility only, not
-    // how much they think. Older models are left alone: there, sending
-    // `thinking` would switch it on or be rejected.
-    if thinks_by_default(&req.model) {
-        body["thinking"] = json!({ "type": "adaptive", "display": "summarized" });
+    if let Some(thinking) = thinking_param(req) {
+        body["thinking"] = thinking;
+    }
+    if let Some(effort) = req.effort {
+        body["output_config"] = json!({ "effort": effort });
     }
     let mut tools: Vec<Value> = req
         .tools
@@ -178,6 +177,33 @@ fn claude_version(model: &str) -> Option<(&str, u32, u32)> {
 /// always think.
 fn thinks_by_default(model: &str) -> bool {
     claude_version(model).is_some_and(|(_, major, _)| major >= 5)
+}
+
+fn thinking_param(req: &ChatRequest) -> Option<Value> {
+    // Generation 5 streams empty thinking text unless asked for a summary, which
+    // changes visibility only, not how much it thinks.
+    let adaptive = json!({ "type": "adaptive", "display": "summarized" });
+    let version = claude_version(&req.model);
+    match req.thinking {
+        // With no choice made, older models are left alone: sending `thinking`
+        // would switch it on or be rejected.
+        None => thinks_by_default(&req.model).then_some(adaptive),
+        Some(true) => match version {
+            Some((_, major, minor)) if (major, minor) >= (4, 6) => Some(adaptive),
+            // Before adaptive thinking; the budget has to stay under DEFAULT_MAX_TOKENS.
+            Some(_) => Some(json!({ "type": "enabled", "budget_tokens": 4096 })),
+            None => None,
+        },
+        Some(false) => match version {
+            // These reject every way of saying off, so the UI doesn't offer it.
+            Some(("fable" | "mythos", _, _)) => None,
+            Some(("opus", major, minor)) if (major, minor) >= (5, 5) => None,
+            // `disabled` is rejected here; this keeps only progress notes between tools.
+            Some(("sonnet", major, minor)) if (major, minor) >= (5, 5) => Some(json!({ "type": "between_tools" })),
+            Some(_) => Some(json!({ "type": "disabled" })),
+            None => None,
+        },
+    }
 }
 
 /// Opus/Sonnet 4.6+ and Fable/Mythos support the dynamic-filtering web tools.
@@ -358,7 +384,7 @@ fn map_finish(reason: &str) -> FinishReason {
 mod tests {
     use super::*;
     use crate::providers::test_util::{decode_all, text};
-    use crate::{Message, ToolSpec};
+    use crate::{Effort, Message, ToolSpec};
 
     const BASIC: &str = r#"event: message_start
 data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-x","usage":{"input_tokens":12,"output_tokens":1}}}
@@ -450,6 +476,8 @@ data: {"type":"message_stop"}
                 input_schema: json!({"type": "object"}),
             }],
             research: false,
+            thinking: None,
+            effort: None,
             messages: vec![
                 Message::text(Role::System, "extra rules"),
                 Message::text(Role::User, "a"),
@@ -457,7 +485,7 @@ data: {"type":"message_stop"}
                 Message {
                     role: Role::Assistant,
                     parts: vec![
-                        Part::Reasoning { text: "dropped".into() },
+                        Part::Reasoning { text: "dropped".into(), item: None },
                         Part::ToolCall { id: "t1".into(), name: "ls".into(), input: json!({}) },
                         Part::ToolResult { call_id: "t1".into(), output: json!("ok"), is_error: false },
                     ],
@@ -496,6 +524,8 @@ data: {"type":"message_stop"}
             temperature: None,
             tools: vec![],
             research: false,
+            thinking: None,
+            effort: None,
         };
         assert_eq!(request_body(&req("claude-opus-5-5"))["thinking"], json!({"type": "adaptive", "display": "summarized"}));
         assert!(request_body(&req("claude-opus-4-8")).get("thinking").is_none());
@@ -512,6 +542,35 @@ data: {"type":"message_stop"}
         assert_eq!(d.on_event(ev("hmm")).unwrap(), vec![ChatEvent::ReasoningDelta { delta: "hmm".into() }]);
     }
     #[test]
+    fn thinking_and_effort_follow_each_model() {
+        let body = |model: &str, thinking, effort| {
+            request_body(&ChatRequest {
+                model: model.into(),
+                messages: vec![Message::text(Role::User, "hi")],
+                system: None,
+                max_tokens: None,
+                temperature: None,
+                tools: vec![],
+                research: false,
+                thinking,
+                effort,
+            })
+        };
+        let adaptive = json!({ "type": "adaptive", "display": "summarized" });
+        assert_eq!(body("claude-opus-4-8", Some(true), None)["thinking"], adaptive);
+        assert_eq!(body("claude-haiku-4-5", Some(true), None)["thinking"]["type"], "enabled");
+        assert_eq!(body("claude-opus-4-8", Some(false), None)["thinking"]["type"], "disabled");
+        assert_eq!(body("claude-opus-5", Some(false), None)["thinking"]["type"], "disabled");
+        assert_eq!(body("claude-sonnet-5-5", Some(false), None)["thinking"], json!({ "type": "between_tools" }));
+        // These can't turn it off, so the request keeps them on rather than failing.
+        assert!(body("claude-opus-5-5", Some(false), None).get("thinking").is_none());
+        assert!(body("claude-fable-5-1", Some(false), None).get("thinking").is_none());
+        assert!(body("my-deployment", Some(true), None).get("thinking").is_none());
+        assert_eq!(body("claude-opus-5-5", None, Some(Effort::Xhigh))["output_config"]["effort"], "xhigh");
+        assert!(body("claude-opus-5-5", None, None).get("output_config").is_none());
+    }
+
+    #[test]
     fn research_adds_web_tools_matching_the_model() {
         let req = |model: &str| ChatRequest {
             model: model.into(),
@@ -521,6 +580,8 @@ data: {"type":"message_stop"}
             temperature: None,
             tools: vec![],
             research: true,
+            thinking: None,
+            effort: None,
         };
         let types = |model: &str| -> Vec<String> {
             request_body(&req(model))["tools"]
@@ -553,6 +614,8 @@ data: {"type":"message_stop"}
             temperature: None,
             tools: vec![],
             research: false,
+            thinking: None,
+            effort: None,
         };
         let block = &request_body(&req)["messages"][0]["content"][0];
         assert_eq!(block["type"], "document");

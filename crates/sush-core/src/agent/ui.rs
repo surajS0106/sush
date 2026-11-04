@@ -206,6 +206,15 @@ impl StepBuilder {
                 text.push_str(&delta);
                 ops.push(Op::AppendText { index: *i, delta });
             }
+            ChatEvent::ReasoningItem { item } => {
+                self.close_text(&mut ops);
+                // With no summary streamed, it gets a part of its own, which the UI doesn't show while empty.
+                let (index, text) = match self.reasoning.take() {
+                    Some(open) => open,
+                    None => (self.push(&mut ops, json!({ "type": "reasoning", "text": "", "state": "done" })), String::new()),
+                };
+                ops.push(Op::SetPart { index, part: json!({ "type": "reasoning", "text": text, "state": "done", "item": item }) });
+            }
             ChatEvent::ToolCallDelta { index, id, name, args_delta } => {
                 if !self.tools.contains_key(&index) {
                     let id = id.unwrap_or_else(|| {
@@ -414,7 +423,10 @@ pub fn to_core(messages: &[Value], expansions: &HashMap<String, String>) -> Vec<
                         parts.push(Part::Text { text });
                     }
                 }
-                Some("reasoning") => parts.push(Part::Reasoning { text: str_at(p, "text").unwrap_or_default().into() }),
+                Some("reasoning") => parts.push(Part::Reasoning {
+                    text: str_at(p, "text").unwrap_or_default().into(),
+                    item: p.get("item").filter(|v| !v.is_null()).cloned(),
+                }),
                 Some("file") => {
                     let url = str_at(p, "url").unwrap_or_default();
                     let media_type = str_at(p, "mediaType").unwrap_or_default();

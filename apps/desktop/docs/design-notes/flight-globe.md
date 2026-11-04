@@ -4,6 +4,14 @@ Last updated: 2026-11-04
 
 ## What changed
 
+### 2026-11-04 (satellite photo)
+- The Earth is now NASA's Blue Marble (`src/assets/earth-blue-marble.jpg`, 4096 x 2048, 1.4 MB), drawn per pixel by a WebGL2 shader in `src/lib/earth-imagery.ts` and copied onto the existing 2D canvas. Borders, route, cities and plane still draw on top with d3-geo.
+- The shader adds sunlight, air thickening towards the Earth's edge, a glow outside it, stars, and a sharpen that applies only while the photo is stretched.
+- The picture is the same in both themes (`paletteOf` no longer takes the theme). The route stays in the user's accent, with a light edge so a dark accent reads over the sea. Stop dots and the landing ring use that light edge too.
+- The flight waits for the photo before it starts. Without WebGL2, or if the image fails, the land is drawn from the world maps in plain sea and land colors.
+- One context and texture serve every globe, and they're released 15 s after the last globe leaves (`acquireEarth`, `releaseEarth`).
+- Replaces the neutral sea and land tinted with the accent. A same-day version with pastel countries was tried and dropped when the user asked for a realistic Earth.
+
 ### 2026-11-04 (stops)
 - The globe flies the picked flight's real stops: `FlightGlobe` takes `via`, and `planFlight` runs one `planLeg` per leg. The plane lands at each stop for `STOP_MS`, with the landing ring and a "Stop in Singapore" readout, then takes off again. All legs are drawn from the start, flown ones solid and later ones dashed, with a dot and name at every stop.
 - Every leg starts and ends at one shared zoom, north up, so the camera doesn't jump at a stop. Each stop adds `EXTRA_LEG_MS` of flying, shared between legs by the square root of their length.
@@ -32,6 +40,10 @@ Last updated: 2026-11-04
 
 ## Why
 
+The user asked for a globe that looks like Google Earth, and a drawn map can't, since realism comes from imagery. Looking up each pixel in a photo is too slow on a 2D canvas on the UI thread, so that one step moved to WebGL. Drawing the result onto the existing canvas leaves the camera, overlays and landed copy unchanged. The photo's reading of d3's rotation comes from d3 itself (`rotationOf`), so the overlays can't drift from the image.
+
+The image is bundled to keep the globe free of network, keys and tile terms. The cost is sharpness: at the landing zoom the photo is stretched about 3.5 times, so regional geography is clear but cities are not. Street-level close-ups would need streamed tiles. The app also grows by 1.4 MB and holds about 45 MB of GPU memory while a globe is on screen.
+
 Landing at each stop was chosen over flying through it. The route changes direction sharply there, and the camera rolls to follow the route, so passing through would spin the Earth. Landing also says what a stop is: a place the traveller spends time. The cost is a longer flight, about 10 seconds with one stop instead of 7.
 
 The legs are great circles between airports, not the path an aircraft actually flew. Ignav gives airports, not tracks. The airports and their order are real, which is what the user needs for comparing routes.
@@ -54,7 +66,7 @@ Compared with a globe whose camera interpolates center and zoom on one eased cur
 
 - The peak zoom comes from the route's length, so a 290 km hop and a 15,000 km route both fill the frame without per-route tuning.
 - The camera path is a great circle with a calculated roll, so a route near the pole does not spin the map. Both ends are north up.
-- It has no WebGL, tile server or network dependency. The maps ship in the bundle and draw on a 2D canvas.
-- Measured in headless WebKit at 2x on a 700 x 256 canvas: frames about 17 ms apart with 3 to 4 ms of work per frame, and no frames requested at rest. Painting also stops off screen.
+- It has no tile server or network dependency. The photo and maps ship in the bundle, and it still works without WebGL2, using the drawn map.
+- Measured in headless Chrome at 2x on a 760 x 400 canvas: frames about 17 to 18 ms apart with the photo. No frames are requested at rest, and painting stops off screen.
 - The fade from coarse to detailed happens with the camera stopped, so the slow paint causes no visible hitch.
 - Reduced motion gets a complete still frame showing the whole route, not a frozen moment of the close-up.

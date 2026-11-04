@@ -5,6 +5,7 @@ import type { DynamicToolUIPart } from "ai";
 import {
   ArrowRightIcon,
   BrainIcon,
+  BookOpenIcon,
   CloudSunIcon,
   DownloadIcon,
   FileIcon,
@@ -52,6 +53,7 @@ import { InstamartAddresses, InstamartCard, InstamartPendingItems, InstamartWork
 import { SwiggyCard, SwiggyOrderApproval } from "@/components/swiggy-card";
 import { PullRequestCard } from "@/components/ui/PullRequestCard";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TopicCard } from "@/components/topic-card";
 import { WeatherCard } from "@/components/weather-card";
 import {
   CHATS_SEARCH,
@@ -79,6 +81,7 @@ import { getConversations } from "@/lib/store";
 import { errorMessage, type SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type SushMetadata, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
+import type { TopicOutput } from "@/lib/topic";
 import type { WeatherOutput } from "@/lib/weather";
 import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
 
@@ -153,6 +156,8 @@ function ToolCard(props: ToolPartProps) {
       return <FlightsPart part={props.part} />;
     case "weather":
       return <WeatherPart part={props.part} />;
+    case "topic":
+      return <TopicPart part={props.part} />;
     case "location":
       return <LocationPart {...props} />;
     case "agent":
@@ -340,6 +345,27 @@ function WeatherPart({ part }: { part: DynamicToolUIPart }) {
   // A guest gets a placeholder: the place is usually where the host is (`share/redact.rs`).
   if (typeof part.output !== "object" || part.output === null) return row("Weather hidden: private to the host");
   return <WeatherCard weather={part.output as WeatherOutput} />;
+}
+
+// --- topic -------------------------------------------------------------------------
+
+function TopicPart({ part }: { part: DynamicToolUIPart }) {
+  if (part.state === "input-streaming" || part.state === "input-available") return <LoadingState label="Finding photos and articles" />;
+  if (part.state === "output-error" || typeof part.output !== "object" || part.output === null) {
+    return (
+      <ToolResultRow
+        error
+        detail={part.errorText}
+        label={
+          <>
+            <BookOpenIcon className="size-4 shrink-0" />
+            <span className="line-clamp-1 text-left">Couldn't find photos and articles</span>
+          </>
+        }
+      />
+    );
+  }
+  return <TopicCard topic={part.output as TopicOutput} />;
 }
 
 // --- location ----------------------------------------------------------------------

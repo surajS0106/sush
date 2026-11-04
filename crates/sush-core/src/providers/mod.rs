@@ -2,6 +2,7 @@
 
 pub mod anthropic;
 pub mod openai;
+pub(crate) mod openai_responses;
 
 #[cfg(test)]
 pub(crate) mod test_util {

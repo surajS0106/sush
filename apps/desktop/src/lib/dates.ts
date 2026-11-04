@@ -12,7 +12,7 @@ export const fromDay = (day: string) => {
   return new Date(year, month - 1, date);
 };
 
-export const isDay = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && toDay(fromDay(value)) === value;
+export const isDay = (value: unknown): boolean => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && toDay(fromDay(value)) === value;
 
 export const addDays = (day: string, days: number) => {
   const date = fromDay(day);
