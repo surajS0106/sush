@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   CircleHelpIcon,
   CodeXmlIcon,
+  DownloadIcon,
   FolderIcon,
   FolderKanbanIcon,
   FolderOpenIcon,
@@ -29,7 +30,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useTheme } from "next-themes";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
@@ -79,6 +80,7 @@ import { openSettings } from "@/lib/library";
 import { useProjects, type Project } from "@/lib/projects";
 import { useReportThreads } from "@/lib/reports";
 import { errorMessage } from "@/lib/tauri";
+import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
 import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
 import type { Conversation } from "@/lib/store";
@@ -349,6 +351,7 @@ export function AppSidebar({
 
       <SidebarFooter>
         <SidebarMenu>
+          <UpgradeButton />
           <SidebarMenuItem>
             <ProfileMenu
               name={session?.user.name || "Sush"}
@@ -361,6 +364,35 @@ export function AppSidebar({
       </SidebarFooter>
       <SidebarResizer />
     </Sidebar>
+  );
+}
+
+/** "Upgrade now": shown once a newer release exists; installs it and restarts. Checks at launch and every 6 hours. */
+function UpgradeButton() {
+  const update = useUpdate();
+  useEffect(() => {
+    void checkForUpdate(true);
+    const id = setInterval(() => void checkForUpdate(true), 6 * 60 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (update.status !== "available" && update.status !== "downloading" && update.status !== "installing") return null;
+  const busy = update.status !== "available";
+  const label =
+    update.status === "available"
+      ? `Upgrade now (v${update.version})`
+      : update.status === "downloading"
+        ? `Downloading${update.percent === null ? "…" : ` ${update.percent}%`}`
+        : "Installing…";
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        disabled={busy}
+        onClick={() => void upgradeNow()}
+        className="bg-brand text-white hover:bg-brand/90 hover:text-white"
+      >
+        <DownloadIcon /> <span>{label}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
   );
 }
 
@@ -732,6 +764,9 @@ function ProfileMenu({
           <SettingsIcon /> <span>Settings</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void checkForUpdate()}>
+          <DownloadIcon /> <span>Check for updates</span>
+        </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => comingSoon("Help")}>
           <CircleHelpIcon /> <span>Get help</span>
         </DropdownMenuItem>

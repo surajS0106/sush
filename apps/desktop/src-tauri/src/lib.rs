@@ -41,6 +41,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .register_asynchronous_uri_scheme_protocol(sush_core::store::BLOB_SCHEME, store::serve_blob)
         .register_uri_scheme_protocol(widgets::SCHEME, widgets::serve)
         // Dictation records in the webview; the OS still asks the user for mic access.

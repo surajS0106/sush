@@ -6,6 +6,7 @@
     }
   },
   "bundle": {
+    "createUpdaterArtifacts": true,
     "externalBin": ["binaries/sush-auth"],
     "resources": { "../../viewer/dist/": "viewer/" }
   }
