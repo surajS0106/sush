@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Build a macOS DMG
 
-Builds an unsigned release DMG on this Mac. This is not a release: nothing is tagged or pushed (that's `/release`, which has CI build every platform).
+Builds an ad-hoc signed release DMG on this Mac (no developer certificate, not notarized). This is not a release: nothing is tagged or pushed (that's `/release`, which has CI build every platform).
 
 ## Project location
 
@@ -52,5 +52,5 @@ Quote the first real error from the log (`grep -n "error" "$TMPDIR/sush-build.lo
 Give the full DMG path (`~/Downloads/sush-pack/sush/target/release/bundle/dmg/Sush_<version>_<arch>.dmg`) and size, and note:
 
 - It runs only on this Mac's architecture (aarch64 = Apple Silicon only).
-- It is unsigned. On another Mac, open it with right-click → Open, or run `xattr -cr /Applications/Sush.app` after copying it in.
+- It is ad-hoc signed and not notarized (`signingIdentity: "-"` in `tauri.macos.conf.json`, with `hardenedRuntime: false` because the repo has no entitlements, and the Bun sidecar needs `allow-jit` under a hardened runtime). On another Mac, Gatekeeper blocks the first launch: allow it from System Settings → Privacy & Security → Open Anyway.
 - It requires macOS 11 or later.

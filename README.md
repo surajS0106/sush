@@ -4,7 +4,9 @@ A desktop AI harness: chat with any model (OpenAI, Anthropic, Azure Foundry, Bed
 
 ## Download
 
-Installers for Windows (`.exe` / `.msi`), macOS (`.dmg`) and Linux are attached to each [GitHub release](https://github.com/surajS0106/sush/releases). The builds aren't code-signed yet, so Windows SmartScreen and macOS Gatekeeper will warn on first launch.
+Installers for Windows (`.exe` / `.msi`), macOS (`.dmg`) and Linux are attached to each [GitHub release](https://github.com/surajS0106/sush/releases). The builds aren't signed with a developer certificate or notarized yet, so Windows SmartScreen and macOS Gatekeeper will warn on first launch.
+
+On macOS, Gatekeeper blocks the first launch. To allow it, go to System Settings → Privacy & Security and choose **Open Anyway**. Releases up to v2.4.0 may instead say to move the app to the Bin; for those, check you downloaded it from the releases page above, then run `xattr -dr com.apple.quarantine /Applications/Sush.app`.
 
 ## Layout
 
