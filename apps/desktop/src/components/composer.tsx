@@ -72,7 +72,7 @@ interface ComposerProps {
   onSubmit: (msg: PromptInputMessage) => void;
   onStop: () => void;
   onOpenSettings: () => void;
-  /** Whether the current model can use Research (Claude only). */
+  /** Whether Research can be on: it needs web search (Settings → Search). */
   researchAvailable: boolean;
   /** The conversation so far, for "Record a skill". */
   messages: SushUIMessage[];

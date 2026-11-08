@@ -21,6 +21,7 @@ pub mod store;
 pub mod topic;
 pub mod transcribe;
 pub mod weather;
+pub mod web;
 pub mod workspace;
 
 pub use error::ProviderError;

@@ -82,6 +82,7 @@ import { errorMessage, type SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type SushMetadata, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 import type { TopicOutput } from "@/lib/topic";
+import { webSources } from "@/lib/web";
 import type { WeatherOutput } from "@/lib/weather";
 import { CurrentWorkspace, openFile, updateWorkspace, useSandboxStatus } from "@/lib/workspaces";
 
@@ -158,10 +159,15 @@ function ToolCard(props: ToolPartProps) {
       return <WeatherPart part={props.part} />;
     case "topic":
       return <TopicPart part={props.part} />;
+    case "web":
+      return <WebToolPart part={props.part} />;
     case "location":
       return <LocationPart {...props} />;
     case "agent":
       // Shown with the rest of its step's sub-agents (`components/subagents.tsx`).
+      return null;
+    case "tools-load":
+      // Plumbing: the model loading tools it's about to use.
       return null;
     default:
       return <ConnectorPart {...props} />;
@@ -980,13 +986,27 @@ function ConnectorIcon({ src }: { src?: string }) {
 
 // --- web research --------------------------------------------------------------------
 
-export function WebActivityPart({ activity }: { activity: WebActivity }) {
+/** Sush's own `web_search` / `web_fetch` call, drawn like the provider's own search. */
+function WebToolPart({ part }: { part: DynamicToolUIPart }) {
+  const activity: WebActivity = { name: part.toolName, input: part.input, sources: webSources(part.toolName, part.output) };
+  if (part.state === "output-error") {
+    return (
+      <div className="space-y-1 text-sm">
+        <WebActivityPart activity={activity} />
+        <p className="pl-5.5 text-xs text-muted-foreground">{part.errorText}</p>
+      </div>
+    );
+  }
+  return <WebActivityPart activity={activity} pending={part.state !== "output-available"} />;
+}
+
+export function WebActivityPart({ activity, pending = false }: { activity: WebActivity; pending?: boolean }) {
   const input = (activity.input ?? {}) as { query?: string; url?: string };
   const what =
     activity.name === "web_search"
-      ? `Searched the web${input.query ? ` for “${input.query}”` : ""}`
+      ? `${pending ? "Searching" : "Searched"} the web${input.query ? ` for “${input.query}”` : ""}`
       : activity.name === "web_fetch"
-        ? `Read ${input.url ? hostname(input.url) : "a page"}`
+        ? `${pending ? "Reading" : "Read"} ${input.url ? hostname(input.url) : "a page"}`
         : `Ran ${activity.name}`;
   return (
     <div className="space-y-2 text-sm">

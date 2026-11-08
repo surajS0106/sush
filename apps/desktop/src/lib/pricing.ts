@@ -1,5 +1,10 @@
 // Per-message cost from token usage. Prices are USD per million tokens at
 // first-party list rates; unknown models get no estimate rather than a guess.
+// Input read from the prompt cache costs a tenth of the input rate. Cache writes
+// (a quarter more than input on Anthropic) are counted as plain input.
+
+/** What a cached input token costs, as a share of the input rate. */
+const CACHED_SHARE = 0.1;
 
 interface Price {
   input: number;
@@ -43,11 +48,20 @@ export function isLocalUrl(baseUrl: string) {
 }
 
 /** Estimated USD for a reply: 0 for local models, undefined when the price is unknown. */
-export function costUsd(model: string | undefined, inputTokens: number | undefined, outputTokens: number, local: boolean) {
+export function costUsd(
+  model: string | undefined,
+  inputTokens: number | undefined,
+  outputTokens: number,
+  local: boolean,
+  /** The part of `inputTokens` read from the prompt cache. */
+  cachedTokens = 0,
+) {
   if (local) return 0;
   const price = model && priceFor(model);
   if (!price) return undefined;
-  return ((inputTokens ?? 0) * price.input + outputTokens * price.output) / 1_000_000;
+  const cached = Math.min(cachedTokens, inputTokens ?? 0);
+  const fresh = (inputTokens ?? 0) - cached;
+  return (fresh * price.input + cached * price.input * CACHED_SHARE + outputTokens * price.output) / 1_000_000;
 }
 
 /** "$0.0123", "$4.21", "<$0.0001". */
@@ -65,9 +79,10 @@ export function formatCost(
   inputTokens: number | undefined,
   outputTokens: number | undefined,
   local: boolean,
+  cachedTokens = 0,
 ): string | undefined {
   if (outputTokens === undefined) return undefined;
   if (local) return "Free";
-  const usd = costUsd(model, inputTokens, outputTokens, false);
+  const usd = costUsd(model, inputTokens, outputTokens, false, cachedTokens);
   return usd === undefined ? undefined : formatUsd(usd);
 }

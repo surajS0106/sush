@@ -11,7 +11,8 @@ use serde_json::{json, Value};
 
 use crate::provider::Decoder;
 use crate::sse::SseEvent;
-use crate::{ChatEvent, ChatRequest, FinishReason, Message, Part, ProviderError, Role};
+use crate::web;
+use crate::{ChatEvent, ChatRequest, FinishReason, Message, Part, ProviderError, Role, WebSource};
 
 /// Models sent here instead of Chat Completions. A router's prefixed id
 /// (`openai/gpt-5.6-sol`) stays on Chat Completions: its Responses support varies.
@@ -22,6 +23,18 @@ pub(crate) fn uses_responses(model: &str) -> bool {
 }
 
 pub(crate) fn request_body(req: &ChatRequest) -> Value {
+    request_body_with(req, web::native_ok(req))
+}
+
+/// A host speaking Responses without OpenAI's own web search (some Azure
+/// deployments, proxies) refuses it; the request goes again with Sush's tool.
+pub(crate) fn refuses_web_search(status: u16, message: &str) -> bool {
+    (400..500).contains(&status) && status != 429 && message.to_ascii_lowercase().contains("web_search")
+}
+
+/// The request, with OpenAI's own web search in place of Sush's when `native_web`.
+/// Sush's `web_fetch` stays: it reads a page the user named.
+pub(crate) fn request_body_with(req: &ChatRequest, native_web: bool) -> Value {
     let mut body = json!({
         "model": req.model,
         "input": input_items(&req.messages),
@@ -49,8 +62,14 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
         let tools: Vec<Value> = req
             .tools
             .iter()
-            .map(|t| json!({ "type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false }))
+            .map(|t| match native_web && t.name == web::SEARCH {
+                true => json!({ "type": "web_search" }),
+                false => json!({ "type": "function", "name": t.name, "description": t.description, "parameters": t.input_schema, "strict": false }),
+            })
             .collect();
+        if native_web && req.tools.iter().any(|t| t.name == web::SEARCH) {
+            body["include"].as_array_mut().expect("set above").push(json!("web_search_call.action.sources"));
+        }
         body["tools"] = json!(tools);
     }
     body
@@ -180,6 +199,33 @@ impl Decoder for ResponsesDecoder {
             "response.output_item.done" if v["item"]["type"] == "reasoning" && v["item"]["encrypted_content"].is_string() => {
                 out.push(ChatEvent::ReasoningItem { item: v["item"].clone() });
             }
+            // OpenAI's own web search ran: shown like Anthropic's, nothing for the host to run.
+            "response.output_item.done" if v["item"]["type"] == "web_search_call" => {
+                let item = &v["item"];
+                let id = item["id"].as_str().unwrap_or_default().to_string();
+                let action = &item["action"];
+                let (name, input) = match action["type"].as_str() {
+                    Some("open_page" | "find_in_page") => (web::FETCH, json!({ "url": action["url"] })),
+                    _ => (web::SEARCH, json!({ "query": action["query"] })),
+                };
+                out.push(ChatEvent::ServerToolCall { id: id.clone(), name: name.into(), input });
+                let sources: Vec<WebSource> = action["sources"]
+                    .as_array()
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|s| Some(WebSource { url: s["url"].as_str()?.to_owned(), title: s["title"].as_str().map(str::to_owned) }))
+                    .collect();
+                if !sources.is_empty() {
+                    out.push(ChatEvent::WebSources { call_id: id, sources });
+                }
+            }
+            "response.output_text.annotation.added" if v["annotation"]["type"] == "url_citation" => {
+                if let Some(url) = v["annotation"]["url"].as_str() {
+                    let title = v["annotation"]["title"].as_str().map(str::to_owned);
+                    out.push(ChatEvent::Citation { url: url.to_owned(), title });
+                }
+            }
             "response.completed" | "response.incomplete" => {
                 self.done = true;
                 let response = &v["response"];
@@ -195,6 +241,7 @@ impl Decoder for ResponsesDecoder {
                     out.push(ChatEvent::Usage {
                         input_tokens: usage["input_tokens"].as_u64(),
                         output_tokens: usage["output_tokens"].as_u64(),
+                        cached_input_tokens: usage["input_tokens_details"]["cached_tokens"].as_u64(),
                     });
                 }
             }
@@ -311,6 +358,40 @@ mod tests {
     }
 
     #[test]
+    fn sush_web_search_becomes_openais_unless_refused() {
+        let mut req = request(vec![Message::text(Role::User, "news?")]);
+        let spec = |name: &str| ToolSpec { name: name.into(), description: "d".into(), input_schema: json!({"type": "object"}) };
+        req.tools = vec![spec(web::SEARCH), spec(web::FETCH)];
+        let body = request_body(&req);
+        assert_eq!(body["tools"][0], json!({ "type": "web_search" }));
+        assert_eq!(body["tools"][1]["name"], "web_fetch");
+        assert!(body["include"].as_array().unwrap().contains(&json!("web_search_call.action.sources")));
+        let plain = request_body_with(&req, false);
+        assert_eq!(plain["tools"][0]["name"], "web_search");
+        assert!(!plain["include"].as_array().unwrap().contains(&json!("web_search_call.action.sources")));
+        assert!(refuses_web_search(400, "Tool 'web_search' is not supported"));
+        assert!(!refuses_web_search(429, "web_search rate limit"));
+    }
+
+    #[test]
+    fn decodes_native_web_search_and_citations() {
+        let sse = r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"rust 2026","sources":[{"type":"url","url":"https://a.dev"}]}}}
+
+data: {"type":"response.output_text.delta","output_index":1,"delta":"Rust is fast."}
+
+data: {"type":"response.output_text.annotation.added","output_index":1,"annotation":{"type":"url_citation","url":"https://a.dev","title":"A","start_index":0,"end_index":13}}
+
+data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
+
+"#;
+        let events = decode_all(ResponsesDecoder::default(), sse);
+        assert_eq!(events[0], ChatEvent::ServerToolCall { id: "ws_1".into(), name: "web_search".into(), input: json!({ "query": "rust 2026" }) });
+        assert_eq!(events[1], ChatEvent::WebSources { call_id: "ws_1".into(), sources: vec![WebSource { url: "https://a.dev".into(), title: None }] });
+        assert_eq!(events[3], ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()) });
+        assert_eq!(events[4], ChatEvent::Finish { reason: FinishReason::Stop });
+    }
+
+    #[test]
     fn decodes_reasoning_text_tools_and_usage() {
         let body = r#"data: {"type":"response.created","response":{"id":"r1"}}
 
@@ -330,7 +411,7 @@ data: {"type":"response.output_item.added","output_index":2,"item":{"type":"func
 
 data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":2,"delta":"{\"dir\":"}
 
-data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":9,"output_tokens":3}}}
+data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":9,"input_tokens_details":{"cached_tokens":4},"output_tokens":3}}}
 
 "#;
         let evs = decode_all(ResponsesDecoder::default(), body);
@@ -341,7 +422,7 @@ data: {"type":"response.completed","response":{"status":"completed","usage":{"in
         assert!(evs.contains(&ChatEvent::ToolCallDelta { index: 0, id: Some("call_1".into()), name: Some("ls".into()), args_delta: "".into() }));
         assert!(evs.contains(&ChatEvent::ToolCallDelta { index: 0, id: None, name: None, args_delta: "{\"dir\":".into() }));
         assert!(evs.contains(&ChatEvent::Finish { reason: FinishReason::ToolCalls }));
-        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(9), output_tokens: Some(3) }));
+        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(9), output_tokens: Some(3), cached_input_tokens: Some(4) }));
     }
 
     #[test]

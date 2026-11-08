@@ -4,6 +4,7 @@
 // turns those into numbered markers.
 
 import type { SushUIMessage } from "@/lib/transport";
+import { partWebSources } from "@/lib/web";
 
 const CITE_TEXT = "cite";
 const CITE_RE = /\s?\[cite\]\((\S+?)(?: "([^"]*)")?\)/g;
@@ -65,7 +66,7 @@ export function citedSources(message: SushUIMessage): CitedSource[] {
   // Titles from search results, for markers the provider sent without one.
   const titles = new Map<string, string>();
   for (const p of message.parts) {
-    if (p.type === "data-web") for (const s of p.data.sources) if (s.title) titles.set(s.url, s.title);
+    for (const s of partWebSources(p)) if (s.title) titles.set(s.url, s.title);
   }
   for (const p of message.parts) {
     if (p.type !== "text") continue;

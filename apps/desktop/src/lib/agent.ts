@@ -51,6 +51,7 @@ import { SLIDES_WRITE, slidesTool, validateSlides } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
 import { runTopicLookup, TOPIC_LOOKUP, topicTool } from "@/lib/topic";
+import { RESEARCH_SECTION, runWebFetch, runWebSearch, WEB_FETCH, WEB_SEARCH, WEB_SECTION, webFetchTool, webSearchTool } from "@/lib/web";
 import { runWeatherShow, WEATHER_SHOW, weatherTool } from "@/lib/weather";
 
 export const MEMORY_WRITE = "memory_write";
@@ -187,6 +188,19 @@ export const findConnectorTool = (name: string) => connectorTools().find((t) => 
 
 // --- request context ----------------------------------------------------------
 
+/**
+ * How to answer, first in every prompt (it never changes, so it caches). Without it a model
+ * over the API answers far more tersely than in its own chat app, which carries a long
+ * style prompt of its own.
+ */
+const ANSWER_STYLE =
+  "Answer like a knowledgeable friend: helpful, warm and complete. Match depth to the question. A greeting or a quick " +
+  "fact gets a sentence or two; a question about who or what something is, how something works, or why, gets a full " +
+  "answer: a direct opening sentence, then the key facts as a short list or headed sections, and what makes it " +
+  "notable or why it matters. A follow-up gets a direct answer plus the context that makes it make sense. Use " +
+  "markdown (bold, lists, headings, tables) where it helps reading, not for its own sake. Don't pad: no restating the " +
+  "question, no closing summaries of what you just said.";
+
 export interface RequestContext {
   system?: string;
   tools: ToolSpec[];
@@ -209,7 +223,7 @@ export function buildContext({
   const prefs = library.prefs();
   const memory = prefs.memory && !incognito;
   const referenceChats = prefs.referenceChats && !incognito;
-  const sections: string[] = [];
+  const sections: string[] = [ANSWER_STYLE];
 
   if (project?.instructions.trim()) {
     sections.push(
@@ -248,6 +262,10 @@ export function buildContext({
   const images = imagesEnabled();
   if (!images) sections.push(IMAGES_OFF);
 
+  // Web search is on unless turned off in Settings → Search; Research asks for more of it.
+  const web = prefs.webSearch;
+  if (web) sections.push(research ? `${WEB_SECTION}\n\n${RESEARCH_SECTION}` : WEB_SECTION);
+
   const connectors = connectorTools();
   if (connectors.length > 0) {
     sections.push(
@@ -269,13 +287,14 @@ export function buildContext({
     flightsTool,
     weatherTool,
     topicTool,
+    ...(web ? [webSearchTool, webFetchTool] : []),
     locationTool,
     ...(memory ? memoryTools : []),
     ...(referenceChats ? chatTools : []),
     ...connectors.map((t) => t.spec),
   ];
 
-  return { system: sections.length > 0 ? sections.join("\n\n---\n\n") : undefined, tools, research };
+  return { system: sections.join("\n\n---\n\n"), tools, research: web && research };
 }
 
 // --- running tools --------------------------------------------------------------
@@ -295,11 +314,13 @@ export type ToolKind =
   | "flights"
   | "weather"
   | "topic"
+  | "web"
   | "location"
   | "workspace"
   | "browser"
   | "agent"
   | "connector"
+  | "tools-load"
   | "unknown";
 
 /** Cowork file and shell tools. Rust offers and runs them (`sush_core::workspace::tools`). */
@@ -321,6 +342,17 @@ export const WORKSPACE_TOOLS = new Set([
 /** The Cowork tool whose latest call shows as the live pull request card (`components/branch-card.tsx`). */
 export const BRANCH_STATUS = "branch_status";
 
+/** Loads deferred tools. Rust offers and runs it (`sush_core::agent::deferred`); it isn't shown. */
+export const TOOLS_LOAD = "tools_load";
+
+/**
+ * Tools left out of requests until the model loads them (`sush_core::agent::deferred`): each one
+ * costs hundreds of tokens on every model call, and most messages need none of them. The system
+ * prompt lists them by name and first sentence. Connector tools are deferred too, unless the
+ * user @-mentioned the connector in the conversation.
+ */
+const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, IMAGE_GENERATE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET]);
+
 /** Starts a sub-agent. Rust offers and runs it (`sush_core::agent::subagents`). */
 export const SPAWN_AGENT = "spawn_agent";
 
@@ -329,6 +361,7 @@ export const BROWSER_TOOLS = new Set(["browser_navigate", "browser_read", "brows
 
 export function toolKind(name: string): ToolKind {
   if (name === ASK_USER) return "ask-user";
+  if (name === TOOLS_LOAD) return "tools-load";
   if (WORKSPACE_TOOLS.has(name)) return "workspace";
   if (BROWSER_TOOLS.has(name)) return "browser";
   if (name === SPAWN_AGENT) return "agent";
@@ -343,6 +376,7 @@ export function toolKind(name: string): ToolKind {
   if (name === FLIGHTS_SEARCH) return "flights";
   if (name === WEATHER_SHOW) return "weather";
   if (name === TOPIC_LOOKUP) return "topic";
+  if (name === WEB_SEARCH || name === WEB_FETCH) return "web";
   if (name === LOCATION_GET) return "location";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
@@ -366,7 +400,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
   // An old "Always allow" never covers spending money.
@@ -390,12 +424,16 @@ export function setToolRunning(callId: string, running: boolean) {
   });
 }
 
-/** Tool specs with where each runs and whether it needs the user's approval, for a run's config. */
-export function runTools(specs: ToolSpec[]): RunTool[] {
+/**
+ * Tool specs with where each runs and whether it needs the user's approval, for a run's config.
+ * With `defer`, the specialised tools and the connectors not in `defer.mentioned` load on demand.
+ */
+export function runTools(specs: ToolSpec[], defer?: { mentioned: ReadonlySet<string> }): RunTool[] {
   return specs.map((spec) => {
     const approval = runsWithoutApproval(spec.name) ? "auto" : "ask";
     const t = toolKind(spec.name) === "connector" ? findConnectorTool(spec.name) : undefined;
-    return { ...spec, approval, exec: t ? { type: "connector", connectorId: t.connector.id, tool: t.tool } : { type: "client" } };
+    const deferred = !!defer && (t ? !defer.mentioned.has(t.connector.id) : DEFERRED.has(spec.name));
+    return { ...spec, approval, deferred, exec: t ? { type: "connector", connectorId: t.connector.id, tool: t.tool } : { type: "client" } };
   });
 }
 
@@ -448,6 +486,8 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
     if (name === FLIGHTS_SEARCH) return runFlightsSearch(args);
     if (name === WEATHER_SHOW) return runWeatherShow(args);
     if (name === TOPIC_LOOKUP) return runTopicLookup(args);
+    if (name === WEB_SEARCH) return runWebSearch(args);
+    if (name === WEB_FETCH) return runWebFetch(args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {
     return { errorText: e instanceof Error ? e.message : String(e) };

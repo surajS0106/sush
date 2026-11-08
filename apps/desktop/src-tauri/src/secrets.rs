@@ -187,6 +187,21 @@ pub fn flights_key_delete() -> AppResult<()> {
     remove(FLIGHTS_KEY)
 }
 
+/// The user's own Ollama key for web search (`web.rs`).
+const WEB_KEY: &str = "web:key";
+
+pub fn web_key_get() -> AppResult<Option<String>> {
+    read(WEB_KEY)
+}
+
+pub fn web_key_set(value: &str) -> AppResult<()> {
+    write(WEB_KEY, value)
+}
+
+pub fn web_key_delete() -> AppResult<()> {
+    remove(WEB_KEY)
+}
+
 // Connector credentials can outgrow one Windows credential (2560 bytes,
 // stored as UTF-16), so they're split into parts; the first entry holds the
 // part count.

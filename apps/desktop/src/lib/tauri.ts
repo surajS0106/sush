@@ -67,7 +67,7 @@ export type ChatEvent =
   | { type: "reasoning-delta"; delta: string }
   | { type: "reasoning-item"; item: unknown }
   | { type: "tool-call-delta"; index: number; id?: string | null; name?: string | null; argsDelta: string }
-  | { type: "usage"; inputTokens?: number | null; outputTokens?: number | null }
+  | { type: "usage"; inputTokens?: number | null; outputTokens?: number | null; cachedInputTokens?: number | null }
   | { type: "server-tool-call"; id: string; name: string; input: unknown }
   | { type: "web-sources"; callId: string; sources: { url: string; title?: string | null }[] }
   | { type: "citation"; url: string; title?: string | null }
@@ -761,6 +761,8 @@ export type RunAction =
 export interface RunTool extends ToolSpec {
   exec: { type: "connector"; connectorId: string; tool: string } | { type: "client" };
   approval: "auto" | "ask";
+  /** Left out of requests until the model loads it with `tools_load` (`sush_core::agent::deferred`). */
+  deferred?: boolean;
 }
 
 export interface RunConfig {
@@ -925,6 +927,24 @@ export interface Topic {
   images: TopicImage[];
   references: TopicReference[];
 }
+
+/** A `web_search` hit (`sush_core::web`). */
+export interface WebSearchResult {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+/** A page `web_fetch` read; `nextOffset` reads on when it goes on. */
+export interface WebPage {
+  url: string;
+  title: string | null;
+  content: string;
+  nextOffset: number | null;
+}
+
+/** Where web search's Ollama key comes from: Settings → Search, an Ollama Cloud provider, or nowhere. */
+export type WebKeySource = "own" | "provider" | "none";
 
 export interface LocalWeather {
   /** The place found for a name; coordinates have none. */
@@ -1175,6 +1195,12 @@ export const api = {
   weatherNow: (place: string) => invoke<LocalWeather | null>("weather_now", { place }),
   /** Null when no article matches. */
   topicLookup: (query: string) => invoke<Topic | null>("topic_lookup", { query }),
+  webKeyStatus: () => invoke<WebKeySource>("web_key_status"),
+  /** Saves the key and tries it; returns what's wrong with it, if anything. */
+  webKeySet: (key: string) => invoke<string | null>("web_key_set", { key }),
+  webKeyDelete: () => invoke<void>("web_key_delete"),
+  webSearch: (query: string, maxResults?: number) => invoke<WebSearchResult[]>("web_search", { query, maxResults: maxResults ?? null }),
+  webFetch: (url: string, offset?: number) => invoke<WebPage>("web_fetch", { url, offset: offset ?? null }),
   flightsLocate: (city: string) => invoke<GeoPoint | null>("flights_locate", { city }),
   flightsRates: () => invoke<ExchangeRates>("flights_rates"),
   /** macOS only; other platforms read the position through the webview (`lib/location.ts`). */

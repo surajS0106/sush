@@ -258,6 +258,7 @@ export default function App() {
                     // Known as soon as the provider list loads; the catalog waits on every model list.
                     hasProviders={providers ? providers.length > 0 : null}
                     onOpenSettings={() => openSettings({ section: "providers" })}
+                    onOpenSession={tabs.openInNewTab}
                   />
                 </PromptInputProvider>
               )}

@@ -24,6 +24,7 @@ mod state;
 mod store;
 mod terminal;
 mod topic;
+mod web;
 mod weather;
 mod whisper;
 mod widgets;
@@ -207,6 +208,11 @@ pub fn run() {
             flights::flights_rates,
             location::location_read,
             topic::topic_lookup,
+            web::web_key_status,
+            web::web_key_set,
+            web::web_key_delete,
+            web::web_search,
+            web::web_fetch,
             weather::weather_now,
             whisper::whisper_model_status,
             whisper::whisper_model_download,

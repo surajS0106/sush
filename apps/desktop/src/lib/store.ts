@@ -222,20 +222,25 @@ export function setConversationProject(id: string, projectId: string | undefined
   });
 }
 
-/** A copy of a chat as it was last saved, to take in another direction. Not for incognito chats, whose messages only Rust holds. */
-export function forkConversation(id: string): Conversation | null {
+/**
+ * A copy of a chat as it was last saved, to take in another direction; with
+ * `upTo`, only the messages up to and including that one ("Branch in new
+ * chat" on a reply). Not for incognito chats, whose messages only Rust holds.
+ */
+export function forkConversation(id: string, upTo?: string): Conversation | null {
   const source = conversations.get().find((c) => c.id === id);
   if (!source || source.incognito) return null;
   const now = Date.now();
   const { pinned: _, ...rest } = source;
+  const end = upTo ? source.messages.findIndex((m) => m.id === upTo) : -1;
   const fork: Conversation = {
     ...rest,
     id: crypto.randomUUID(),
-    title: `${source.title} (fork)`,
+    title: upTo ? `Branch · ${source.title}` : `${source.title} (fork)`,
     createdAt: now,
     updatedAt: now,
     // Message ids are kept: they only need to be unique within a thread.
-    messages: source.messages,
+    messages: end < 0 ? source.messages : source.messages.slice(0, end + 1),
   };
   conversations.set((all) => [fork, ...all]);
   share({ type: "upsert", conversation: fork });

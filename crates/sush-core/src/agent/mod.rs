@@ -2,6 +2,7 @@
 //! into a thread's messages, runs tool calls, and asks the host for anything
 //! app-specific (provider requests, connector calls, saving, UI updates).
 
+pub mod deferred;
 pub mod run;
 pub mod subagents;
 pub mod ui;

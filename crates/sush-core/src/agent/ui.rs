@@ -136,6 +136,35 @@ fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 
 // --- streaming a step ---------------------------------------------------------------
 
+/// Token usage a message's earlier steps reported. Each step re-reads the whole
+/// conversation, so `inputTokens` (what was billed) grows with every step, while
+/// `contextTokens` (the last step's input) is how big the conversation is.
+#[derive(Debug, Default, Clone, Copy)]
+struct Tally {
+    input: u64,
+    output: u64,
+    cached: u64,
+    steps: u64,
+}
+
+impl Tally {
+    fn metadata(self, input: Option<u64>, output: Option<u64>, cached: Option<u64>) -> Value {
+        let mut m = Map::new();
+        if let Some(input) = input {
+            m.insert("inputTokens".into(), json!(self.input + input));
+            m.insert("contextTokens".into(), json!(input));
+        }
+        if let Some(output) = output {
+            m.insert("outputTokens".into(), json!(self.output + output));
+        }
+        if cached.is_some() || self.cached > 0 {
+            m.insert("cachedInputTokens".into(), json!(self.cached + cached.unwrap_or(0)));
+        }
+        m.insert("steps".into(), json!(self.steps + 1));
+        Value::Object(m)
+    }
+}
+
 /// Turns one model step's events into ops on the assistant message: opens and
 /// closes text, reasoning and tool parts as events arrive.
 pub struct StepBuilder {
@@ -146,9 +175,10 @@ pub struct StepBuilder {
     /// By the provider's tool index: part index, call id, name, raw arguments.
     tools: BTreeMap<u32, (usize, String, String, String)>,
     web: HashMap<String, (usize, Value)>,
-    usage: Map<String, Value>,
-    /// Input and output tokens earlier steps already reported on this message.
-    prior: (u64, u64),
+    /// What the provider reported for this step: input, output, cached input.
+    usage: Option<(Option<u64>, Option<u64>, Option<u64>)>,
+    /// What earlier steps already reported on this message.
+    prior: Tally,
     seq: usize,
     /// Set once the provider reports an error.
     pub error: Option<String>,
@@ -162,8 +192,8 @@ impl StepBuilder {
             reasoning: None,
             tools: BTreeMap::new(),
             web: HashMap::new(),
-            usage: Map::new(),
-            prior: (0, 0),
+            usage: None,
+            prior: Tally::default(),
             seq: 0,
             error: None,
         }
@@ -173,7 +203,9 @@ impl StepBuilder {
     /// token counts cover every step the provider billed, not just the last.
     pub fn after(mut self, metadata: Option<&Value>) -> Self {
         let tokens = |key: &str| metadata.and_then(|m| m[key].as_u64()).unwrap_or(0);
-        self.prior = (tokens("inputTokens"), tokens("outputTokens"));
+        // Messages saved before steps were counted had at least one if they have usage.
+        let steps = metadata.and_then(|m| m["steps"].as_u64()).unwrap_or(u64::from(tokens("outputTokens") > 0));
+        self.prior = Tally { input: tokens("inputTokens"), output: tokens("outputTokens"), cached: tokens("cachedInputTokens"), steps };
         self
     }
 
@@ -254,9 +286,8 @@ impl StepBuilder {
                     ops.push(Op::AppendText { index: *i, delta: marker });
                 }
             }
-            ChatEvent::Usage { input_tokens, output_tokens } => {
-                self.usage.insert("inputTokens".into(), json!(input_tokens));
-                self.usage.insert("outputTokens".into(), json!(output_tokens));
+            ChatEvent::Usage { input_tokens, output_tokens, cached_input_tokens } => {
+                self.usage = Some((input_tokens, output_tokens, cached_input_tokens));
             }
             ChatEvent::Finish { .. } => {}
             ChatEvent::Error { message } => self.error = Some(message),
@@ -278,17 +309,8 @@ impl StepBuilder {
             });
             calls.push(ToolCall { id, name, input });
         }
-        if self.usage.values().any(|v| !v.is_null()) {
-            let (input, output) = self.prior;
-            let usage: Map<String, Value> = self
-                .usage
-                .into_iter()
-                .filter_map(|(k, v)| {
-                    let prior = if k == "inputTokens" { input } else { output };
-                    Some((k, json!(v.as_u64()? + prior)))
-                })
-                .collect();
-            ops.push(Op::SetMetadata { metadata: Value::Object(usage) });
+        if let Some((input, output, cached)) = self.usage.filter(|(i, o, _)| i.is_some() || o.is_some()) {
+            ops.push(Op::SetMetadata { metadata: self.prior.metadata(input, output, cached) });
         }
         (ops, calls)
     }
@@ -555,11 +577,11 @@ mod tests {
             ChatEvent::TextDelta { delta: "lo".into() },
             ChatEvent::ToolCallDelta { index: 0, id: Some("c1".into()), name: Some("memory_write".into()), args_delta: "{\"pa".into() },
             ChatEvent::ToolCallDelta { index: 0, id: None, name: None, args_delta: "th\":\"profile\"}".into() },
-            ChatEvent::Usage { input_tokens: Some(10), output_tokens: Some(5) },
+            ChatEvent::Usage { input_tokens: Some(10), output_tokens: Some(5), cached_input_tokens: None },
         ]);
         assert_eq!(
             messages[0],
-            json!({ "id": "a", "role": "assistant", "metadata": { "inputTokens": 10, "outputTokens": 5 }, "parts": [
+            json!({ "id": "a", "role": "assistant", "metadata": { "inputTokens": 10, "contextTokens": 10, "outputTokens": 5, "steps": 1 }, "parts": [
                 { "type": "reasoning", "text": "think", "state": "done" },
                 { "type": "text", "text": "Hello", "state": "done" },
                 { "type": "dynamic-tool", "toolName": "memory_write", "toolCallId": "c1", "state": "input-available", "input": { "path": "profile" } },
@@ -683,14 +705,17 @@ mod tests {
     #[test]
     fn usage_adds_up_across_steps() {
         let mut messages = assistant();
-        for (input, output) in [(10, 5), (20, 7)] {
+        for (input, output, cached) in [(10, 5, None), (20, 7, Some(8))] {
             let mut b = StepBuilder::new(0).after(messages[0].get("metadata"));
-            b.handle(ChatEvent::Usage { input_tokens: Some(input), output_tokens: Some(output) });
+            b.handle(ChatEvent::Usage { input_tokens: Some(input), output_tokens: Some(output), cached_input_tokens: cached });
             for op in b.finish().0 {
                 apply(&mut messages, &op);
             }
         }
-        assert_eq!(messages[0]["metadata"], json!({ "inputTokens": 30, "outputTokens": 12 }));
+        assert_eq!(
+            messages[0]["metadata"],
+            json!({ "inputTokens": 30, "contextTokens": 20, "outputTokens": 12, "cachedInputTokens": 8, "steps": 2 })
+        );
     }
 
     #[test]

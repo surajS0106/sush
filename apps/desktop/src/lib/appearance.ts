@@ -1,6 +1,7 @@
 // Appearance preferences from Settings → General. Theme itself is next-themes';
 // these are applied as data attributes on <html>, which index.css maps to
-// the transcript's font, size and width, the accent color, and reduced motion.
+// the transcript's font, size and width, the accent color, the composer's
+// glass, and reduced motion.
 
 import { useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
@@ -12,6 +13,8 @@ export type TextSize = "small" | "medium" | "large";
 /** "custom" is a width the user dragged the column to, kept in `customWidth`. */
 export type TranscriptWidth = "narrow" | "medium" | "wide" | "custom";
 export type Motion = "system" | "reduced";
+/** The composer's glass over the transcript scrolling behind it (index.css, `data-glass`). */
+export type Glass = "frosted" | "clear" | "tinted" | "solid";
 export type Accent = "sush" | "orange" | "red" | "pink" | "violet" | "blue" | "teal" | "green" | "graphite" | "custom";
 
 /**
@@ -39,6 +42,7 @@ export interface Appearance {
   /** The transcript column in px, used while `width` is "custom". */
   customWidth: number;
   motion: Motion;
+  glass: Glass;
   accent: Accent;
   /** The color picked for the "custom" accent, as #rrggbb. */
   customAccent: string;
@@ -52,6 +56,7 @@ const DEFAULTS: Appearance = {
   width: "medium",
   customWidth: 768,
   motion: "system",
+  glass: "frosted",
   accent: "sush",
   customAccent: "#d946ef",
   palette: 2,
@@ -67,7 +72,7 @@ appearance.set((a) => ({
   ...((a.palette ?? 1) < 2 && { accent: a.accent === "orange" ? "sush" : a.accent, palette: 2 }),
 }));
 
-function apply({ chatFont, textSize, width, customWidth, motion, accent, customAccent }: Appearance) {
+function apply({ chatFont, textSize, width, customWidth, motion, glass, accent, customAccent }: Appearance) {
   const { dataset, style } = document.documentElement;
   dataset.chatFont = chatFont;
   dataset.textSize = textSize;
@@ -75,6 +80,7 @@ function apply({ chatFont, textSize, width, customWidth, motion, accent, customA
   if (width === "custom") style.setProperty("--transcript-width", `${customWidth}px`);
   else style.removeProperty("--transcript-width");
   dataset.motion = motion;
+  dataset.glass = glass;
   dataset.accent = accent;
   // Set even when another accent is active: the picker's swatch for "custom"
   // reads these too.

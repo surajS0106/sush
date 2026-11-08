@@ -28,8 +28,9 @@ debug = "line-tables-only"
 debug = false
 
 [profile.release]
-codegen-units = 1
-lto = true
+# Thin LTO in parallel codegen units: most of fat LTO's speed for a fraction of the link time
+# (fat LTO with one codegen unit was most of each release job's ~10 minute compile).
+lto = "thin"
 opt-level = 3
 panic = "abort"
 strip = true

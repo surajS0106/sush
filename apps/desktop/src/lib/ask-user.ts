@@ -11,13 +11,11 @@ export const ASK_USER = "ask_user";
 export const askUserTool: ToolSpec = {
   name: ASK_USER,
   description:
-    "Ask the user one or more questions and wait for their answers. Use it when a choice " +
-    "only the user can make would materially change your response, e.g. ambiguous requirements or " +
-    "picking between approaches. Don't use it for things you can reasonably decide or infer yourself. " +
-    "Questions are shown one at a time; the user can pick options, type their own answer, or skip a question. " +
-    "Whenever you need a date, use `type` date or date-range, which shows a calendar. Never list months or dates as options. " +
-    "A date answer is YYYY-MM-DD, a range answer is its start and end in that form, unless the user typed something else instead. " +
-    "The card for a flight's dates also asks who's traveling and in what class, so its answer holds `travel`: { adults, children, cabin }.",
+    "Ask the user questions and wait for the answers, only when a choice only they can make would materially change " +
+    "your response; decide what you can infer. Shown one at a time; they can pick, type their own answer, or skip. " +
+    "For any date use `type` date or date-range (a calendar), never dates or months as options. Answers are YYYY-MM-DD " +
+    "(a range: start and end) unless typed. A flight's dates card also asks travelers and class: its answer holds " +
+    "`travel`: { adults, children, cabin }.",
   inputSchema: {
     type: "object",
     properties: {
@@ -28,33 +26,33 @@ export const askUserTool: ToolSpec = {
         items: {
           type: "object",
           properties: {
-            question: { type: "string", description: "The question, phrased for the user." },
-            type: { type: "string", enum: ["choice", "date", "date-range"], description: "Defaults to choice. The fields below it say which type they're for." },
+            question: { type: "string" },
+            type: { type: "string", enum: ["choice", "date", "date-range"], description: "Default choice. Each field below names the type it's for." },
             options: {
               type: "array",
               minItems: 2,
               maxItems: 6,
               items: { type: "string" },
-              description: "choice: required. Short answer choices. The user can also type a different answer. Never months or dates: use type date or date-range for those.",
+              description: "choice: required. Short answers.",
             },
-            multiSelect: { type: "boolean", description: "choice: allow picking more than one option. Defaults to false." },
-            startLabel: { type: "string", description: "Dates: the first date's label, e.g. Depart or Check in." },
-            endLabel: { type: "string", description: "date-range: the last date's label, e.g. Return or Check out." },
-            noEndLabel: { type: "string", description: "date-range: set when the last date is optional, to what leaving it out means, e.g. One way. Shows a choice between the two, and the answer is then one date if they left it out." },
+            multiSelect: { type: "boolean", description: "choice: allow several." },
+            startLabel: { type: "string", description: "Dates: first date's label, e.g. Depart." },
+            endLabel: { type: "string", description: "date-range: last date's label, e.g. Return." },
+            noEndLabel: { type: "string", description: "date-range: makes the last date optional; what leaving it out means, e.g. One way (answer is then one date)." },
             withEndLabel: { type: "string", description: "date-range: with noEndLabel, the other choice, e.g. Round trip." },
-            unit: { type: "string", enum: ["days", "nights"], description: "date-range: how to count its length. Use nights for trips and stays." },
-            minDate: { type: "string", description: "Dates: the earliest allowed, YYYY-MM-DD. Defaults to today; set it for a date in the past." },
-            maxDate: { type: "string", description: "Dates: the latest allowed, YYYY-MM-DD." },
-            adults: { type: "integer", description: "A flight's dates: how many adults, only if the user already said. It starts the card's own control." },
-            children: { type: "integer", description: "A flight's dates: how many children aged 2 to 11, only if the user already said." },
-            cabin: { type: "string", enum: Object.keys(CABINS), description: "A flight's dates: the class, only if the user already said." },
+            unit: { type: "string", enum: ["days", "nights"], description: "date-range: nights for trips and stays." },
+            minDate: { type: "string", description: "Dates: earliest allowed, YYYY-MM-DD. Default today." },
+            maxDate: { type: "string", description: "Dates: latest allowed." },
+            adults: { type: "integer", description: "Flight dates: adults, only if the user said." },
+            children: { type: "integer", description: "Flight dates: children aged 2–11, only if the user said." },
+            cabin: { type: "string", enum: Object.keys(CABINS), description: "Flight dates: class, only if the user said." },
             suggestions: {
               type: "array",
               maxItems: 4,
-              description: "Dates: shortcuts that fit this question, e.g. a holiday or the dates the user mentioned. Leave out for general ones.",
+              description: "Dates: shortcuts specific to this question, e.g. a holiday or dates the user mentioned.",
               items: {
                 type: "object",
-                properties: { label: { type: "string" }, start: { type: "string", description: "YYYY-MM-DD" }, end: { type: "string", description: "YYYY-MM-DD" } },
+                properties: { label: { type: "string" }, start: { type: "string" }, end: { type: "string" } },
                 required: ["label", "start"],
               },
             },

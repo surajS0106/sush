@@ -30,7 +30,13 @@ impl OpenAiProvider {
 
     async fn stream_responses(&self, req: &ChatRequest) -> Result<EventStream, ProviderError> {
         let mut body = responses::request_body(req);
-        let resp = match check_status(NAME, self.post("responses", &body).await?).await {
+        let mut resp = check_status(NAME, self.post("responses", &body).await?).await;
+        let refused = matches!(&resp, Err(ProviderError::Http { status, message, .. }) if responses::refuses_web_search(*status, message));
+        if refused {
+            body = responses::request_body_with(req, false);
+            resp = check_status(NAME, self.post("responses", &body).await?).await;
+        }
+        let resp = match resp {
             Err(ProviderError::Http { status, message, .. }) if responses::rejects_summary(status, &message) => {
                 responses::drop_summary(&mut body);
                 check_status(NAME, self.post("responses", &body).await?).await?
@@ -244,6 +250,8 @@ impl Decoder for OpenAiDecoder {
             out.push(ChatEvent::Usage {
                 input_tokens: usage["prompt_tokens"].as_u64(),
                 output_tokens: usage["completion_tokens"].as_u64(),
+                // OpenAI caches long prompt prefixes by itself; others leave this out.
+                cached_input_tokens: usage["prompt_tokens_details"]["cached_tokens"].as_u64(),
             });
         }
         Ok(out)
@@ -298,7 +306,7 @@ data: [DONE]
         let evs = decode_all(OpenAiDecoder::default(), BASIC);
         assert_eq!(text(&evs), "Hello there!");
         assert!(evs.contains(&ChatEvent::Finish { reason: FinishReason::Stop }));
-        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(9), output_tokens: Some(3) }));
+        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(9), output_tokens: Some(3), cached_input_tokens: None }));
         assert_eq!(evs.iter().filter(|e| matches!(e, ChatEvent::Finish { .. })).count(), 1);
     }
 

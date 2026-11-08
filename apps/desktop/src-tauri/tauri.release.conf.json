@@ -8,6 +8,9 @@
   "bundle": {
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/sush-auth"],
-    "resources": { "../../viewer/dist/": "viewer/" }
+    "resources": { "../../viewer/dist/": "viewer/" },
+    "linux": {
+      "rpm": { "compression": { "type": "gzip", "level": 6 } }
+    }
   }
 }

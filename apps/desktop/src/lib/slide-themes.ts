@@ -59,20 +59,20 @@ export const isLayout = (l: unknown): l is Layout => typeof l === "string" && (L
 
 /** What the model is told about the building blocks, in the tool description. */
 export const LAYOUT_GUIDE =
-  "Layouts (one per slide): " +
-  "cover (eyebrow, h1, p.lead; big shapes on the right), " +
-  "section (a divider: eyebrow, h2, on the accent color), " +
-  "statement (one bold h2 sentence, optional p), " +
-  "bullets (eyebrow, h2, ul or ol of 3–5 short items), " +
-  "split (two <div>s side by side: e.g. text left, ul or .cards right), " +
-  "cards (eyebrow, h2, then .cards holding 2–4 .card each with h3 and p), " +
-  "stats (eyebrow, h2, then .stats holding 2–4 .stat each with .num and .label), " +
-  "quote (blockquote then cite), " +
-  "image (eyebrow, h2, p on the left; one <img> as the slide's last element fills the right half, edge to edge), " +
-  "closing (h2 and p, centered). " +
-  "Wrap a word or two of a heading in <em> for an accent-colored italic. Other classes: .eyebrow (small caps label), " +
-  ".lead (larger paragraph), .band (a strong full-width strip, e.g. a takeaway), .muted. " +
-  "Images also fit as one of split's two columns, at the top of a .card, or as the last element of a cover (shown in a circle).";
+  "Layouts: " +
+  "cover (.eyebrow, h1, p.lead), " +
+  "section (divider: .eyebrow, h2), " +
+  "statement (one bold h2, optional p), " +
+  "bullets (.eyebrow, h2, ul/ol of 3–5), " +
+  "split (two <div>s side by side), " +
+  "cards (.eyebrow, h2, .cards of 2–4 .card with h3 + p), " +
+  "stats (.eyebrow, h2, .stats of 2–4 .stat with .num + .label), " +
+  "quote (blockquote, cite), " +
+  "image (.eyebrow, h2, p; a last-element <img> fills the right half), " +
+  "closing (h2, p). " +
+  "<em> on a word or two of a heading gives an accent italic. Classes: .eyebrow (small caps), .lead, " +
+  ".band (full-width strip, e.g. a takeaway), .muted. " +
+  "An <img> also fits as a split column, atop a .card, or last in a cover (in a circle).";
 
 const LAYOUT_CSS = `
 .slide {

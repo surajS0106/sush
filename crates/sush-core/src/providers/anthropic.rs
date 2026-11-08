@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::provider::{check_status, decode_response, Decoder, Endpoint, EventStream, ModelInfo, Provider};
 use crate::sse::SseEvent;
+use crate::web;
 use crate::{ChatEvent, ChatRequest, FinishReason, Part, ProviderError, Role, WebSource};
 
 const NAME: &str = "Anthropic";
@@ -36,7 +37,14 @@ impl Provider for AnthropicProvider {
     async fn stream_chat(&self, req: ChatRequest) -> Result<EventStream, ProviderError> {
         let body = request_body(&req);
         let resp = self.request(self.http.post(self.endpoint.url("messages")).json(&body)).send().await?;
-        let resp = check_status(NAME, resp).await?;
+        let resp = match check_status(NAME, resp).await {
+            Err(ProviderError::Http { status, message, .. }) if body.get("tools").is_some() && refuses_web_tools(status, &message) => {
+                let body = request_body_with(&req, false);
+                let resp = self.request(self.http.post(self.endpoint.url("messages")).json(&body)).send().await?;
+                check_status(NAME, resp).await?
+            }
+            other => other?,
+        };
         Ok(decode_response(resp, AnthropicDecoder::default()))
     }
 
@@ -60,6 +68,19 @@ impl Provider for AnthropicProvider {
 }
 
 pub(crate) fn request_body(req: &ChatRequest) -> Value {
+    request_body_with(req, web::native_ok(req))
+}
+
+/// Some Anthropic-compatible hosts (Bedrock-style gateways, proxies) and organisations
+/// with web search turned off refuse the server tools; their requests go again with
+/// Sush's own tools instead.
+fn refuses_web_tools(status: u16, message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    (400..500).contains(&status) && (m.contains("web_search") || m.contains("web_fetch") || m.contains("web search") || m.contains("server tool"))
+}
+
+/// The request, with Anthropic's own web tools when `native_web`.
+pub(crate) fn request_body_with(req: &ChatRequest, native_web: bool) -> Value {
     // System prompts live outside `messages`; fold any system-role messages in.
     let mut system: Vec<String> = req.system.iter().filter(|s| !s.is_empty()).cloned().collect();
     let mut messages: Vec<(Role, Vec<Value>)> = Vec::new();
@@ -116,6 +137,13 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
         push(Role::User, results);
     }
 
+    // Prompt caching. A run re-sends the whole conversation on every step, so mark the
+    // end of the conversation: the next step (and the next turn) reads everything up to
+    // here from the cache at a tenth of the price. Prompts under the model's minimum
+    // cacheable length are simply not cached.
+    if let Some(block) = messages.last_mut().and_then(|(_, blocks)| blocks.last_mut()) {
+        block["cache_control"] = json!({ "type": "ephemeral" });
+    }
     let mut body = json!({
         "model": req.model,
         "max_tokens": req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
@@ -126,7 +154,9 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
             .collect::<Vec<_>>(),
     });
     if !system.is_empty() {
-        body["system"] = json!(system.join("\n\n"));
+        // Tools come before the system prompt, so this one mark caches both. They change
+        // less often than the conversation, so a new conversation still reads them cached.
+        body["system"] = json!([{ "type": "text", "text": system.join("\n\n"), "cache_control": { "type": "ephemeral" } }]);
     }
     if let Some(t) = req.temperature {
         body["temperature"] = json!(t);
@@ -137,12 +167,23 @@ pub(crate) fn request_body(req: &ChatRequest) -> Value {
     if let Some(effort) = req.effort {
         body["output_config"] = json!({ "effort": effort });
     }
+    // Sush's own web tools give way to Anthropic's server-side ones, which search
+    // without the user's Ollama key and cite what they read.
+    let is_web = |name: &str| native_web && (name == web::SEARCH || name == web::FETCH);
+    let wants_web = native_web && (req.research || req.tools.iter().any(|t| is_web(&t.name)));
     let mut tools: Vec<Value> = req
         .tools
         .iter()
+        .filter(|t| !is_web(&t.name))
         .map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.input_schema }))
         .collect();
-    if req.research {
+    // With no system prompt to mark, mark the tools themselves.
+    if system.is_empty() {
+        if let Some(last) = tools.last_mut() {
+            last["cache_control"] = json!({ "type": "ephemeral" });
+        }
+    }
+    if wants_web {
         // The 20260209 versions filter results with code before they reach the
         // context window; models without dynamic filtering get the basic ones.
         let (search, fetch) = if has_dynamic_web_tools(&req.model) {
@@ -218,6 +259,7 @@ fn has_dynamic_web_tools(model: &str) -> bool {
 #[derive(Default)]
 pub(crate) struct AnthropicDecoder {
     input_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
     /// Content-block index -> our tool-call index.
     tool_blocks: HashMap<u64, u32>,
     /// Content-block index -> (id, name, input JSON so far) for server-run tools.
@@ -236,7 +278,14 @@ impl Decoder for AnthropicDecoder {
         let v: Value = serde_json::from_str(&ev.data)?;
         let mut out = Vec::new();
         match v["type"].as_str().unwrap_or_default() {
-            "message_start" => self.input_tokens = v["message"]["usage"]["input_tokens"].as_u64(),
+            "message_start" => {
+                // `input_tokens` leaves out what was read from or written to the cache.
+                let usage = &v["message"]["usage"];
+                let read = usage["cache_read_input_tokens"].as_u64();
+                let written = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                self.input_tokens = usage["input_tokens"].as_u64().map(|i| i + read.unwrap_or(0) + written);
+                self.cached_input_tokens = read;
+            }
             "content_block_start" => {
                 let block = &v["content_block"];
                 match block["type"].as_str() {
@@ -325,7 +374,11 @@ impl Decoder for AnthropicDecoder {
             }
             "message_delta" => {
                 if let Some(output) = v["usage"]["output_tokens"].as_u64() {
-                    out.push(ChatEvent::Usage { input_tokens: self.input_tokens, output_tokens: Some(output) });
+                    out.push(ChatEvent::Usage {
+                        input_tokens: self.input_tokens,
+                        output_tokens: Some(output),
+                        cached_input_tokens: self.cached_input_tokens,
+                    });
                 }
                 if let Some(reason) = v["delta"]["stop_reason"].as_str() {
                     self.finished = true;
@@ -426,7 +479,7 @@ data: {"type":"message_stop"}
         let evs = decode_all(AnthropicDecoder::default(), BASIC);
         assert_eq!(evs[0], ChatEvent::ReasoningDelta { delta: "Hmm.".into() });
         assert_eq!(text(&evs), "Hello world");
-        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(12), output_tokens: Some(15) }));
+        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(12), output_tokens: Some(15), cached_input_tokens: None }));
         assert_eq!(evs.last(), Some(&ChatEvent::Finish { reason: FinishReason::Stop }));
     }
 
@@ -493,7 +546,10 @@ data: {"type":"message_stop"}
             ],
         };
         let body = request_body(&req);
-        assert_eq!(body["system"], "be brief\n\nextra rules");
+        assert_eq!(
+            body["system"],
+            json!([{"type": "text", "text": "be brief\n\nextra rules", "cache_control": {"type": "ephemeral"}}])
+        );
         assert_eq!(body["max_tokens"], DEFAULT_MAX_TOKENS);
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3);
@@ -502,10 +558,48 @@ data: {"type":"message_stop"}
         assert_eq!(msgs[1]["content"], json!([{"type": "tool_use", "id": "t1", "name": "ls", "input": {}}]));
         assert_eq!(msgs[2]["role"], "user");
         assert_eq!(msgs[2]["content"][0]["type"], "tool_result");
+        // The conversation's end is marked for caching; the system prompt covers the tools.
+        assert_eq!(msgs[2]["content"][0]["cache_control"], json!({"type": "ephemeral"}));
+        assert!(msgs[0]["content"][1].get("cache_control").is_none());
         assert_eq!(
             body["tools"],
             json!([{"name": "ask_user", "description": "Ask the user", "input_schema": {"type": "object"}}])
         );
+    }
+
+    #[test]
+    fn counts_cached_input_in_the_total() {
+        let body = r#"event: message_start
+data: {"type":"message_start","message":{"usage":{"input_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":100,"output_tokens":1}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":7}}
+
+"#;
+        let evs = decode_all(AnthropicDecoder::default(), body);
+        assert!(evs.contains(&ChatEvent::Usage { input_tokens: Some(1005), output_tokens: Some(7), cached_input_tokens: Some(900) }));
+    }
+
+    #[test]
+    fn marks_the_tools_for_caching_without_a_system_prompt() {
+        let req = ChatRequest {
+            model: "claude-x".into(),
+            messages: vec![Message::text(Role::User, "hi")],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![
+                ToolSpec { name: "a".into(), description: "A".into(), input_schema: json!({"type": "object"}) },
+                ToolSpec { name: "b".into(), description: "B".into(), input_schema: json!({"type": "object"}) },
+            ],
+            research: false,
+            thinking: None,
+            effort: None,
+        };
+        let body = request_body(&req);
+        assert!(body["tools"][0].get("cache_control").is_none());
+        assert_eq!(body["tools"][1]["cache_control"], json!({"type": "ephemeral"}));
+        assert_eq!(body["messages"][0]["content"][0]["cache_control"], json!({"type": "ephemeral"}));
     }
 
     #[test]
@@ -595,6 +689,37 @@ data: {"type":"message_stop"}
         assert_eq!(types("claude-sonnet-4-6"), ["web_search_20260209", "web_fetch_20260209"]);
         assert_eq!(types("claude-haiku-5-5"), ["web_search_20250305", "web_fetch_20250910"]);
         assert_eq!(types("claude-opus-4-5-20251101"), ["web_search_20250305", "web_fetch_20250910"]);
+    }
+
+    #[test]
+    fn sush_web_tools_become_anthropics_unless_refused() {
+        let spec = |name: &str| ToolSpec { name: name.into(), description: "d".into(), input_schema: json!({"type": "object"}) };
+        let req = ChatRequest {
+            model: "claude-opus-5-5".into(),
+            messages: vec![Message::text(Role::User, "news?")],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![spec("ls"), spec(web::SEARCH), spec(web::FETCH)],
+            research: false,
+            thinking: None,
+            effort: None,
+        };
+        let names = |body: Value| -> Vec<String> {
+            body["tools"].as_array().unwrap().iter().map(|t| t["type"].as_str().or(t["name"].as_str()).unwrap().to_owned()).collect()
+        };
+        assert_eq!(names(request_body(&req)), ["ls", "web_search_20260209", "web_fetch_20260209"]);
+        assert_eq!(names(request_body_with(&req, false)), ["ls", "web_search", "web_fetch"]);
+        // A conversation that already called Sush's tools keeps them.
+        let mut earlier = req.clone();
+        earlier.messages.push(Message {
+            role: Role::Assistant,
+            parts: vec![Part::ToolCall { id: "c1".into(), name: web::SEARCH.into(), input: json!({ "query": "q" }) }],
+        });
+        assert_eq!(names(request_body(&earlier)), ["ls", "web_search", "web_fetch"]);
+        assert!(refuses_web_tools(400, "web_search is not enabled for this organization"));
+        assert!(!refuses_web_tools(400, "messages: field required"));
+        assert!(!refuses_web_tools(529, "web search overloaded"));
     }
 
     #[test]

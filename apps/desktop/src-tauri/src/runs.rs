@@ -919,7 +919,8 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
         return Ok((config, Some(cowork), Some(ReportRun { report, role })));
     }
     let Some(workspace) = workspace else {
-        add_subagents(&mut config, thread);
+        // A plain chat seldom needs sub-agents, so their tool loads on demand there.
+        add_subagents(&mut config, thread, true);
         return Ok((config, None, None));
     };
     let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
@@ -943,17 +944,17 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
     });
     // Approval is decided per call by `Host::approval`; this is only the fallback.
     config.tools.extend(
-        ws_tools::specs(workspace.access, git.is_some()).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+        ws_tools::specs(workspace.access, git.is_some()).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask, deferred: false }),
     );
     config.tools.extend(
-        browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask }),
+        browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask, deferred: false }),
     );
-    add_subagents(&mut config, thread);
+    add_subagents(&mut config, thread, false);
     Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None))
 }
 
 /// A session's run can start sub-agents; a sub-agent's gets their instructions instead.
-fn add_subagents(config: &mut RunConfig, thread: &ThreadMeta) {
+fn add_subagents(config: &mut RunConfig, thread: &ThreadMeta, deferred: bool) {
     if thread.parent_id.is_some() {
         let section = subagents::system_section();
         config.system = Some(match config.system.take() {
@@ -961,7 +962,7 @@ fn add_subagents(config: &mut RunConfig, thread: &ThreadMeta) {
             None => section.to_string(),
         });
     } else {
-        config.tools.push(RunTool { spec: subagents::spec(), exec: ToolExec::Agent, approval: Approval::Auto });
+        config.tools.push(RunTool { spec: subagents::spec(), exec: ToolExec::Agent, approval: Approval::Auto, deferred });
     }
 }
 
@@ -982,10 +983,10 @@ fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspa
         ws_tools::system_section(&workspace, &fs, &sandbox, None)
     ));
     config.tools.extend(
-        ws_tools::specs(Access::ReadOnly, false).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask }),
+        ws_tools::specs(Access::ReadOnly, false).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Workspace, approval: Approval::Ask, deferred: false }),
     );
     config.tools.extend(
-        reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto }),
+        reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto, deferred: false }),
     );
     Ok((config, Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }))
 }

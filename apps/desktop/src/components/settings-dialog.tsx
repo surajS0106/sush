@@ -7,6 +7,7 @@ import {
   CircleUserIcon,
   FishIcon,
   GaugeIcon,
+  GlobeIcon,
   ImageIcon,
   KeyRoundIcon,
   LogOutIcon,
@@ -35,6 +36,7 @@ import { ImagesSection } from "@/components/images-section";
 import { MapsSection } from "@/components/maps-section";
 import { MemorySection } from "@/components/memory-section";
 import { ProvidersSection } from "@/components/providers-section";
+import { SearchSection } from "@/components/search-section";
 import { SharingSection } from "@/components/sharing-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
@@ -73,11 +75,12 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Settings",
     items: [
-      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width motion animation units temperature celsius fahrenheit weather" },
+      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width glass blur frosted composer motion animation units temperature celsius fahrenheit weather" },
       { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out delete account" },
       { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
       { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
+      { id: "search", label: "Search", icon: GlobeIcon, keywords: "web search internet browse fetch pages research ollama api key sources citations" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
       { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
       { id: "maps", label: "Maps", icon: MapIcon, keywords: "google directions route location address home api key travel" },
@@ -199,6 +202,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "sushi" && <SushiSection />}
           {state?.section === "providers" && <ProvidersSection providers={providers} onChanged={onProvidersChanged} />}
           {state?.section === "usage" && <UsageSection providers={providers} />}
+          {state?.section === "search" && <SearchSection />}
           {state?.section === "speech" && <SpeechSection providers={providers} />}
           {state?.section === "images" && <ImagesSection providers={providers} />}
           {state?.section === "maps" && <MapsSection />}
@@ -281,6 +285,19 @@ function GeneralSection() {
               { value: "narrow", label: "Narrow" },
               { value: "medium", label: "Medium" },
               { value: "wide", label: "Wide" },
+            ]}
+          />
+        </Setting>
+        <Setting title="Composer glass" description="How the message box shows the conversation scrolling behind it.">
+          <Segmented
+            label="Composer glass"
+            value={appearance.glass}
+            onChange={(glass) => setAppearance({ glass })}
+            options={[
+              { value: "frosted", label: "Frosted" },
+              { value: "clear", label: "Clear" },
+              { value: "tinted", label: "Tinted" },
+              { value: "solid", label: "Solid" },
             ]}
           />
         </Setting>

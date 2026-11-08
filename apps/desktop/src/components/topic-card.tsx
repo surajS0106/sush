@@ -65,8 +65,8 @@ export function TopicPhotos({ images, title }: { images: TopicImage[]; title: st
   const hidden = working.length - shown.length;
   const caption = working.length === 1 ? working[0].caption : null;
   return (
-    <figure className="flex max-w-2xl flex-col gap-2">
-      <div className={cn("grid h-72 grid-rows-2 gap-1 overflow-hidden rounded-xl", shown.length === 1 ? "grid-cols-1" : "grid-cols-2")}>
+    <figure className="flex w-full flex-col gap-2">
+      <div className={cn("grid aspect-[2/1] max-h-[28rem] min-h-56 w-full grid-rows-2 gap-1 overflow-hidden rounded-xl", shown.length === 1 ? "grid-cols-1" : "grid-cols-2")}>
         {shown.map((image, i) => (
           <button
             key={image.thumb}

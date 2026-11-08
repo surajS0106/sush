@@ -63,7 +63,10 @@ export interface Prefs {
   referenceChats: boolean;
   /** Allow sensitive topics (health, beliefs, ...) in memory. */
   memorySensitive: boolean;
+  /** The composer's Research mode: search thoroughly and cite. Needs `webSearch`. */
   research: boolean;
+  /** Offer web search and page reading; the model decides when to use them. */
+  webSearch: boolean;
   designSystemId: string | null;
   permissionMode: PermissionMode;
   /** The composer's thinking switch; null follows the model. `lib/reasoning.ts` fits it to each model. */
@@ -79,6 +82,7 @@ const DEFAULT_PREFS: Prefs = {
   referenceChats: true,
   memorySensitive: false,
   research: false,
+  webSearch: true,
   designSystemId: null,
   permissionMode: "manual",
 };
@@ -350,6 +354,7 @@ export type SettingsSection =
   | "images"
   | "maps"
   | "flights"
+  | "search"
   | "memory"
   | "sharing"
   | "design"

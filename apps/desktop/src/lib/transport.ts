@@ -14,8 +14,15 @@ export interface ModelTarget {
 export interface SushMetadata {
   providerId?: string;
   model?: string;
+  /** Input tokens billed across every model step of the reply; each step re-reads the conversation. */
   inputTokens?: number;
   outputTokens?: number;
+  /** The part of `inputTokens` read from the provider's prompt cache. */
+  cachedInputTokens?: number;
+  /** The last step's input: how big the conversation the model read was. */
+  contextTokens?: number;
+  /** How many model steps (calls) the reply took. */
+  steps?: number;
   /** When the reply started (ms); missing on replies saved before it was recorded. */
   createdAt?: number;
   /** On a reply that was stopped before it finished; Resume carries on from it. */

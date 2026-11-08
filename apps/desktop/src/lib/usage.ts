@@ -91,7 +91,7 @@ export function summarizeUsage(conversations: Conversation[], localProviders: Se
       const input = meta.inputTokens ?? 0;
       const output = meta.outputTokens;
       const local = localProviders.has(meta.providerId ?? "");
-      const usd = costUsd(meta.model, input, output, local);
+      const usd = costUsd(meta.model, input, output, local, meta.cachedInputTokens);
       add(total, input, output, usd);
       add(kind, input, output, usd);
       counted = true;
@@ -179,7 +179,7 @@ export function activity(conversations: Conversation[], localProviders: Set<stri
       const input = meta.inputTokens ?? 0;
       const name = meta.model ?? "Unknown model";
       day.tokens.set(name, (day.tokens.get(name) ?? 0) + input + meta.outputTokens);
-      day.usd += costUsd(meta.model, input, meta.outputTokens, localProviders.has(meta.providerId ?? "")) ?? 0;
+      day.usd += costUsd(meta.model, input, meta.outputTokens, localProviders.has(meta.providerId ?? ""), meta.cachedInputTokens) ?? 0;
     }
   }
   return { days, messages, hours };

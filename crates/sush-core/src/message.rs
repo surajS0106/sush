@@ -134,7 +134,14 @@ pub enum ChatEvent {
     ReasoningItem { item: Value },
     /// Incremental tool call. `id`/`name` arrive on the first delta for an index.
     ToolCallDelta { index: u32, id: Option<String>, name: Option<String>, args_delta: String },
-    Usage { input_tokens: Option<u64>, output_tokens: Option<u64> },
+    /// `input_tokens` is everything the model read, cached or not; `cached_input_tokens`
+    /// the part of it served from the provider's prompt cache (billed at a fraction).
+    Usage {
+        input_tokens: Option<u64>,
+        output_tokens: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cached_input_tokens: Option<u64>,
+    },
     /// The provider ran one of its own tools (e.g. web search) mid-response.
     /// Informational: the host has nothing to execute.
     ServerToolCall { id: String, name: String, input: Value },

@@ -27,7 +27,7 @@ import { toast } from "sonner";
 import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
 import { budgetBlock } from "@/lib/budget";
 import { library } from "@/lib/library";
-import { expandMentions } from "@/lib/mentions";
+import { expandMentions, mentionSegments } from "@/lib/mentions";
 import { getProject } from "@/lib/projects";
 import { reasoningCaps, reasoningRequest } from "@/lib/reasoning";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
@@ -341,7 +341,8 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
     providerId: target.providerId,
     model: target.model,
     system: ctx.system ?? null,
-    tools: runTools(ctx.tools),
+    // A connector the user @-mentioned is offered from the start; the rest load on demand.
+    tools: runTools(ctx.tools, { mentioned: mentionedConnectors(messages) }),
     research: ctx.research,
     ...reasoning,
     expansions,
@@ -350,11 +351,25 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   };
 }
 
-async function start(id: string, action: RunAction, messages: SushUIMessage[]) {
+/** Connectors @-mentioned in the conversation's user messages. */
+function mentionedConnectors(messages: SushUIMessage[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    if (m.role !== "user") continue;
+    for (const p of m.parts) {
+      if (p.type !== "text") continue;
+      for (const s of mentionSegments(p.text)) if (s.connector) ids.add(s.connector.id);
+    }
+  }
+  return ids;
+}
+
+async function start(id: string, action: RunAction, messages: SushUIMessage[], adjust?: (config: RunConfig) => RunConfig) {
   const thread = threadMeta(id);
   if (!thread) return;
   try {
-    const config = runConfig(id, messages);
+    const base = runConfig(id, messages);
+    const config = adjust ? adjust(base) : base;
     // Past the budget's limit, new requests wait; finishing a turn that's waiting on a tool call doesn't.
     const blocked = action.type === "respond" ? null : budgetBlock(config.providerId);
     if (blocked) throw new Error(blocked);
@@ -465,11 +480,41 @@ export async function restoreCheckpoint(id: string, messageId: string) {
   return api.threadRewind(thread, messageId);
 }
 
+/** How a regenerated reply should differ from the one it replaces. */
+export interface RegenerateOptions {
+  /** What the user wants changed ("Ask to change response", or a quick pick like shorter). */
+  instruction?: string;
+  /** Search the web for this answer, whatever the composer's setting (Claude providers only). */
+  research?: boolean;
+}
+
 /** Ask again for an assistant message (by default the last one). */
-export function regenerate(id: string, messageId?: string) {
+export function regenerate(id: string, messageId?: string, options: RegenerateOptions = {}) {
   if (isSharedThread(id)) return;
   setView(id, (v) => ({ ...v, status: "submitted", error: undefined }));
-  void start(id, { type: "regenerate", messageId: messageId ?? null }, current(id));
+  const messages = current(id);
+  void start(id, { type: "regenerate", messageId: messageId ?? null }, messages, (config) =>
+    withChange(config, messages, messageId, options),
+  );
+}
+
+/**
+ * A regenerate's config with what the user asked to change. The request goes
+ * to the model with the user message the reply answered, for this run only:
+ * the thread keeps the message as the user wrote it.
+ */
+function withChange(config: RunConfig, messages: SushUIMessage[], messageId: string | undefined, options: RegenerateOptions): RunConfig {
+  const next = options.research ? { ...config, research: true } : config;
+  const instruction = options.instruction?.trim();
+  if (!instruction) return next;
+  const at = messageId ? messages.findIndex((m) => m.id === messageId) : -1;
+  const asked = messages
+    .slice(0, at < 0 ? messages.length : at)
+    .findLast((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.resumed);
+  if (!asked) return next;
+  const text = config.expansions[asked.id] ?? asked.parts.find((p) => p.type === "text")?.text ?? "";
+  const note = `<regenerate>\nYou already answered this once, and the user asked for a new answer with this change: ${instruction}\nWrite the whole answer again with that change; don't mention this note.\n</regenerate>`;
+  return { ...next, expansions: { ...config.expansions, [asked.id]: text ? `${text}\n\n${note}` : note } };
 }
 
 /**

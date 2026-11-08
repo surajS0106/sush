@@ -5,10 +5,29 @@ name: Release
 on:
   push:
     tags: ["v*"]
+    # Also on main when dependencies change (and weekly, before GitHub evicts unused caches
+    # and to pick up a new stable rustc), to compile them into a cache the tag builds can use:
+    # a tag's run can only read caches saved on itself or on main, never on an earlier tag.
+    # These runs only build; they publish nothing.
+    branches: [main]
+    paths:
+      - "Cargo.lock"
+      - "**/Cargo.toml"
+      - ".github/workflows/release.yml"
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # True for the cache-warming runs (main and the weekly schedule), which skip bundling and publishing.
+  WARM: ${{ github.ref_type == 'branch' && github.event_name != 'workflow_dispatch' }}
 
 jobs:
   build:
@@ -46,7 +65,9 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: release-${{ matrix.target }}
+          # A cache saved on a tag is unreadable by every other tag, so only main saves.
+          save-if: ${{ github.ref_type == 'branch' }}
 
       - run: bun install --frozen-lockfile
 
@@ -68,10 +89,19 @@ jobs:
 
       # macOS 26 swaps the app icon with the system appearance; needs Xcode's actool.
       - name: Compile adaptive macOS icon
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.WARM != 'true'
         run: apps/desktop/src-tauri/icons/build-mac-icon.sh
 
+      # Cache warming: the same cargo build as a release, without bundles or a GitHub release.
+      - name: Build (cache warming only)
+        if: env.WARM == 'true'
+        working-directory: apps/desktop
+        env:
+          VITE_AUTH_URL: http://localhost:47321
+        run: bun tauri build --no-bundle --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
+
       - uses: tauri-apps/tauri-action@v0
+        if: env.WARM != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_AUTH_URL: http://localhost:47321

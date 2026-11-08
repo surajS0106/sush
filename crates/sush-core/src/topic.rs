@@ -15,7 +15,7 @@ const SITE: &str = "https://en.wikipedia.org";
 const TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_IMAGES: usize = 16;
 const MAX_REFERENCES: usize = 8;
-const MAX_EXTRACT: usize = 6000;
+const MAX_EXTRACT: usize = 3000;
 /// Words in a file's name that mean a diagram or emblem rather than a picture of the subject.
 const NOT_PHOTOS: [&str; 10] = ["seal", "flag", "signature", "icon", "logo", "map", "coat", "election", "electoral", "results"];
 

@@ -228,7 +228,7 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
           onCheckedChange={(on) => setPrefs({ research: on })}
         >
           <TelescopeIcon /> Research
-          {!researchAvailable && <span className="ml-auto text-xs font-normal">Claude only</span>}
+          {!researchAvailable && <span className="ml-auto text-xs font-normal">Web search off</span>}
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={prefs.memory}

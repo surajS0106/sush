@@ -19,21 +19,17 @@ export const SLIDE_H = 1080;
 export const slidesTool: ToolSpec = {
   name: SLIDES_WRITE,
   description:
-    "Show a slide deck (a presentation) in a panel beside the chat, where the user can page through it, present it, " +
-    "comment on slides and export it to PowerPoint. Use it whenever the user asks for slides, a deck, a ppt or a presentation. " +
-    "Pick a `theme` that suits the topic and a `layout` for each slide; the theme supplies the colors, fonts, spacing and " +
-    "decorative shapes, so each slide's `html` is just its content: semantic tags and the classes below, with no wrapper " +
-    "and no inline styles. Vary layouts: open with cover, end with closing, and don't use the same layout twice in a row. " +
+    "Show a slide deck in a panel beside the chat (page, present, comment, export to PowerPoint). Use it for any request " +
+    "for slides, a deck, a ppt or a presentation. The `theme` supplies colors, fonts, spacing and shapes, so each slide's " +
+    "`html` is only content: semantic tags and the classes below, no wrapper, no inline styles. Open with cover, end with " +
+    "closing, never the same layout twice in a row. " +
     LAYOUT_GUIDE +
-    " Keep slides short: a heading and at most ~35 words or 5 bullets. Put what the presenter would say in `notes`. " +
-    "Only add `css` for something the layouts can't do (it applies to every slide; `.slide` is each 1920×1080 slide's root; " +
-    "scripts and web fonts are not loaded). Pictures: never invent image URLs; write <img data-search=\"…\" alt=\"…\"> and " +
-    "the app finds a real picture on Wikipedia for the search, so name the subject plainly as a Wikipedia article would " +
-    "(e.g. data-search=\"Ichigo Kurosaki\", data-search=\"Mount Fuji\"), not a description of the shot. Use src only for a " +
-    "URL the user gave you. No CSS background images. A picture that can't be found is dropped, so each slide must read " +
-    "well without it. Always pass the complete deck. To revise it, call this again " +
-    "with the same id and every slide, changed or not; each call becomes a new version. Don't repeat the slide text in " +
-    "your reply; summarise in a few lines what you made or changed.",
+    " Per slide: a heading and at most ~35 words or 5 bullets; the talk goes in `notes`. `css` only for what layouts can't " +
+    "do (applies to every slide; `.slide` is the 1920×1080 root; no scripts or web fonts). Pictures: never invent URLs; " +
+    "write <img data-search=\"…\" alt=\"…\"> naming the subject as a Wikipedia article title (e.g. \"Mount Fuji\") and the " +
+    "app finds a real photo; src only for a URL the user gave. No CSS background images. An unfound picture is dropped, " +
+    "so slides must read well without it. Always pass every slide; revise by calling again with the same id (a new " +
+    "version). In your reply, summarise in a few lines; don't repeat slide text.",
   inputSchema: {
     type: "object",
     properties: {
@@ -44,8 +40,8 @@ export const slidesTool: ToolSpec = {
         type: "string",
         enum: THEME_NAMES,
         description:
-          "ember: dark plum, terracotta and gold, serif. paper: warm off-white and clay, serif. ocean: deep navy and teal, " +
-          "bold sans. forest: sage and deep green, serif. mono: black with a red-orange accent, tight sans. blush: soft pink and berry, serif.",
+          "Suit the topic. ember: dark plum/terracotta/gold, serif. paper: off-white/clay, serif. ocean: navy/teal, bold sans. " +
+          "forest: sage/green, serif. mono: black/red-orange, tight sans. blush: pink/berry, serif.",
       },
       css: { type: "string", description: "Optional extra CSS for every slide" },
       slides: {

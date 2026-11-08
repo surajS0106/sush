@@ -7,7 +7,7 @@ import type { DynamicToolUIPart } from "ai";
 import { CheckIcon, ChevronRightIcon, ListTreeIcon } from "lucide-react";
 import { Children, useState } from "react";
 
-import { toolKind } from "@/lib/agent";
+import { TOOLS_LOAD, toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
 import { SLIDES_WRITE } from "@/lib/slides";
 import { isInstamartCartTool } from "@/lib/instamart-cart";
@@ -40,11 +40,12 @@ function groupable(p: Part, supersededCart: boolean) {
 export function groupParts(parts: Part[], keep?: string): (number | number[])[] {
   const out: (number | number[])[] = [];
   let run: number[] = [];
+  const shown = (p: Part) => p.type === "dynamic-tool" && p.toolName !== TOOLS_LOAD;
   const flush = () => {
-    const tools = run.filter((i) => parts[i].type === "dynamic-tool").length;
+    const tools = run.filter((i) => shown(parts[i])).length;
     const visible = run.filter((i) => {
       const p = parts[i];
-      return p.type === "dynamic-tool" || (p.type === "reasoning" && !!p.text);
+      return shown(p) || (p.type === "reasoning" && !!p.text);
     }).length;
     if (tools > 0 && visible >= 2) out.push(run);
     else out.push(...run);
@@ -70,7 +71,7 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
   const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, browser: 0, other: 0 };
   let failed = 0;
   for (const p of parts) {
-    if (p.type !== "dynamic-tool") continue;
+    if (p.type !== "dynamic-tool" || p.toolName === TOOLS_LOAD) continue;
     if (p.state === "output-error") failed++;
     const name = p.toolName;
     if (name === "fs_read") count.read++;

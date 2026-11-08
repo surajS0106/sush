@@ -16,7 +16,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -33,6 +33,7 @@ import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/
 import { Composer, replyStage } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
+import { ReadAloudAction, ResponseMenu } from "@/components/response-menu";
 import { AgentTeam, SubagentReport, withTeams } from "@/components/subagents";
 import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
 import { ControlBanner } from "@/components/control-banner";
@@ -75,6 +76,7 @@ import {
   editMessage,
   regenerate,
   respond,
+  type RegenerateOptions,
   restoreCheckpoint,
   resume,
   sendMessage,
@@ -89,13 +91,14 @@ import {
   useQueued,
   useThread,
 } from "@/lib/sessions";
-import { setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
+import { forkConversation, setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { InstamartThread, instamartThread } from "@/lib/instamart-cart";
 import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
 import { errorMessage, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { formatTokens, formatTokensExact } from "@/lib/usage";
 import { cn } from "@/lib/utils";
+import { partWebSources } from "@/lib/web";
 import { CurrentWorkspace, takePendingWorktree, useTurnChanges, useWorkspace } from "@/lib/workspaces";
 
 interface ChatViewProps {
@@ -110,9 +113,11 @@ interface ChatViewProps {
    * collaborator suggests messages. The host checks each.
    */
   watching?: ShareView;
+  /** Open another session (a reply's "Branch in new chat"). */
+  onOpenSession?: (id: string) => void;
 }
 
-export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, watching }: ChatViewProps) {
+export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, watching, onOpenSession }: ChatViewProps) {
   const id = conversation.id;
   // The run lives in Rust, so it keeps going when another chat is opened.
   const { messages, status: runStatus, error } = useThread(id);
@@ -144,8 +149,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const project = useProjects().find((p) => p.id === conversation.projectId);
   const { data: session } = useSession();
   const firstName = session?.user.name?.trim().split(/\s+/)[0];
-  // Research uses Anthropic's server-side web tools, so only Claude providers get it.
-  const researchAvailable = catalog.find((c) => c.provider.id === target?.providerId)?.provider.format === "anthropic-messages";
+  // Research searches harder with the web tools, so it needs them on (Settings → Search).
+  const researchAvailable = prefs.webSearch;
   setSessionResearch(id, prefs.research && researchAvailable);
   setProviderFormats(catalog.map((c) => c.provider));
 
@@ -240,6 +245,19 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // Messages only redraw when what they show changes, so they call the latest `restore` through this.
   const restoreRef = useRef(restore);
   restoreRef.current = restore;
+
+  // The composer dock floats over the transcript; its height goes to `--dock-h` on the chat column so
+  // the transcript's bottom padding and the scroll button clear it as it grows (attachments, banners).
+  const dockObserver = useRef<ResizeObserver | null>(null);
+  const dockRef = useCallback((el: HTMLDivElement | null) => {
+    dockObserver.current?.disconnect();
+    dockObserver.current = null;
+    const column = el?.parentElement;
+    if (!el || !column) return;
+    const observer = new ResizeObserver(() => column.style.setProperty("--dock-h", `${el.offsetHeight}px`));
+    observer.observe(el);
+    dockObserver.current = observer;
+  }, []);
 
   // Providers served from this machine (Ollama, LM Studio) cost nothing per token.
   const localProviders = useMemo(
@@ -398,7 +416,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <TranscriptResizer />
       <Conversation className="min-h-0 flex-1">
-        <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 py-8">
+        {/* The dock floats over the transcript, so the last message clears it by its measured height. */}
+        <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 pt-8 pb-[calc(var(--dock-h,0px)+2rem)]">
           {incognito && (
             <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
               <GhostIcon className="size-3.5" /> Incognito: this chat isn’t saved and is deleted when you leave it
@@ -412,7 +431,17 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               local={localProviders.has(message.metadata?.providerId ?? "")}
               logo={messageLogo(message, catalog)}
               canRegenerate={!watching && !busy && message.id === lastAssistantId}
-              onRegenerate={() => regenerate(id, message.id)}
+              onRegenerate={(options) => regenerate(id, message.id, options)}
+              researchAvailable={researchAvailable}
+              onBranch={
+                watching || incognito || !onOpenSession
+                  ? undefined
+                  : () => {
+                      const branch = forkConversation(id, message.id);
+                      if (branch) onOpenSession(branch.id);
+                      else toast.error("Couldn’t branch this chat");
+                    }
+              }
               canEdit={!watching && !busy}
               onEdit={(text) => edit(message, text)}
               onRestore={watching ? undefined : () => restoreRef.current(message)}
@@ -457,10 +486,15 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
             </Alert>
           )}
         </ConversationContent>
-        <ConversationScrollButton />
+        <ConversationScrollButton className="bottom-[calc(var(--dock-h,0px)+1rem)] z-20" />
       </Conversation>
 
-      <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
+      {/* Floats over the transcript so messages scroll behind the glass composer. Clicks pass through
+          its gutters to the transcript; only its own controls take them. */}
+      <div
+        ref={dockRef}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 mx-auto w-full max-w-(--transcript-width) px-6 pb-6 [&>*]:pointer-events-auto"
+      >
         {share && <ControlBanner share={share} />}
         {share && <SuggestionQueue share={share} />}
         {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
@@ -674,7 +708,11 @@ interface ChatMessageProps {
   local: boolean;
   logo?: string;
   canRegenerate: boolean;
-  onRegenerate: () => void;
+  onRegenerate: (options?: RegenerateOptions) => void;
+  /** Whether a regenerate can search the web (the session's model is Claude). */
+  researchAvailable: boolean;
+  /** A new chat with the thread up to this reply; none where a session can't branch. */
+  onBranch?: () => void;
   canEdit: boolean;
   onEdit: (text: string) => void;
   /** Go back to before this user message (the session and, in Cowork, its files); none for a watched session. */
@@ -706,6 +744,8 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
     a.local === b.local &&
     a.logo === b.logo &&
     a.canRegenerate === b.canRegenerate &&
+    a.researchAvailable === b.researchAvailable &&
+    !a.onBranch === !b.onBranch &&
     a.canEdit === b.canEdit &&
     a.canAnswer === b.canAnswer &&
     a.threadId === b.threadId &&
@@ -725,6 +765,11 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
 function endsWithToolResult(message: SushUIMessage) {
   const lastPart = message.parts.findLast((p) => p.type !== "step-start");
   return lastPart?.type === "dynamic-tool" && (lastPart.state === "output-available" || lastPart.state === "output-error");
+}
+
+/** Whether a reply cited pages or its web searches turned some up, for "View sources". */
+function hasWebSources(message: SushUIMessage, cited: unknown[]) {
+  return cited.length > 0 || message.parts.some((p) => partWebSources(p).length > 0);
 }
 
 function hasVisibleContent(message: SushUIMessage) {
@@ -824,6 +869,8 @@ const ChatMessage = memo(function ChatMessage({
   logo,
   canRegenerate,
   onRegenerate,
+  researchAvailable,
+  onBranch,
   canEdit,
   onEdit,
   onRestore,
@@ -874,8 +921,8 @@ const ChatMessage = memo(function ChatMessage({
       </Message>
     );
   }
-  const { inputTokens, outputTokens, model } = message.metadata ?? {};
-  const cost = formatCost(model, inputTokens, outputTokens, local);
+  const { inputTokens, outputTokens, cachedInputTokens, contextTokens, steps, model } = message.metadata ?? {};
+  const cost = formatCost(model, inputTokens, outputTokens, local, cachedInputTokens);
 
   const renderPart = (part: SushUIMessage["parts"][number], i: number) => {
     const key = `${message.id}-${i}`;
@@ -1026,14 +1073,35 @@ const ChatMessage = memo(function ChatMessage({
           <div className="flex items-center gap-2">
             <MessageActions>
               <CopyMessageAction text={text} />
+              <ReadAloudAction text={text} />
               {canRegenerate && (
-                <MessageAction tooltip="Regenerate" onClick={onRegenerate}>
+                <MessageAction tooltip="Regenerate" onClick={() => onRegenerate()}>
                   <RefreshCcwIcon className="size-3.5" />
                 </MessageAction>
               )}
+              {(canRegenerate || onBranch || message.metadata?.createdAt !== undefined || hasWebSources(message, sources)) && (
+                <ResponseMenu
+                  message={message}
+                  cited={sources}
+                  threadId={threadId}
+                  canRegenerate={canRegenerate}
+                  onRegenerate={onRegenerate}
+                  researchAvailable={researchAvailable}
+                  onBranch={onBranch}
+                />
+              )}
             </MessageActions>
             {(model || outputTokens !== undefined) && (
-              <MessageStats model={model} logo={logo} inputTokens={inputTokens} outputTokens={outputTokens} cost={cost} />
+              <MessageStats
+                model={model}
+                logo={logo}
+                inputTokens={inputTokens}
+                outputTokens={outputTokens}
+                cachedTokens={cachedInputTokens}
+                contextTokens={contextTokens}
+                steps={steps}
+                cost={cost}
+              />
             )}
           </div>
         )}
@@ -1055,11 +1123,17 @@ interface MessageStatsProps {
   logo?: string;
   inputTokens?: number;
   outputTokens?: number;
+  cachedTokens?: number;
+  contextTokens?: number;
+  steps?: number;
   cost?: string;
 }
 
 /** Model, token usage and cost under an assistant reply; fades in on hover. */
-function MessageStats({ model, logo, inputTokens, outputTokens, cost }: MessageStatsProps) {
+function MessageStats({ model, logo, inputTokens, outputTokens, cachedTokens, contextTokens, steps, cost }: MessageStatsProps) {
+  // The arrow shows how big the conversation was (the last step's input); every step of a
+  // reply re-reads it, so the billed total, in the tooltip, grows with each tool call.
+  const shown = contextTokens ?? inputTokens;
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
       {model && (
@@ -1077,7 +1151,7 @@ function MessageStats({ model, logo, inputTokens, outputTokens, cost }: MessageS
                 <span className="flex cursor-default items-center gap-1.5 tabular-nums">
                   <span className="flex items-center gap-0.5">
                     <ArrowUpIcon className="size-3 opacity-60" />
-                    {inputTokens === undefined ? "?" : formatTokens(inputTokens)}
+                    {shown === undefined ? "?" : formatTokens(shown)}
                   </span>
                   <span className="flex items-center gap-0.5">
                     <ArrowDownIcon className="size-3 opacity-60" />
@@ -1086,9 +1160,14 @@ function MessageStats({ model, logo, inputTokens, outputTokens, cost }: MessageS
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                <p className="tabular-nums">
-                  {inputTokens === undefined ? "?" : formatTokensExact(inputTokens)} input · {formatTokensExact(outputTokens)} output tokens
-                </p>
+                <div className="space-y-0.5 tabular-nums">
+                  {contextTokens !== undefined && <p>{formatTokensExact(contextTokens)} tokens of context</p>}
+                  <p>
+                    {inputTokens === undefined ? "?" : formatTokensExact(inputTokens)} input
+                    {steps !== undefined && steps > 1 && ` across ${steps} model calls`} · {formatTokensExact(outputTokens)} output
+                  </p>
+                  {!!cachedTokens && <p>{formatTokensExact(cachedTokens)} input read from cache</p>}
+                </div>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>

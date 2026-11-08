@@ -125,6 +125,9 @@ pub struct RunTool {
     pub spec: ToolSpec,
     pub exec: ToolExec,
     pub approval: Approval,
+    /// Left out of requests until the model loads it with `tools_load` (`super::deferred`).
+    #[serde(default)]
+    pub deferred: bool,
 }
 
 /// Where a tool runs.
@@ -488,13 +491,17 @@ impl Runner<'_> {
             return Ok(None);
         }
         self.status(RunStatus::Submitted, None);
+        let system = match (self.config.system.clone(), super::deferred::system_section(&self.config.tools)) {
+            (Some(system), Some(section)) => Some(format!("{system}\n\n---\n\n{section}")),
+            (system, section) => system.or(section),
+        };
         let request = ChatRequest {
             model: self.config.model.clone(),
             messages: ui::to_core(&self.messages, &self.config.expansions),
-            system: self.config.system.clone(),
+            system,
             max_tokens: None,
             temperature: None,
-            tools: self.config.tools.iter().map(|t| t.spec.clone()).collect(),
+            tools: super::deferred::offered(&self.config.tools, &self.messages),
             research: self.config.research,
             thinking: self.config.thinking,
             effort: self.config.effort,
@@ -605,6 +612,11 @@ impl Runner<'_> {
         };
 
         for (index, call) in open {
+            if call.name == super::deferred::TOOLS_LOAD {
+                let result = super::deferred::load(&self.config.tools, &call.input);
+                self.set_result(index, &call, result);
+                continue;
+            }
             match self.tool(&call.name).cloned() {
                 None => self.set_result(index, &call, Err(format!(
                     "Unknown tool {}. It may belong to a connector that was turned off.",
@@ -771,7 +783,7 @@ fn now_ms() -> u64 {
 
 /// A config with these tools, for tests and simple hosts.
 pub fn tools(specs: impl IntoIterator<Item = (ToolSpec, ToolExec, Approval)>) -> Vec<RunTool> {
-    specs.into_iter().map(|(spec, exec, approval)| RunTool { spec, exec, approval }).collect()
+    specs.into_iter().map(|(spec, exec, approval)| RunTool { spec, exec, approval, deferred: false }).collect()
 }
 
 #[cfg(test)]
