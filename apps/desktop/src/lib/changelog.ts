@@ -24,15 +24,22 @@ export interface Release {
 }
 
 /** Landed since the last release; never shown. Becomes the next release's notes. */
-export const UNRELEASED: Change[] = [
-  { kind: "new", text: "Dictation goes through Yammer, Sush's dictation app: press the mic or Ctrl+D and it types what you say into the message box. Without Yammer, Sush walks you through getting it, or keeps using its own in Settings → Speech." },
-  { kind: "new", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
-  { kind: "improved", text: "Claude and GPT models use their provider's own web search." },
-  { kind: "improved", text: "Specialised tools load only when a model needs them, so replies start faster and cost less." },
-  { kind: "new", text: "What's new: see what changed in each release, here and after every update." },
-];
+export const UNRELEASED: Change[] = [];
 
 export const CHANGELOG: Release[] = [
+  {
+    version: "2.6.0",
+    date: "2026-11-08",
+    summary: "Web search, dictation through Yammer, and What's new.",
+    changes: [
+      { kind: "new", text: "Dictation goes through Yammer, Sush's dictation app: press the mic or Ctrl+D and it types what you say into the message box. Without Yammer, Sush walks you through getting it, or keeps using its own in Settings → Speech." },
+      { kind: "new", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
+      { kind: "improved", text: "Claude and GPT models use their provider's own web search." },
+      { kind: "improved", text: "Specialised tools load only when a model needs them, so replies start faster and cost less." },
+      { kind: "new", text: "What's new: see what changed in each release, here and after every update." },
+      { kind: "fixed", text: "Checking for updates tries again when GitHub is briefly down, and says what went wrong in plain words." },
+    ],
+  },
   {
     version: "2.4.0",
     date: "2026-11-06",

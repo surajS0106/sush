@@ -2,7 +2,7 @@
   "name": "server",
   "private": true,
   "license": "MIT",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/index.ts",
