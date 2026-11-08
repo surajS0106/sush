@@ -785,6 +785,16 @@ export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
 /** How a provider transcribes: OpenAI-style `/audio/transcriptions`, or Ollama chat with an audio-capable model. */
 export type TranscribeApi = "transcriptions" | "ollama-chat";
 
+/** Yammer, Sush's dictation app (`src-tauri/src/yammer.rs`). */
+export interface YammerStatus {
+  installed: boolean;
+  running: boolean;
+  /** Yammer's first-run setup is done. */
+  onboarded: boolean;
+  /** Yammer's global hotkey, in Tauri's accelerator syntax. */
+  hotkey: string | null;
+}
+
 /** How a provider makes images: OpenAI-style `/images/generations`, or chat completions asking for image output (OpenRouter). */
 export type ImageApi = "images" | "chat-modalities";
 export type ImageAspect = "square" | "landscape" | "portrait";
@@ -1209,6 +1219,11 @@ export const api = {
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),
   transcribeLocal: (audioBase64Wav: string) => invoke<string>("transcribe_local", { audioBase64Wav }),
+  yammerStatus: () => invoke<YammerStatus>("yammer_status"),
+  /** Start or finish a Yammer dictation; true if Yammer had to be started first. */
+  yammerToggle: () => invoke<boolean>("yammer_toggle"),
+  /** Show Yammer's window (its setup and settings). */
+  yammerOpen: () => invoke<void>("yammer_open"),
   /** A tab was dragged out of this window's strip and let go (`windows.rs`); `last` if it was the only one. */
   tabDrop: (threadId: string, last: boolean) => invoke<TabDrop>("tab_drop", { threadId, last }),
   /** A torn-off tab is being dragged (null: the drag is over); true while another window's strip is under the cursor. */

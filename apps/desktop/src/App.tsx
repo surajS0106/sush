@@ -15,6 +15,8 @@ import { ShareActivityButton } from "@/components/share-activity";
 import { JoinSessionDialog, ShareButton, SharePresence } from "@/components/shared-sessions";
 import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
+import { WhatsNewDialog } from "@/components/changelog";
+import { checkWhatsNew } from "@/lib/changelog";
 import { PanelToggles, WorkspaceChip } from "@/components/workspace-panel";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
@@ -177,6 +179,8 @@ export default function App() {
     void syncConnectors();
     whenLeader(startScheduler);
     whenLeader(startPriceAlerts);
+    // After an update, the notes for what changed (once, in one window).
+    whenLeader(() => void checkWhatsNew());
   }, []);
 
   // Alert as usage crosses the budget's thresholds.
@@ -268,6 +272,7 @@ export default function App() {
         <SessionDialogs />
         <JoinSessionDialog onJoined={openShared} />
         <SettingsDialog providers={providers ?? []} onProvidersChanged={() => void refresh()} />
+        <WhatsNewDialog />
         <Toaster richColors position="bottom-right" />
       </TooltipProvider>
     </MotionConfig>

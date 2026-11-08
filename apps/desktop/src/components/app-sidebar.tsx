@@ -29,6 +29,7 @@ import {
   Trash2Icon,
   XIcon,
 } from "lucide-react";
+import { ConfettiIcon } from "@phosphor-icons/react";
 import { useTheme } from "next-themes";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -634,7 +635,7 @@ function ProjectRow({
           <SidebarMenuButton tooltip={p.name}>
             <FolderKanbanIcon />
             <span>{p.name}</span>
-            <ChevronRightIcon className="ml-auto size-3.5! text-muted-foreground transition-transform group-data-[state=open]/project:rotate-90 group-hover/menu-item:hidden" />
+            <ChevronRightIcon className="ml-auto size-3.5! text-muted-foreground transition-transform group-data-[state=open]/project:rotate-90 group-hover/menu-item:hidden group-focus-within/menu-item:hidden group-has-[[data-slot=sidebar-menu-action][aria-expanded=true]]/menu-item:hidden" />
           </SidebarMenuButton>
         </CollapsibleTrigger>
         <SidebarMenuAction showOnHover className="right-7" aria-label={`New chat in ${p.name}`} title="New chat in project" onClick={() => onNewChat(p.id)}>
@@ -766,6 +767,9 @@ function ProfileMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void checkForUpdate()}>
           <DownloadIcon /> <span>Check for updates</span>
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => openSettings({ section: "changelog" })}>
+          <ConfettiIcon /> <span>What's new</span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => comingSoon("Help")}>
           <CircleHelpIcon /> <span>Get help</span>

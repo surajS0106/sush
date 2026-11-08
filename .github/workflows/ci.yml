@@ -14,7 +14,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Bun comes from GitHub's release downloads, which sometimes answer 504: try three times.
       - uses: oven-sh/setup-bun@v2
+        id: bun1
+        continue-on-error: true
+        with: &bun
+          bun-version: 1.2.20
+      - if: steps.bun1.outcome == 'failure'
+        run: sleep 30
+      - uses: oven-sh/setup-bun@v2
+        id: bun2
+        if: steps.bun1.outcome == 'failure'
+        continue-on-error: true
+        with: *bun
+      - if: steps.bun2.outcome == 'failure'
+        run: sleep 60
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun2.outcome == 'failure'
+        with: *bun
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun --filter desktop build

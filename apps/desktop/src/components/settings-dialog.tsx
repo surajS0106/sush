@@ -1,6 +1,7 @@
 // Settings: one window for app preferences, the account, providers and the
 // Customize sections. Opened at a section via openSettings (lib/library.ts).
 
+import { ConfettiIcon } from "@phosphor-icons/react";
 import {
   BlocksIcon,
   BrainIcon,
@@ -26,9 +27,10 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useTheme } from "next-themes";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ComponentType, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { ChangelogSection } from "@/components/changelog";
 import { ConnectorsSection } from "@/components/connectors-section";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { FlightsSection } from "@/components/flights-section";
@@ -66,7 +68,7 @@ import { setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib
 interface NavItem {
   id: SettingsSection;
   label: string;
-  icon: typeof SettingsIcon;
+  icon: ComponentType<{ className?: string }>;
   /** Extra words the nav search matches, e.g. the settings on the page. */
   keywords: string;
 }
@@ -96,6 +98,12 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "skills", label: "Skills", icon: ScrollTextIcon, keywords: "instructions" },
       { id: "connectors", label: "Connectors", icon: PlugIcon, keywords: "mcp tools servers" },
       { id: "plugins", label: "Plugins", icon: BlocksIcon, keywords: "extensions install" },
+    ],
+  },
+  {
+    group: "About",
+    items: [
+      { id: "changelog", label: "What's new", icon: ConfettiIcon, keywords: "changelog release notes version updates upgrade" },
     ],
   },
 ];
@@ -213,6 +221,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "skills" && <SkillsSection />}
           {state?.section === "connectors" && <ConnectorsSection />}
           {state?.section === "plugins" && <PluginsSection />}
+          {state?.section === "changelog" && <ChangelogSection />}
         </motion.div>
       </DialogContent>
     </Dialog>

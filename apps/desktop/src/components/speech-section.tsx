@@ -1,9 +1,14 @@
-// Settings → Speech: which provider and model transcribe dictation. The same
-// controls appear in the dictation error dialog, laid out as stacked fields.
+// Settings → Speech: who dictates (Yammer by default, or Sush itself), and for
+// Sush's own dictation which provider and model transcribe. Those controls also
+// appear in the dictation error dialog, laid out as stacked fields.
 
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { DownloadIcon, ExternalLinkIcon } from "lucide-react";
 import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
+import { Button } from "@/components/ui/button";
+import { openYammer, useYammerStatus } from "@/components/yammer-setup-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DropdownMenu } from "@/components/ui/DropdownMenu";
@@ -12,8 +17,12 @@ import {
   canTranscribe,
   DEFAULT_OLLAMA_MODEL,
   defaultApi,
+  dictationEngine,
+  hotkeyLabel,
   setSpeechSettings,
   useSpeechSettings,
+  YAMMER_DOWNLOAD_URL,
+  type DictationEngine,
 } from "@/lib/speech";
 import { api, type ModelInfo, type ProviderView, type TranscribeApi } from "@/lib/tauri";
 
@@ -121,11 +130,76 @@ function ApiPicker({ form }: { form: Form }) {
   );
 }
 
+function YammerSettings() {
+  const status = useYammerStatus(true);
+  const installed = !!status?.installed;
+  return (
+    <>
+      <Setting
+        title="Yammer"
+        description={
+          !status
+            ? "Looking for Yammer…"
+            : !installed
+              ? "Not installed yet. Yammer is Sush's free dictation app: it transcribes on this computer and types into any app."
+              : status.onboarded
+                ? status.running
+                  ? "Installed and running. It starts by itself when you dictate."
+                  : "Installed. It starts by itself when you dictate."
+                : "Installed. Open it to finish its setup: a speech model and the microphone."
+        }
+      >
+        {installed ? (
+          <Button variant="outline" size="sm" onClick={() => void openYammer()}>
+            <ExternalLinkIcon /> Open Yammer
+          </Button>
+        ) : (
+          <Button size="sm" disabled={!status} onClick={() => void openUrl(YAMMER_DOWNLOAD_URL)}>
+            <DownloadIcon /> Download
+          </Button>
+        )}
+      </Setting>
+      <Setting
+        title="Shortcut"
+        description="Ctrl+D in Sush starts dictating, and again finishes; Yammer types the text into the message box. Its own hotkey works in every app. Esc cancels. Speech model, language and clean-up are set in Yammer."
+      >
+        <span className="flex gap-1.5">
+          <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">Ctrl+D</kbd>
+          <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">{hotkeyLabel(status?.hotkey)}</kbd>
+        </span>
+      </Setting>
+    </>
+  );
+}
+
 export function SpeechSection({ providers }: { providers: ProviderView[] }) {
   const form = useSpeechForm(providers);
+  const engine = dictationEngine(useSpeechSettings());
   return (
     <Page>
       <Group title="Dictation">
+        <Setting title="Dictate with" description="Yammer is Sush's dictation app and works everywhere. Sush's built-in dictation needs nothing else installed.">
+          <Segmented<DictationEngine>
+            label="Dictation engine"
+            value={engine}
+            onChange={(v) => setSpeechSettings({ engine: v })}
+            options={[
+              { value: "yammer", label: "Yammer" },
+              { value: "sush", label: "Built-in" },
+            ]}
+          />
+        </Setting>
+        {engine === "yammer" && <YammerSettings />}
+      </Group>
+      {engine === "sush" && <SushSpeech form={form} providers={providers} />}
+    </Page>
+  );
+}
+
+function SushSpeech({ form, providers }: { form: Form; providers: ProviderView[] }) {
+  return (
+    <>
+      <Group title="Built-in dictation">
         <Setting title="Provider" description={`Where your recorded speech is sent to be transcribed. ${PROVIDER_HINT}`}>
           <ProviderSelect form={form} providers={providers} />
         </Setting>
@@ -148,7 +222,7 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
           Whisper base.en runs on this computer. It downloads once (142 MB) the first time you dictate.
         </p>
       )}
-    </Page>
+    </>
   );
 }
 

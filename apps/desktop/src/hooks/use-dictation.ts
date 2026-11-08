@@ -4,6 +4,8 @@ import { toast } from "sonner";
 
 import {
   chunkSeconds,
+  dictationEngine,
+  getSpeechSettings,
   isLive,
   resolveSpeechTarget,
   SAMPLE_RATE,
@@ -13,9 +15,10 @@ import {
   type Recording,
   type SpeechTarget,
 } from "@/lib/speech";
-import { api, errorMessage, type ProviderView } from "@/lib/tauri";
+import { api, errorMessage, type ProviderView, type YammerStatus } from "@/lib/tauri";
 
-export type DictationStatus = "idle" | "recording" | "downloading" | "transcribing";
+/** `starting`: Yammer is being launched to take the dictation. */
+export type DictationStatus = "idle" | "recording" | "downloading" | "transcribing" | "starting";
 
 /** Why dictation stopped short. `audio` is what's still untranscribed, kept so
  *  the user can switch model and retry without speaking again. */
@@ -82,17 +85,32 @@ interface Session extends Transcript {
 }
 
 /**
- * Dictation into a text field, using the provider and model from Settings →
- * Speech. Toggle once to record, again to finish. Local models transcribe
- * live, writing into the field as you speak; others transcribe on stop. The
- * transcript is appended to whatever was in the field when recording started.
+ * Dictation into a text field. By default Yammer, Sush's dictation app, takes
+ * it: the toggle starts or finishes a Yammer dictation and Yammer pastes the
+ * transcript at the cursor, so `focus` puts the cursor back in the field
+ * first. Without Yammer installed and set up, `yammerSetup` holds its status
+ * for the setup dialog.
+ *
+ * With Settings → Speech set to Sush's own dictation, it uses the provider and
+ * model picked there. Toggle once to record, again to finish. Local models
+ * transcribe live, writing into the field as you speak; others transcribe on
+ * stop. The transcript is appended to whatever was in the field when
+ * recording started.
  */
-export function useDictation(value: string, setValue: (v: string) => void, providers: ProviderView[]) {
+export function useDictation(
+  value: string,
+  setValue: (v: string) => void,
+  providers: ProviderView[],
+  focus?: () => void,
+) {
   const [status, setStatus] = useState<DictationStatus>("idle");
   const [failure, setFailure] = useState<DictationFailure | null>(null);
   /** Built-in model download progress, 0 to 1. */
   const [progress, setProgress] = useState(0);
   const settings = useSpeechSettings();
+  const engine = dictationEngine(settings);
+  /** Yammer's status while its setup dialog is open. */
+  const [yammerSetup, setYammerSetup] = useState<YammerStatus | null>(null);
   const session = useRef<Session | null>(null);
   const starting = useRef(false);
   const valueRef = useRef(value);
@@ -252,10 +270,43 @@ export function useDictation(value: string, setValue: (v: string) => void, provi
     await transcribe(s, rest);
   }, [show, transcribe]);
 
+  /** Start or finish a Yammer dictation, or open its setup if it isn't ready. */
+  const viaYammer = useCallback(async () => {
+    focus?.();
+    try {
+      const st = await api.yammerStatus();
+      if (!st.installed || !st.onboarded) {
+        setYammerSetup(st);
+        return;
+      }
+      if (!st.running) setStatus("starting");
+      await api.yammerToggle();
+      // Yammer pastes into whatever has focus, so make sure it's still the field.
+      focus?.();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setStatus("idle");
+    }
+  }, [focus]);
+
   const toggle = useCallback(() => {
     if (session.current) void stop();
-    else if (status === "idle") void start();
-  }, [start, stop, status]);
+    else if (status !== "idle") return;
+    else if (engine === "yammer") void viaYammer();
+    else void start();
+  }, [start, stop, status, engine, viaYammer]);
+
+  /** Close the Yammer setup dialog; with `dictate`, go on to dictate (Yammer is ready, or the user picked Sush's own). */
+  const closeYammerSetup = useCallback(
+    (dictate = false) => {
+      setYammerSetup(null);
+      if (!dictate) return;
+      if (dictationEngine(getSpeechSettings()) === "yammer") void viaYammer();
+      else void start();
+    },
+    [viaYammer, start],
+  );
 
   /** Retry with the current speech settings: re-send the kept audio, or start recording if there was none. */
   const retry = useCallback(() => {
@@ -281,5 +332,5 @@ export function useDictation(value: string, setValue: (v: string) => void, provi
     [],
   );
 
-  return { status, progress, toggle, stop, cancel, failure, retry, dismiss };
+  return { status, progress, toggle, stop, cancel, failure, retry, dismiss, engine, yammerSetup, closeYammerSetup };
 }

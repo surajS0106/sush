@@ -35,7 +35,7 @@ export async function checkForUpdate(quiet = false) {
   if (state.status !== "idle" && state.status !== "available") return;
   set({ status: "checking" });
   try {
-    const update = await check();
+    const update = await checkWithRetry();
     if (update) {
       pending = update;
       set({ status: "available", version: update.version });
@@ -47,8 +47,28 @@ export async function checkForUpdate(quiet = false) {
   } catch (e) {
     // Dev builds and offline machines have no feed to read; that's only worth a word when asked.
     set({ status: "idle" });
-    if (!quiet) toast.error(`Couldn't check for updates: ${e instanceof Error ? e.message : String(e)}`);
+    if (!quiet) toast.error("Couldn't check for updates", { description: describeCheckError(e) });
   }
+}
+
+/** GitHub's release downloads sometimes answer 5xx for a moment, so a failed check gets two more tries. */
+async function checkWithRetry(): Promise<Update | null> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await check({ timeout: 20_000 });
+    } catch (e) {
+      if (attempt >= 2) throw e;
+      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+    }
+  }
+}
+
+function describeCheckError(e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e);
+  // The plugin says this when the feed answered with an error status (GitHub down, or a release mid-publish).
+  if (/valid release JSON/i.test(message)) return "The update server didn't respond properly. Try again in a few minutes.";
+  if (/error sending request|dns|connect|timed? ?out/i.test(message)) return "Couldn't reach the update server. Check your connection and try again.";
+  return message;
 }
 
 /** Download and install the latest release, then restart into it. */

@@ -30,6 +30,7 @@ mod whisper;
 mod widgets;
 mod windows;
 mod workspaces;
+mod yammer;
 
 use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::Manager;
@@ -220,6 +221,9 @@ pub fn run() {
             windows::tab_drop,
             windows::tab_hover,
             windows::session_window,
+            yammer::yammer_status,
+            yammer::yammer_toggle,
+            yammer::yammer_open,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sush")

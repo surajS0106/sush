@@ -1,5 +1,5 @@
-// Dictation: which provider/model transcribes (Settings → Speech), and
-// recording the microphone as 16 kHz mono WAV for it.
+// Dictation: Yammer (Sush's dictation app) by default, or Sush's own: which
+// provider/model transcribes (Settings → Speech), and recording the microphone as 16 kHz mono WAV for it.
 
 import { useSyncExternalStore } from "react";
 
@@ -9,8 +9,13 @@ import type { ProviderView, TranscribeApi } from "@/lib/tauri";
 /** The built-in Whisper model, which isn't a configured provider. */
 export const BUILTIN = "builtin";
 
+/** Who dictates: Yammer (Sush's dictation app, the default) or Sush itself. */
+export type DictationEngine = "yammer" | "sush";
+
 export interface SpeechSettings {
-  /** null or BUILTIN: the built-in Whisper model. Otherwise a provider id. */
+  /** Missing in settings saved before Yammer, which means Yammer. */
+  engine?: DictationEngine;
+  /** Sush's own dictation. null or BUILTIN: the built-in Whisper model. Otherwise a provider id. */
   providerId: string | null;
   model: string;
   api: TranscribeApi;
@@ -25,9 +30,31 @@ const speech = createStore<SpeechSettings>("sush.speech", {
 });
 
 export const useSpeechSettings = () => useSyncExternalStore(speech.subscribe, speech.get);
+export const getSpeechSettings = speech.get;
 export const setSpeechSettings = (patch: Partial<SpeechSettings>) => speech.set((s) => ({ ...s, ...patch }));
 
-export const isOllama = (p: ProviderView) => /:11434(\/|$)/.test(p.baseUrl);
+export const dictationEngine = (s: SpeechSettings): DictationEngine => s.engine ?? "yammer";
+
+// --- Yammer --------------------------------------------------------------------------
+
+export const YAMMER_DOWNLOAD_URL = "https://github.com/surajS0106/yammer/releases/latest";
+
+const IS_MAC = navigator.userAgent.includes("Mac");
+
+/** A Tauri accelerator ("CommandOrControl+Shift+Space") as the keys to press. */
+export function hotkeyLabel(accelerator: string | null | undefined) {
+  const keys = (accelerator || "CommandOrControl+Shift+Space").split("+").map((k) => {
+    if (/^(CommandOrControl|CmdOrCtrl|CommandOrCtrl)$/i.test(k)) return IS_MAC ? "⌘" : "Ctrl";
+    if (/^(Command|Cmd|Super|Meta)$/i.test(k)) return IS_MAC ? "⌘" : "Win";
+    if (/^(Control|Ctrl)$/i.test(k)) return IS_MAC ? "⌃" : "Ctrl";
+    if (/^(Alt|Option)$/i.test(k)) return IS_MAC ? "⌥" : "Alt";
+    if (/^Shift$/i.test(k)) return IS_MAC ? "⇧" : "Shift";
+    return k.replace(/^Key(?=[A-Z]$)/, "").replace(/^Digit(?=\d$)/, "");
+  });
+  return keys.join(IS_MAC ? "" : "+");
+}
+
+export const isOllama =(p: ProviderView) => /:11434(\/|$)/.test(p.baseUrl);
 /** Claude can't take audio input, so Anthropic-format providers can't transcribe. */
 export const canTranscribe = (p: ProviderView) => p.format === "openai-chat";
 

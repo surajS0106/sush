@@ -59,7 +59,28 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev pkg-config cmake libclang-dev
 
+      # Bun comes from GitHub's release downloads, which sometimes answer 504: try three times.
+      # Pinned to the version the lockfile is made with, which also skips a "latest" lookup.
       - uses: oven-sh/setup-bun@v2
+        id: bun1
+        continue-on-error: true
+        with: &bun
+          bun-version: 1.2.20
+      - if: steps.bun1.outcome == 'failure'
+        shell: bash
+        run: sleep 30
+      - uses: oven-sh/setup-bun@v2
+        id: bun2
+        if: steps.bun1.outcome == 'failure'
+        continue-on-error: true
+        with: *bun
+      - if: steps.bun2.outcome == 'failure'
+        shell: bash
+        run: sleep 60
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun2.outcome == 'failure'
+        with: *bun
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -100,20 +121,61 @@ jobs:
           VITE_AUTH_URL: http://localhost:47321
         run: bun tauri build --no-bundle --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
 
+      # Bundling downloads its tools from GitHub (NSIS and WiX on Windows, linuxdeploy for the
+      # AppImage), which can answer 504 too. Keep them between runs; tags read main's copy.
+      - uses: actions/cache@v4
+        if: runner.os != 'macOS'
+        with:
+          path: |
+            ~/AppData/Local/tauri
+            ~/.cache/tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+
+      # Bundles and publishes; tried a second time if a download fails. The retry reuses the
+      # compiled crates, and uploads to the same release.
       - uses: tauri-apps/tauri-action@v0
+        id: bundle1
         if: env.WARM != 'true'
-        env:
+        continue-on-error: true
+        env: &bundle-env
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_AUTH_URL: http://localhost:47321
           # Signs the update bundles; the app checks them against the pubkey in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
+        with: &bundle-with
           projectPath: apps/desktop
           tauriScript: bun tauri
           args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json ${{ matrix.extra_config }}
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: Sush ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseBody: See the assets below to download the installer for your platform.
-          releaseDraft: false
+          # A draft until every platform is up (the publish job): a published release is what
+          # /releases/latest points at, so publishing early sends the app's update check to a
+          # release with no latest.json yet, and it fails with a 404.
+          releaseDraft: true
           prerelease: false
+      - if: steps.bundle1.outcome == 'failure'
+        shell: bash
+        run: sleep 60
+      - uses: tauri-apps/tauri-action@v0
+        if: steps.bundle1.outcome == 'failure'
+        env: *bundle-env
+        with: *bundle-with
+
+  # Publishes the draft once every build has uploaded its bundles and its part of latest.json.
+  # If any platform failed it stays a draft, and the update feed keeps serving the previous release.
+  publish:
+    needs: build
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then tag="${{ github.ref_name }}"
+          else tag="v$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"; fi
+          gh release edit "$tag" --draft=false --latest

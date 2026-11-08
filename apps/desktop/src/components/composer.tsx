@@ -1,7 +1,7 @@
 import type { ChatStatus } from "ai";
 import { ArrowUpIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   PromptInput,
@@ -23,6 +23,7 @@ import { hasHighlight, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } 
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { YammerSetupDialog } from "@/components/yammer-setup-dialog";
 import { useDictation } from "@/hooks/use-dictation";
 import type { ProviderModels } from "@/hooks/use-providers";
 import { FOLDER_MEDIA_TYPE, type ModelTarget, type SushUIMessage } from "@/lib/transport";
@@ -99,7 +100,10 @@ export function Composer({
   const steering = busy && canSend;
   const [promptIndex, setPromptIndex] = useState(0);
   const speechProviders = useMemo(() => catalog.map((c) => c.provider), [catalog]);
-  const dictation = useDictation(textInput.value, textInput.setInput, speechProviders);
+  const textBoxRef = useRef<HTMLDivElement>(null);
+  // Yammer pastes at the cursor, so dictating through it puts the cursor back in the box.
+  const focusTextBox = useCallback(() => textBoxRef.current?.querySelector("textarea")?.focus(), []);
+  const dictation = useDictation(textInput.value, textInput.setInput, speechProviders, focusTextBox);
   const listening = dictation.status === "recording";
   const dictating = dictation.status !== "idle";
   const slash = useSlashMenu(textInput.value, textInput.setInput);
@@ -206,7 +210,7 @@ export function Composer({
             </InputGroupAddon>
           )}
           <PromptInputBody>
-            <div className="relative w-full">
+            <div ref={textBoxRef} className="relative w-full">
               <SlashHighlight value={textInput.value} className={TEXT_BOX} scrollRef={highlightRef} />
               <PromptInputTextarea
                 placeholder=""
@@ -243,7 +247,9 @@ export function Composer({
                         ? "Listening… speak, then press Ctrl+D to finish or Esc to cancel"
                         : dictation.status === "downloading"
                           ? `Downloading speech model… ${Math.round(dictation.progress * 100)}%`
-                          : dictating
+                          : dictation.status === "starting"
+                            ? "Starting Yammer…"
+                            : dictating
                             ? "Transcribing…"
                             : busy
                               ? STEER_PLACEHOLDER
@@ -278,6 +284,8 @@ export function Composer({
                     aria-label={listening ? "Stop dictating" : "Dictate"}
                     aria-pressed={listening}
                     disabled={dictating && !listening}
+                    // Keep the cursor in the box: Yammer pastes wherever it is.
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={dictation.toggle}
                     className={cn(
                       "relative flex size-8 items-center justify-center rounded-full transition-colors",
@@ -298,7 +306,8 @@ export function Composer({
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
-                  {listening ? "Stop dictating" : "Dictate"} <span className="ml-1 text-muted-foreground">Ctrl+D</span>
+                  {listening ? "Stop dictating" : dictation.engine === "yammer" ? "Dictate with Yammer" : "Dictate"}{" "}
+                  <span className="ml-1 text-muted-foreground">Ctrl+D</span>
                 </TooltipContent>
               </Tooltip>
               <div className="relative">
@@ -360,6 +369,7 @@ export function Composer({
         onRetry={dictation.retry}
         onDismiss={dictation.dismiss}
       />
+      <YammerSetupDialog status={dictation.yammerSetup} onClose={dictation.closeYammerSetup} />
     </div>
   );
 }

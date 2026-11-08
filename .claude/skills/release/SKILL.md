@@ -24,6 +24,10 @@ Target version: `$ARGUMENTS`. If it's empty, ask for it. It must be plain semver
 
 Confirm with: `git grep -n "<old-version>" -- '*.json' Cargo.toml` (should find no version fields).
 
+## 2b. Release notes
+
+Users see these in Settings → What's new, and once after updating (`apps/desktop/src/lib/changelog.ts`). Move `UNRELEASED` into a new entry at the top of `CHANGELOG` (`version`, today's `date`, a one-line `summary`), then empty `UNRELEASED`. Check `git log v<old-version>..HEAD` for user-facing changes it's missing. Write for users: what they can now do, not how it's built.
+
 ## 3. Commit and tag
 
 ```sh

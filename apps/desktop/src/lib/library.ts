@@ -360,7 +360,8 @@ export type SettingsSection =
   | "design"
   | "skills"
   | "connectors"
-  | "plugins";
+  | "plugins"
+  | "changelog";
 
 export interface SettingsState {
   section: SettingsSection;
