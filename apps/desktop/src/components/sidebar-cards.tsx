@@ -251,6 +251,36 @@ function GettingStarted({ onNew, onCowork, onAutomations }: GettingStartedProps)
   const connectors = useConnectors();
   const automations = useAutomations();
   const skills = useSkills();
+  const reduceMotion = useReducedMotion() || document.documentElement.dataset.motion === "reduced";
+  const [leaving, setLeaving] = useState(false);
+  // Whether the card has been seen with steps left: if everything was already done when it first
+  // loaded, it hides at once instead of celebrating.
+  const seenIncomplete = useRef(false);
+
+  const complete =
+    hasProvider === true &&
+    chatted &&
+    workspaces.length > 0 &&
+    connectors.length > 0 &&
+    automations.length > 0 &&
+    skills.length > 0;
+  const hide = () => cards.set((s) => ({ ...s, gettingStartedHidden: true }));
+
+  // At 100% the card shows "All set!" for a moment, then folds away for good.
+  useEffect(() => {
+    if (gettingStartedHidden || hasProvider === null) return;
+    if (!complete) {
+      seenIncomplete.current = true;
+      setLeaving(false);
+      return;
+    }
+    if (!seenIncomplete.current) {
+      hide();
+      return;
+    }
+    const t = setTimeout(() => setLeaving(true), 1600);
+    return () => clearTimeout(t);
+  }, [complete, gettingStartedHidden, hasProvider]);
 
   if (gettingStartedHidden || hasProvider === null) return null;
 
@@ -264,10 +294,15 @@ function GettingStarted({ onNew, onCowork, onAutomations }: GettingStartedProps)
   ];
   const done = steps.filter((s) => s.done).length;
   const pct = Math.round((done / steps.length) * 100);
-  const hide = () => cards.set((s) => ({ ...s, gettingStartedHidden: true }));
 
   return (
-    <div className={cardClass}>
+    <motion.div
+      className={cn(cardClass, "overflow-hidden")}
+      initial={false}
+      animate={leaving ? { opacity: 0, height: 0, marginTop: -8, borderWidth: 0 } : { opacity: 1, height: "auto" }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.35, ease: [0.4, 0, 0.2, 1] }}
+      onAnimationComplete={() => leaving && hide()}
+    >
       <button
         type="button"
         onClick={() => setOpen(!open)}
@@ -330,6 +365,6 @@ function GettingStarted({ onNew, onCowork, onAutomations }: GettingStartedProps)
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </motion.div>
   );
 }
