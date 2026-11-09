@@ -28,7 +28,7 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "A task board, a Connectors page, and your favourite models first.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
