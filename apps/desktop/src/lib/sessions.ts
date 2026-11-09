@@ -510,7 +510,7 @@ function withChange(config: RunConfig, messages: SushUIMessage[], messageId: str
   const at = messageId ? messages.findIndex((m) => m.id === messageId) : -1;
   const asked = messages
     .slice(0, at < 0 ? messages.length : at)
-    .findLast((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.resumed);
+    .findLast((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.resumed && !m.metadata?.compaction);
   if (!asked) return next;
   const text = config.expansions[asked.id] ?? asked.parts.find((p) => p.type === "text")?.text ?? "";
   const note = `<regenerate>\nYou already answered this once, and the user asked for a new answer with this change: ${instruction}\nWrite the whole answer again with that change; don't mention this note.\n</regenerate>`;
@@ -529,7 +529,7 @@ export function addAgent(id: string, anchor: string, task: string, others: strin
   const messages = current(id);
   // The turn the graph belongs to: the user message before the reply that started it.
   const at = messages.findIndex((m) => m.parts.some((p) => p.type === "dynamic-tool" && p.toolCallId === anchor));
-  const turn = messages.slice(0, at < 0 ? messages.length : at).findLast((m) => m.role === "user" && !m.metadata?.subagentReport);
+  const turn = messages.slice(0, at < 0 ? messages.length : at).findLast((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.compaction);
   const request = turn?.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n").trim();
   const prompt = [
     task.trim(),

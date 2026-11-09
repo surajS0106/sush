@@ -531,17 +531,19 @@ function SkillSavePart({ part, canAnswer, onResult }: ToolPartProps) {
 const DISCARDED_AUTOMATION = "The user discarded this automation. Ask what they'd like changed.";
 
 function AutomationSavePart({ part, canAnswer, onResult }: ToolPartProps) {
-  const input = part.state === "input-streaming" ? null : parseAutomationSave(part.input);
+  const parsed = part.state === "input-streaming" ? null : parseAutomationSave(part.input);
+  const input = parsed?.ok ? parsed.value : null;
+  const invalid = parsed && !parsed.ok ? parsed.error : null;
   // Made in a Cowork session, its runs work in the same folder.
   const workspace = useContext(CurrentWorkspace);
 
   const reported = useRef(false);
   useEffect(() => {
-    if (part.state === "input-available" && !input && canAnswer && !reported.current) {
+    if (part.state === "input-available" && invalid && canAnswer && !reported.current) {
       reported.current = true;
-      onResult({ errorText: "Invalid automation_save input: name, prompt and a valid frequency are required." });
+      onResult({ errorText: invalid });
     }
-  }, [part.state, input, canAnswer, onResult]);
+  }, [part.state, invalid, canAnswer, onResult]);
 
   const name = (part.input as { name?: string } | undefined)?.name ?? "automation";
   const label = (

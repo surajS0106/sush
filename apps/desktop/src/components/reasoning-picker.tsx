@@ -1,18 +1,8 @@
-// The composer's thinking and effort menu. Every option stays listed, and what the
-// picked model doesn't accept is disabled, with the reason below.
+// The composer's thinking and effort control, like a video player's volume: the bars
+// are the mute button (thinking on/off) and a slider grows out beside them on hover.
+// Steps the picked model doesn't accept are dimmed and skipped.
 
-import { ChevronDownIcon } from "lucide-react";
-
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { useRef, useState } from "react";
 import type { ProviderModels } from "@/hooks/use-providers";
 import { setPrefs, usePrefs } from "@/lib/library";
 import { EFFORTS, effectiveReasoning, effortAllowed, effortLabel, reasoningCaps } from "@/lib/reasoning";
@@ -20,18 +10,13 @@ import type { Effort } from "@/lib/tauri";
 import type { ModelTarget } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
-const AUTO = "auto";
-
-/** Every label the pill can show. They're stacked invisibly under the current one so its width never changes. */
-const PILL_LABELS = ["Thinking", "Thinking off", ...EFFORTS.map((e) => e.label)];
-
-/** Each level's color, on the bars and the pill around them. */
-const EFFORT_STYLE: Record<Effort, { bars: string; pill: string }> = {
-  low: { bars: "text-effort-low", pill: "border-effort-low/40 bg-effort-low/10 hover:bg-effort-low/15" },
-  medium: { bars: "text-effort-medium", pill: "border-effort-medium/40 bg-effort-medium/10 hover:bg-effort-medium/15" },
-  high: { bars: "text-effort-high", pill: "border-effort-high/40 bg-effort-high/10 hover:bg-effort-high/15" },
-  xhigh: { bars: "text-effort-xhigh", pill: "border-effort-xhigh/40 bg-effort-xhigh/10 hover:bg-effort-xhigh/15" },
-  max: { bars: "text-effort-max", pill: "border-effort-max/40 bg-effort-max/10 hover:bg-effort-max/15" },
+/** Each level's color, on the bars. */
+const EFFORT_BARS: Record<Effort, string> = {
+  low: "text-effort-low",
+  medium: "text-effort-medium",
+  high: "text-effort-high",
+  xhigh: "text-effort-xhigh",
+  max: "text-effort-max",
 };
 
 /** Signal bars, one per effort level, rising left to right; `lit` of them are on. */
@@ -59,83 +44,135 @@ function EffortBars({ lit, className }: { lit: number; className?: string }) {
 
 export function ReasoningPicker({ catalog, target }: { catalog: ProviderModels[]; target: ModelTarget | null }) {
   const prefs = usePrefs();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState(false);
   const format = catalog.find((c) => c.provider.id === target?.providerId)?.provider.format;
   const caps = reasoningCaps(format, target?.model);
   const { thinking, effort } = effectiveReasoning(caps, { thinking: prefs.thinking, effort: prefs.reasoningEffort });
 
   const unknown = caps.thinking === "none";
   const label = unknown ? "Thinking" : !thinking ? "Thinking off" : effort ? effortLabel(effort) : "Thinking";
-  const autoAllowed = caps.efforts.length > 0 && (thinking || !caps.offDisablesEffort);
-  const offCaps = !thinking && caps.offMaxEffort;
-  const note = caps.note ?? (offCaps ? `With thinking off, effort goes up to ${effortLabel(caps.offMaxEffort!)}.` : undefined);
   // Auto shows the model's default level. Thinking on with no known level reads as medium.
   const barEffort = thinking && !unknown ? (effort ?? caps.defaultEffort ?? "medium") : null;
   const litBars = EFFORTS.findIndex((e) => e.id === barEffort) + 1;
 
+  // Step 0 is off, then one per level.
+  const canToggle = caps.thinking === "optional";
+  const enabled = [canToggle, ...EFFORTS.map((e) => effortAllowed(caps, e.id, true))];
+  const last = EFFORTS.length;
+  const value = litBars; // 0 when off or unknown
+  const disabled = !target || unknown || !enabled.some(Boolean);
+
+  const pick = (i: number) => {
+    if (disabled || !enabled[i]) return;
+    if (i === 0) setPrefs({ thinking: false });
+    else setPrefs({ thinking: true, reasoningEffort: EFFORTS[i - 1].id });
+  };
+  const nearest = (i: number) => {
+    for (let d = 0; d <= last; d++) {
+      if (enabled[i - d]) return i - d;
+      if (enabled[i + d]) return i + d;
+    }
+    return value;
+  };
+  const fromPointer = (clientX: number) => {
+    const r = trackRef.current?.getBoundingClientRect();
+    if (!r) return;
+    const ratio = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
+    pick(nearest(Math.round(ratio * last)));
+  };
+  const step = (dir: 1 | -1) => {
+    for (let i = value + dir; i >= 0 && i <= last; i += dir) {
+      if (enabled[i]) return pick(i);
+    }
+  };
+
+  const pct = (value / last) * 100;
+
+  const toggle = (
+    <button
+      type="button"
+      disabled={disabled || !canToggle}
+      aria-label={thinking ? "Turn thinking off" : "Turn thinking on"}
+      onClick={() => (thinking ? pick(0) : setPrefs({ thinking: true }))}
+      className="flex size-5 shrink-0 items-center justify-center outline-none disabled:cursor-default"
+    >
+      <EffortBars lit={litBars} className={barEffort ? EFFORT_BARS[barEffort] : undefined} />
+    </button>
+  );
+
+  // The control has a fixed width and the slider is a panel laid exactly over it, so
+  // hovering never shifts or covers its neighbours, and the label changing can't move the track.
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          disabled={!target}
-          aria-label={`Thinking and effort: ${label}`}
-          className={cn(
-            "flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium shadow-xs transition-colors disabled:opacity-50",
-            barEffort
-              ? cn("text-foreground", EFFORT_STYLE[barEffort].pill)
-              : "border-foreground/10 bg-foreground/[0.03] text-muted-foreground hover:bg-foreground/[0.06] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
-          )}
-        >
-          <EffortBars lit={litBars} className={barEffort ? EFFORT_STYLE[barEffort].bars : undefined} />
-          <span className="hidden whitespace-nowrap sm:inline-grid">
-            {PILL_LABELS.map((l) => (
-              <span key={l} className="invisible col-start-1 row-start-1">{l}</span>
-            ))}
-            <span className="col-start-1 row-start-1">{label}</span>
-          </span>
-          <ChevronDownIcon className="size-3.5 opacity-60" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuCheckboxItem
-          checked={thinking}
-          disabled={caps.thinking !== "optional"}
-          // Stays open: effort is usually the next choice.
-          onSelect={(e) => e.preventDefault()}
-          onCheckedChange={(on) => setPrefs({ thinking: on })}
-        >
-          Thinking
-        </DropdownMenuCheckboxItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Effort</DropdownMenuLabel>
-        <DropdownMenuRadioGroup
-          value={effort ?? AUTO}
-          onValueChange={(v) => setPrefs({ reasoningEffort: v === AUTO ? null : (v as Effort) })}
-        >
-          <DropdownMenuRadioItem value={AUTO} disabled={!autoAllowed} onSelect={(e) => e.preventDefault()}>
-            Auto
-            {caps.defaultEffort && autoAllowed && (
-              <span className="ml-auto text-xs text-muted-foreground">{effortLabel(caps.defaultEffort)}</span>
-            )}
-          </DropdownMenuRadioItem>
-          {EFFORTS.map((e) => (
-            <DropdownMenuRadioItem
-              key={e.id}
-              value={e.id}
-              disabled={!effortAllowed(caps, e.id, thinking)}
-              onSelect={(ev) => ev.preventDefault()}
-            >
-              {e.label}
-            </DropdownMenuRadioItem>
-          ))}
-        </DropdownMenuRadioGroup>
-        {note && (
-          <>
-            <DropdownMenuSeparator />
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">{note}</p>
-          </>
+    <div
+      className={cn(
+        "group/think relative flex h-8 items-center justify-between rounded-full pl-2 text-[13px] sm:w-28 text-muted-foreground transition-colors hover:text-foreground",
+        disabled && "opacity-50",
+      )}
+      title={caps.note}
+    >
+      {toggle}
+      <span className="hidden whitespace-nowrap pl-1.5 pr-2 sm:inline">{label}</span>
+
+      <div
+        className={cn(
+          "absolute inset-y-0 right-0 flex w-28 items-center gap-2 rounded-full bg-background pl-2 pr-3 text-foreground shadow-sm ring-1 ring-border transition-opacity duration-150",
+          dragging
+            ? "opacity-100"
+            : "pointer-events-none opacity-0 group-hover/think:pointer-events-auto group-hover/think:opacity-100 group-focus-within/think:pointer-events-auto group-focus-within/think:opacity-100",
         )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+      >
+        {toggle}
+        <div
+          ref={trackRef}
+          role="slider"
+          tabIndex={disabled ? -1 : 0}
+          aria-label="Thinking effort"
+          aria-valuemin={0}
+          aria-valuemax={last}
+          aria-valuenow={value}
+          aria-valuetext={label}
+          aria-disabled={disabled}
+          onPointerDown={(e) => {
+            if (disabled) return;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            setDragging(true);
+            fromPointer(e.clientX);
+          }}
+          onPointerMove={(e) => dragging && fromPointer(e.clientX)}
+          onPointerUp={() => setDragging(false)}
+          onPointerCancel={() => setDragging(false)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowRight" || e.key === "ArrowUp") (e.preventDefault(), step(1));
+            else if (e.key === "ArrowLeft" || e.key === "ArrowDown") (e.preventDefault(), step(-1));
+          }}
+          className="relative flex h-6 min-w-0 flex-1 cursor-pointer touch-none items-center outline-none"
+        >
+          <div className="relative h-1 w-full rounded-full bg-foreground/15">
+            <div
+              className={cn("absolute inset-y-0 left-0 rounded-full bg-current", barEffort ? EFFORT_BARS[barEffort] : "text-muted-foreground")}
+              style={{ width: `${pct}%` }}
+            />
+            {enabled.map((ok, i) => (
+              <span
+                key={i}
+                className={cn("absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-background/70", !ok && "opacity-0")}
+                style={{ left: `${(i / last) * 100}%` }}
+              />
+            ))}
+            <span
+              className="pointer-events-none absolute -top-7 -translate-x-1/2 whitespace-nowrap rounded-md bg-foreground px-1.5 py-0.5 text-[11px] text-background"
+              style={{ left: `${pct}%`, opacity: dragging ? 1 : 0 }}
+            >
+              {label}
+            </span>
+            <div
+              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground shadow transition-[left] duration-100"
+              style={{ left: `${pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

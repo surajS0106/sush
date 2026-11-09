@@ -76,39 +76,13 @@ export function SessionOptions({ conversationId, workspaceId }: { conversationId
         </TooltipContent>
       </Tooltip>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button type="button" className={cn(CHIP, "max-w-56")} title={current?.root}>
-            {current ? <FolderIcon className="size-3.5 shrink-0" /> : <MessageSquareIcon className="size-3.5 shrink-0" />}
-            <span className="truncate">{current ? current.name : "No folder"}</span>
-            <ChevronDownIcon className="size-3 shrink-0 opacity-70" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64">
-          <DropdownMenuItem onSelect={() => pick(undefined)}>
-            <MessageSquareIcon />
-            <span className="flex-1">Chat only</span>
-            {!current && <CheckIcon className="text-muted-foreground" />}
-          </DropdownMenuItem>
-          {workspaces.length > 0 && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Work in a folder</DropdownMenuLabel>
-              {workspaces.map((w) => (
-                <DropdownMenuItem key={w.id} onSelect={() => pick(w.id)} title={w.root}>
-                  <FolderIcon />
-                  <span className="flex-1 truncate">{w.name}</span>
-                  {w.id === current?.id && <CheckIcon className="text-muted-foreground" />}
-                </DropdownMenuItem>
-              ))}
-            </>
-          )}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => void add()}>
-            <FolderPlusIcon /> <span>Add a folder…</span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <FolderMenu conversationId={conversationId} workspaceId={workspaceId}>
+        <button type="button" className={cn(CHIP, "max-w-56")} title={current?.root}>
+          {current ? <FolderIcon className="size-3.5 shrink-0" /> : <MessageSquareIcon className="size-3.5 shrink-0" />}
+          <span className="truncate">{current ? current.name : "No folder"}</span>
+          <ChevronDownIcon className="size-3 shrink-0 opacity-70" />
+        </button>
+      </FolderMenu>
 
       {current && <GitOptions conversationId={conversationId} workspaceId={current.id} />}
 
@@ -121,6 +95,58 @@ export function SessionOptions({ conversationId, workspaceId }: { conversationId
         <TooltipContent>Add a folder</TooltipContent>
       </Tooltip>
     </div>
+  );
+}
+
+/** The folder switcher: chat only, a known folder, or a new one. `children` is the trigger button. */
+export function FolderMenu({
+  conversationId,
+  workspaceId,
+  children,
+}: {
+  conversationId: string;
+  workspaceId?: string;
+  children: React.ReactElement;
+}) {
+  const workspaces = useWorkspaces();
+  const current = workspaces.find((w) => w.id === workspaceId);
+  const pick = (id: string | undefined) => setConversationWorkspace(conversationId, id);
+  const add = async () => {
+    try {
+      const w = await addWorkspace();
+      if (w) pick(w.id);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{children}</DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-64">
+        <DropdownMenuItem onSelect={() => pick(undefined)}>
+          <MessageSquareIcon />
+          <span className="flex-1">Chat only</span>
+          {!current && <CheckIcon className="text-muted-foreground" />}
+        </DropdownMenuItem>
+        {workspaces.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Work in a folder</DropdownMenuLabel>
+            {workspaces.map((w) => (
+              <DropdownMenuItem key={w.id} onSelect={() => pick(w.id)} title={w.root}>
+                <FolderIcon />
+                <span className="flex-1 truncate">{w.name}</span>
+                {w.id === current?.id && <CheckIcon className="text-muted-foreground" />}
+              </DropdownMenuItem>
+            ))}
+          </>
+        )}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => void add()}>
+          <FolderPlusIcon /> <span>Add a folder…</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

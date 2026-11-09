@@ -1,59 +1,48 @@
 // The composer's permission mode: whether connector tools wait for approval.
+// A toggle: on = Auto (Sush runs on its own), off = Manual (asks first).
 
-import { CheckIcon, ChevronDownIcon, HandIcon, ZapIcon } from "lucide-react";
+import { HandIcon, ZapIcon } from "lucide-react";
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { setPrefs, usePrefs, type PermissionMode } from "@/lib/library";
+import { setPrefs, usePrefs } from "@/lib/library";
 import { cn } from "@/lib/utils";
 
-const MODES: { id: PermissionMode; label: string; description: string }[] = [
-  { id: "manual", label: "Manual", description: "Sush asks before using connector tools." },
-  { id: "auto", label: "Auto", description: "Sush runs on its own and pauses to ask if anything looks unsafe." },
-];
-
 export function PermissionModePicker() {
-  const mode = usePrefs().permissionMode;
-  const current = MODES.find((m) => m.id === mode) ?? MODES[0];
+  const auto = usePrefs().permissionMode === "auto";
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <button
-          type="button"
-          aria-label={`Permission mode: ${current.label}`}
+    <button
+      type="button"
+      role="switch"
+      aria-checked={auto}
+      aria-label="Auto mode"
+      title={
+        auto
+          ? "Auto: Sush runs on its own and pauses to ask if anything looks unsafe."
+          : "Manual: Sush asks before using connector tools."
+      }
+      onClick={() => setPrefs({ permissionMode: auto ? "manual" : "auto" })}
+      className={cn(
+        "flex h-7 cursor-pointer items-center gap-2 rounded-full border pl-2.5 pr-1.5 text-xs font-medium shadow-xs transition-colors",
+        auto
+          ? "border-sush/50 bg-sush/15 text-sush-deep hover:bg-sush/25 dark:bg-sush/20 dark:text-sush dark:hover:bg-sush/30"
+          : "border-amber-500/50 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25 dark:bg-amber-500/20 dark:text-amber-300 dark:hover:bg-amber-500/30",
+      )}
+    >
+      {auto ? <ZapIcon className="size-3.5 fill-current" /> : <HandIcon className="size-3.5" />}
+      {auto ? "Auto" : "Manual"}
+      <span
+        aria-hidden
+        className={cn(
+          "relative h-4 w-7 rounded-full transition-colors",
+          auto ? "bg-sush-deep dark:bg-sush" : "bg-amber-500/50 dark:bg-amber-400/50",
+        )}
+      >
+        <span
           className={cn(
-            "flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium shadow-xs transition-colors",
-            mode === "auto"
-              ? "border-sush/50 bg-sush/15 text-sush-deep hover:bg-sush/25 dark:bg-sush/20 dark:text-sush dark:hover:bg-sush/30"
-              : "border-foreground/10 bg-foreground/[0.03] text-foreground hover:bg-foreground/[0.06] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+            "absolute top-0.5 size-3 rounded-full bg-white shadow-sm transition-all",
+            auto ? "left-3.5" : "left-0.5",
           )}
-        >
-          {mode === "auto" ? <ZapIcon className="size-3.5 fill-current" /> : <HandIcon className="size-3.5" />}
-          {current.label}
-          <ChevronDownIcon className="size-3.5 opacity-60" />
-        </button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-72">
-        <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Permission mode</DropdownMenuLabel>
-        {MODES.map((m) => (
-          <DropdownMenuItem
-            key={m.id}
-            onSelect={() => setPrefs({ permissionMode: m.id })}
-            className="items-start gap-3 py-2"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-sm">{m.label}</div>
-              <p className="text-xs text-muted-foreground">{m.description}</p>
-            </div>
-            <CheckIcon className={cn("mt-0.5 size-4 text-muted-foreground", m.id !== mode && "invisible")} />
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        />
+      </span>
+    </button>
   );
 }

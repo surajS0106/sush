@@ -12,7 +12,9 @@ import {
   usePromptInputController,
   type PromptInputMessage,
 } from "@/components/ai-elements/prompt-input";
+import { ComposerDock } from "@/components/composer-dock";
 import { ComposerMenu } from "@/components/composer-menu";
+import { ContextMeter } from "@/components/context-meter";
 import { Mascot, type MascotStage } from "@/components/mascot";
 import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
@@ -77,6 +79,9 @@ interface ComposerProps {
   researchAvailable: boolean;
   /** The conversation so far, for "Record a skill". */
   messages: SushUIMessage[];
+  /** For the strip under the composer: the session and the folder it works in. */
+  conversationId?: string;
+  workspaceId?: string;
 }
 
 export function Composer({
@@ -89,6 +94,8 @@ export function Composer({
   onOpenSettings,
   researchAvailable,
   messages,
+  conversationId,
+  workspaceId,
 }: ComposerProps) {
   const { attachments, textInput } = usePromptInputController();
   const reduceMotion = useReducedMotion();
@@ -167,7 +174,7 @@ export function Composer({
           onSubmit={submit}
           multiple
           globalDrop
-          className="composer-shell"
+          className="composer-shell relative z-10"
         >
           {attachments.files.length > 0 && (
             <InputGroupAddon align="block-start" className="flex-wrap gap-2 px-4 pt-3.5">
@@ -276,7 +283,7 @@ export function Composer({
                 <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
               </div>
               <ReasoningPicker catalog={catalog} target={target} />
-              <span aria-hidden className="mx-0.5 h-4 w-px bg-foreground/10 dark:bg-white/10" />
+              <ContextMeter catalog={catalog} target={target} messages={messages} conversationId={conversationId} busy={busy} />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -355,6 +362,7 @@ export function Composer({
             </div>
           </PromptInputFooter>
         </PromptInput>
+        <ComposerDock conversationId={conversationId} workspaceId={workspaceId} started={started} />
       </div>
       <p className="px-1 text-right text-[11px] text-muted-foreground opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
         <kbd className="rounded border px-1 py-0.5 font-sans">Enter</kbd> to send ·{" "}

@@ -27,9 +27,14 @@ import {
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { usePromptInputController, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
+import { Greeting } from "@/components/greeting";
 import { ActivityGroup, groupParts } from "@/components/activity-group";
+import { AgentsTray } from "@/components/agents-tray";
 import { BranchCard, BranchTray, latestBranchCall } from "@/components/branch-card";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
+import { CompactSushi } from "@/components/compact-sushi";
+import { CompactionDivider } from "@/components/compaction-divider";
+import { useCompacting } from "@/lib/compact";
 import { Composer, replyStage } from "@/components/composer";
 import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
@@ -121,6 +126,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const id = conversation.id;
   // The run lives in Rust, so it keeps going when another chat is opened.
   const { messages, status: runStatus, error } = useThread(id);
+  const compacting = useCompacting(id);
   // This session shared from here, or the one being watched: for its suggestions.
   const hosted = useShare(watching ? undefined : id);
   const share = watching ?? hosted;
@@ -259,6 +265,22 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     dockObserver.current = observer;
   }, []);
 
+  // The trays docked on the composer's top edge (agents, pull request) reach 12px under it. Their height,
+  // less that, goes to `--tray-lift` on the dock, so the mascot standing on the composer stands on them.
+  const trayObserver = useRef<ResizeObserver | null>(null);
+  const trayRef = useCallback((el: HTMLDivElement | null) => {
+    trayObserver.current?.disconnect();
+    trayObserver.current = null;
+    const dock = el?.parentElement;
+    if (!el || !dock) return;
+    const observer = new ResizeObserver(() => {
+      if (el.offsetHeight > 0) dock.style.setProperty("--tray-lift", `${Math.max(el.offsetHeight - 12, 0)}px`);
+      else dock.style.removeProperty("--tray-lift");
+    });
+    observer.observe(el);
+    trayObserver.current = observer;
+  }, []);
+
   // Providers served from this machine (Ollama, LM Studio) cost nothing per token.
   const localProviders = useMemo(
     () => new Set(catalog.filter((c) => isLocalUrl(c.provider.baseUrl)).map((c) => c.provider.id)),
@@ -283,7 +305,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   const waiting = busy && (last?.role !== "assistant" || !hasVisibleContent(last) || endsWithToolResult(last));
   // A reply that was stopped, or a message the app closed on before answering, can carry on.
   const resumable =
-    (!watching || drives) && !busy && runStatus !== "awaiting" && !error && !!last && (last.role === "user" || !!last.metadata?.paused);
+    (!watching || drives) && !busy && runStatus !== "awaiting" && !error && !!last && ((last.role === "user" && !last.metadata?.compaction) || !!last.metadata?.paused);
 
   // An incognito chat's composer has a dashed outline, as in a private window.
   // In someone's shared session, a driver or collaborator writes to the host;
@@ -306,6 +328,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
         onOpenSettings={onOpenSettings}
         researchAvailable={researchAvailable}
         messages={messages}
+        conversationId={id}
+        workspaceId={workspaceId}
       />
     </div>
   );
@@ -381,10 +405,14 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
                   <FolderKanbanIcon className="size-4" /> {project.name}
                 </p>
               )}
-              <h1 className="mb-7 flex items-center justify-center gap-3 text-[28px] font-medium tracking-tight">
-                {incognito ? <GhostIcon className="size-8 shrink-0" /> : <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />}
-                <span>{incognito ? "You’re incognito" : greeting(firstName)}</span>
-              </h1>
+              {incognito ? (
+                <h1 className="mb-7 flex items-center justify-center gap-3 text-[28px] font-medium tracking-tight">
+                  <GhostIcon className="size-8 shrink-0" />
+                  <span>You’re incognito</span>
+                </h1>
+              ) : (
+                <Greeting name={firstName} />
+              )}
             </>
           ) : (
             connect
@@ -475,6 +503,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               <LoadingState label="Thinking" />
             </Message>
           )}
+          {compacting && (
+            <div role="status" className="flex items-center gap-3 text-sm text-muted-foreground animate-[fade-up_0.3s_ease-out]">
+              <CompactSushi size={48} />
+              <span>Packing up the conversation…</span>
+            </div>
+          )}
           {error && (
             <Alert variant="destructive">
               <AlertTitle>{toolsUnsupported ? "This model can’t use tools" : "Request failed"}</AlertTitle>
@@ -498,8 +532,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
         {share && <ControlBanner share={share} />}
         {share && <SuggestionQueue share={share} />}
         {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
-        {cowork && branchCall && <BranchTray workspaceId={workspaceId ?? undefined} threadId={id} part={branchCall.part} />}
-        {/* Above the tray, which tucks under its top edge. */}
+        {/* Each tray tucks under the one below it, and the last under the composer. */}
+        <div ref={trayRef}>
+          <AgentsTray threadId={id} messages={messages} />
+          {cowork && branchCall && <BranchTray workspaceId={workspaceId ?? undefined} threadId={id} part={branchCall.part} />}
+        </div>
+        {/* Above the trays, which tuck under its top edge. */}
         <div className="relative z-10">{composer}</div>
       </div>
 
@@ -645,15 +683,6 @@ function isToolsUnsupported(message: string) {
   return /(does not|doesn['’]t) support tools|tools? (are |is )?not supported|does not support (function|tool) calling/i.test(
     message,
   );
-}
-
-function greeting(name?: string, hour = new Date().getHours()) {
-  const to = name ? `, ${name}` : "";
-  if (hour < 5) return `Burning the midnight oil${to}?`;
-  if (hour < 12) return `Good morning${to}. What’s on your mind?`;
-  if (hour < 17) return `Good afternoon${to}. What’s on your mind?`;
-  if (hour < 22) return `Good evening${to}. What’s on your mind?`;
-  return `Late night${to}? Let’s think it through.`;
 }
 
 // Starter prompts under the empty-state composer. Each is complete, so picking
@@ -897,6 +926,8 @@ const ChatMessage = memo(function ChatMessage({
   if (!hasVisibleContent(message)) return null;
   // A background sub-agent's report, sent to the model as a user message.
   if (message.metadata?.subagentReport) return <SubagentReport message={message} />;
+  // Where "Compact now" summarised the conversation; the model reads on from it.
+  if (message.metadata?.compaction) return <CompactionDivider message={message} />;
   // The note Resume sends when a reply stopped mid-text.
   if (message.metadata?.resumed) {
     return (

@@ -90,6 +90,22 @@ pub fn parts(message: &Value) -> &[Value] {
     message.get("parts").and_then(Value::as_array).map_or(&[], Vec::as_slice)
 }
 
+/// Metadata key on the message "Compact now" adds: its text summarises the
+/// conversation before it, which the model no longer reads.
+pub const COMPACTION: &str = "compaction";
+
+pub fn is_compaction(message: &Value) -> bool {
+    message.get("metadata").and_then(|m| m.get(COMPACTION)).is_some_and(|c| !c.is_null())
+}
+
+/// What the model reads in place of the messages a summary replaced.
+fn compaction_text(summary: &str) -> String {
+    format!(
+        "<conversation-summary>\nThe conversation so far was compacted to save context. This summary replaces the \
+         earlier messages; carry on from it without mentioning the compaction.\n\n{summary}\n</conversation-summary>"
+    )
+}
+
 /// A tool call as the model made it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
@@ -416,7 +432,15 @@ fn marker_len(s: &str) -> Option<usize> {
 /// loses track of which calls it already made.
 pub fn to_core(messages: &[Value], expansions: &HashMap<String, String>) -> Vec<Message> {
     let mut out = Vec::new();
-    for m in messages {
+    // A compacted thread starts, for the model, at its latest summary; the
+    // messages before it stay in the thread for the user to read.
+    let from = messages.iter().rposition(is_compaction).unwrap_or(0);
+    for m in &messages[from..] {
+        if is_compaction(m) {
+            let summary = self::parts(m).iter().filter_map(|p| str_at(p, "text")).collect::<Vec<_>>().join("\n\n");
+            out.push(Message { role: Role::User, parts: vec![Part::Text { text: compaction_text(&summary) }] });
+            continue;
+        }
         let role = match role(m) {
             Some("user") => Role::User,
             Some("assistant") => Role::Assistant,
@@ -612,6 +636,23 @@ mod tests {
         assert_eq!(strip_citations("a [cite](https://x.y) b [cite](u \"t\")."), "a b.");
         assert_eq!(strip_citations("see [cite]( broken"), "see [cite]( broken");
         assert_eq!(strip_citations("[link](https://x)"), "[link](https://x)");
+    }
+
+    #[test]
+    fn to_core_starts_at_the_latest_compaction() {
+        let messages = vec![
+            json!({ "id": "u1", "role": "user", "parts": [{ "type": "text", "text": "old" }] }),
+            json!({ "id": "s1", "role": "user", "metadata": { "compaction": {} }, "parts": [{ "type": "text", "text": "first summary" }] }),
+            json!({ "id": "a1", "role": "assistant", "parts": [{ "type": "text", "text": "older reply" }] }),
+            json!({ "id": "s2", "role": "user", "metadata": { "compaction": { "tokensBefore": 9 } }, "parts": [{ "type": "text", "text": "second summary" }] }),
+            json!({ "id": "u2", "role": "user", "parts": [{ "type": "text", "text": "next" }] }),
+        ];
+        let core = to_core(&messages, &HashMap::new());
+        assert_eq!(core.len(), 2);
+        assert_eq!(core[0].role, Role::User);
+        let Part::Text { text } = &core[0].parts[0] else { panic!("expected text") };
+        assert!(text.contains("second summary") && !text.contains("first summary"));
+        assert_eq!(core[1].parts, vec![Part::Text { text: "next".into() }]);
     }
 
     #[test]

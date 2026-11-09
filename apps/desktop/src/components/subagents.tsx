@@ -55,22 +55,22 @@ export function withTeams(items: (number | number[])[], parts: Part[]): PartItem
 }
 
 /** The thread a call's sub-agent runs on (`sush_core::agent::subagents::child_thread_id`). */
-const childThreadId = (threadId: string, callId: string) => `${threadId}:${callId}`;
+export const childThreadId = (threadId: string, callId: string) => `${threadId}:${callId}`;
 
-type AgentState = "starting" | "working" | "needs-input" | "done" | "failed" | "stopped";
+export type AgentState = "starting" | "working" | "needs-input" | "done" | "failed" | "stopped";
 
-const isActive = (s: AgentState) => s === "starting" || s === "working" || s === "needs-input";
+export const isActive = (s: AgentState) => s === "starting" || s === "working" || s === "needs-input";
 const isStop = (error: string) => error === STOPPED || error.startsWith("Interrupted") || error.startsWith("The user stopped");
 
 /** A sub-agent's thread as `useThreadStatuses` gives it. */
-type ChildStatus = RunStatus | "paused" | "";
+export type ChildStatus = RunStatus | "paused" | "";
 
 /** What a background agent's call returned (`sush_core::agent::subagents::BACKGROUND`). */
 const BACKGROUND = "Working in the background";
 const inBackground = (part: DynamicToolUIPart) =>
   part.state === "output-available" && typeof part.output === "string" && part.output.startsWith(BACKGROUND);
 
-function agentState(part: DynamicToolUIPart, child: ChildStatus, running: boolean): AgentState {
+export function agentState(part: DynamicToolUIPart, child: ChildStatus, running: boolean): AgentState {
   if (inBackground(part)) {
     if (child === "awaiting") return "needs-input";
     if (child === "submitted" || child === "streaming") return "working";
@@ -104,7 +104,7 @@ interface AgentInput {
   prompt?: string;
 }
 
-const describe = (part: DynamicToolUIPart) => ((part.input ?? {}) as AgentInput).description || "Sub-agent";
+export const describe = (part: DynamicToolUIPart) => ((part.input ?? {}) as AgentInput).description || "Sub-agent";
 
 /** Picks the lead in `AgentTeam`'s selection; agents are picked by call id. */
 const LEAD = "lead";
@@ -176,7 +176,7 @@ export function AgentTeam({ threadId, parts: called, before, after, streaming }:
   const pick = (id: string) => setPicked(selected === id ? null : id);
 
   return (
-    <div className="text-sm">
+    <div className="text-sm" data-agent-calls={parts.map((p) => p.toolCallId).join(" ")}>
       <div className="flex items-center gap-2">
         <span className="font-medium">{title}</span>
         {notes.length > 0 && (

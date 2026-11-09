@@ -1642,29 +1642,6 @@ function useInView(id: string) {
   return inView;
 }
 
-/** How far the tray reaches above the composer's top edge. */
-const TRAY_OVERLAP = 12;
-
-/**
- * Tells the mascot, which stands on the composer's top edge, how tall the tray
- * above it is (`--tray-lift` on their shared parent), so it stands on the tray.
- */
-function useTrayLift(shown: boolean) {
-  const ref = useRef<HTMLElement>(null);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    const parent = el?.parentElement;
-    if (!el || !parent) return;
-    const observer = new ResizeObserver(() => parent.style.setProperty("--tray-lift", `${Math.max(el.offsetHeight - TRAY_OVERLAP, 0)}px`));
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-      parent.style.removeProperty("--tray-lift");
-    };
-  }, [shown]);
-  return ref;
-}
-
 /**
  * The live card's status, docked on the composer's top edge: the pull request,
  * where it stands, the next step, and the pipeline when opened. It opens by
@@ -1681,8 +1658,6 @@ export function BranchTray({ workspaceId, threadId, part }: { workspaceId: strin
   const failedKey = checks.filter((c) => c.status === "failed" && !c.stale).map((c) => c.name).join();
   const merged = given?.tone === "merged";
   const [open, setOpen] = useState(false);
-  // Before the early return below; the tray shows once the branch is read.
-  const tray = useTrayLift(!!status && !!given);
   // The card shows the same pipeline: a failure opens the tray only when the card is out of view.
   const cardInView = useInView(`branch-card-${part.toolCallId}`);
   const cardSeen = useRef(cardInView);
@@ -1709,7 +1684,6 @@ export function BranchTray({ workspaceId, threadId, part }: { workspaceId: strin
 
   return (
     <motion.section
-      ref={tray}
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={SPRING}

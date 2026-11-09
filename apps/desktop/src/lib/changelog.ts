@@ -12,6 +12,8 @@ export type ChangeKind = "new" | "improved" | "fixed";
 export interface Change {
   kind: ChangeKind;
   text: string;
+  /** A few words naming it, for the sidebar's "New in Sush" cards. Give one to the changes worth a card. */
+  title?: string;
 }
 
 export interface Release {
@@ -24,7 +26,15 @@ export interface Release {
 }
 
 /** Landed since the last release; never shown. Becomes the next release's notes. */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "new", title: "Folders", text: "A Folders page in the sidebar shows every folder Sush works in, the sessions that worked there, and each folder's files. Open a file to start a session with it in the viewer." },
+  { kind: "improved", title: "Automations on several days", text: "Weekly automations can run on several days, like every Monday and Tuesday at 11 AM." },
+  { kind: "fixed", text: "Asking for an automation in your own words saves it on the first try, at the time you asked for, instead of failing again and again." },
+  { kind: "new", title: "Context meter", text: "A ring beside the microphone shows how full the model's context is. Hover it to see what's taking up the space and how much of your budget is spent." },
+  { kind: "new", title: "Compact now", text: "When a chat fills up the context, “Compact now” in the context meter swaps the conversation so far for a summary, so the model has room again. Earlier messages stay on screen." },
+  { kind: "new", text: "Cards at the foot of the sidebar show what's new in this release and a getting-started checklist." },
+  { kind: "new", title: "Sub-agents tray", text: "Sub-agents show in a tray above the message box, with where each one stands and how long it has run." },
+];
 
 export const CHANGELOG: Release[] = [
   {
@@ -32,11 +42,11 @@ export const CHANGELOG: Release[] = [
     date: "2026-11-08",
     summary: "Web search, dictation through Yammer, and What's new.",
     changes: [
-      { kind: "new", text: "Dictation goes through Yammer, Sush's dictation app: press the mic or Ctrl+D and it types what you say into the message box. Without Yammer, Sush walks you through getting it, or keeps using its own in Settings → Speech." },
-      { kind: "new", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
-      { kind: "improved", text: "Claude and GPT models use their provider's own web search." },
+      { kind: "new", title: "Dictation with Yammer", text: "Dictation goes through Yammer, Sush's dictation app: press the mic or Ctrl+D and it types what you say into the message box. Without Yammer, Sush walks you through getting it, or keeps using its own in Settings → Speech." },
+      { kind: "new", title: "Web search", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
+      { kind: "improved", title: "Native web search", text: "Claude and GPT models use their provider's own web search." },
       { kind: "improved", text: "Specialised tools load only when a model needs them, so replies start faster and cost less." },
-      { kind: "new", text: "What's new: see what changed in each release, here and after every update." },
+      { kind: "new", title: "What's new", text: "What's new: see what changed in each release, here and after every update." },
       { kind: "fixed", text: "Checking for updates tries again when GitHub is briefly down, and says what went wrong in plain words." },
     ],
   },

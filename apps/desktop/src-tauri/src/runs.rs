@@ -1085,6 +1085,40 @@ pub async fn thread_rewind(state: State<'_, AppState>, thread: ThreadMeta, messa
     Ok(result)
 }
 
+/// "Compact now": add the summary message the UI wrote (`metadata.compaction`)
+/// to a session that isn't running. From then on the model reads the thread
+/// from that summary (`ui::to_core`); the earlier messages stay for the user.
+/// Every window gets it as a `push`.
+#[tauri::command]
+pub async fn thread_compact(state: State<'_, AppState>, thread: ThreadMeta, message: Value) -> AppResult<()> {
+    if !ui::is_compaction(&message) || ui::role(&message) != Some("user") {
+        return Err(AppError::Invalid("That isn't a summary message.".into()));
+    }
+    let runs = &state.runs;
+    let _starting = runs.starting.lock().await;
+    if runs.is_running(&thread.id) {
+        return Err(AppError::Invalid("Wait for the reply to finish, then compact.".into()));
+    }
+    let mut thread = thread;
+    thread.updated_at = now_ms();
+    if thread.incognito {
+        runs.incognito.lock().unwrap().entry(thread.id.clone()).or_default().push(message.clone());
+    } else {
+        let store = state.store.clone();
+        let (meta, message) = (thread.clone(), message.clone());
+        blocking(move || {
+            let mut messages = store.messages(&meta.id)?;
+            messages.push(message);
+            store.save_thread(&meta, Some(messages))?;
+            Ok(())
+        })
+        .await?;
+    }
+    runs.send(RunFrame::Op { thread_id: thread.id.clone(), op: Op::Push { message } });
+    runs.send(RunFrame::Saved { thread });
+    Ok(())
+}
+
 /// "Send now": the messages steering a thread's run join it at once, ending
 /// its current step or tool calls early. Nothing happens if no run takes them.
 #[tauri::command]

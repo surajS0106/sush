@@ -279,6 +279,51 @@ html[data-resizing] * {
   [data-weather-pixels] > * { animation: none !important; }
 }
 
+/* Sushi packed into a takeout box while a chat compacts (components/compact-sushi.tsx).
+   Transforms on SVG parts are in sprite pixels. With reduced motion it rests packed. */
+.sushi-pack [data-pack] { transform-box: fill-box; animation: 3s ease-in-out infinite both; }
+.sushi-pack [data-pack="hop"] { animation-name: pack-hop; transform-origin: 50% 100%; }
+.sushi-pack [data-pack="sushi"] { animation-name: pack-sushi; transform-origin: 50% 100%; }
+.sushi-pack [data-pack="lid"] { animation-name: pack-lid; }
+.sushi-pack [data-pack="band"] { animation-name: pack-band; transform-origin: 50% 0; }
+.sushi-pack [data-pack="star"] { animation-name: pack-star; transform-origin: 50% 50%; }
+
+@keyframes pack-sushi {
+  0% { transform: translateY(-14px); opacity: 0; }
+  6% { opacity: 1; }
+  18% { transform: translateY(0) scale(1.1, 0.82); }
+  26%, 100% { transform: translateY(0) scale(1, 1); opacity: 1; }
+}
+@keyframes pack-lid {
+  0%, 30% { transform: translateY(-16px); opacity: 0; }
+  34% { opacity: 1; }
+  46% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+  54%, 100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes pack-band {
+  0%, 56% { transform: scaleY(0); opacity: 0; }
+  57% { opacity: 1; }
+  66%, 100% { transform: scaleY(1); opacity: 1; }
+}
+@keyframes pack-star {
+  0%, 68% { transform: scale(0); opacity: 0; }
+  74% { transform: scale(1.5); opacity: 1; }
+  80%, 88% { transform: scale(1); opacity: 1; }
+  96%, 100% { transform: scale(0.4); opacity: 0; }
+}
+@keyframes pack-hop {
+  0%, 76% { transform: translateY(0) scale(1, 1); opacity: 1; }
+  80% { transform: translateY(0) scale(1.06, 0.92); }
+  84% { transform: translateY(-2px) scale(0.97, 1.04); }
+  88% { transform: translateY(0) scale(1, 1); opacity: 1; }
+  97%, 100% { transform: translateY(0); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sushi-pack [data-pack] { animation: none; }
+}
+
 /* AskUserCard (components/ask-user-card.tsx) entrances. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
@@ -585,4 +630,25 @@ html[data-resizing] * {
   padding-inline: 0.625rem;
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+/* "New in Sush" sidebar cards (components/sidebar-cards.tsx): the bar that fills until the stack
+   moves to its next card. Not started at all with reduced motion, so it never cycles. */
+@keyframes card-cycle {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+/* The composer's + menu grows up out of the composer: ease-out, anchored to its bottom edge. */
+@keyframes composer-menu-in {
+  from {
+    opacity: 0;
+    clip-path: inset(100% 0 0 0 round 12px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round 12px);
+    transform: translateY(0);
+  }
 }

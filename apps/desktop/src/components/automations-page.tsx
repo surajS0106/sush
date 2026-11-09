@@ -57,6 +57,7 @@ import {
   updateAutomation,
   useAutomations,
   WEEKDAYS,
+  weeklyDays,
   type Automation,
   type AutomationDraft,
   type AutomationTemplate,
@@ -411,23 +412,6 @@ function AutomationDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {frequency === "weekly" && (
-                <div className="grid gap-2">
-                  <Label>On</Label>
-                  <Select value={String(draft.schedule.day)} onValueChange={(v) => setSchedule({ day: Number(v) })}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {WEEKDAYS.map((d, i) => (
-                        <SelectItem key={d} value={String(i)}>
-                          {d}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
               {(frequency === "daily" || frequency === "weekdays" || frequency === "weekly") && (
                 <div className="grid gap-2">
                   <Label htmlFor="automation-time">At</Label>
@@ -437,6 +421,36 @@ function AutomationDialog({
                     value={draft.schedule.time}
                     onChange={(e) => e.target.value && setSchedule({ time: e.target.value })}
                   />
+                </div>
+              )}
+              {frequency === "weekly" && (
+                <div className="grid gap-2 sm:col-span-2">
+                  <Label>On</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {WEEKDAYS.map((d, i) => {
+                      const days = weeklyDays(draft.schedule);
+                      const on = days.includes(i);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          aria-pressed={on}
+                          title={d}
+                          // At least one day stays picked.
+                          onClick={() => {
+                            const next = on ? days.filter((x) => x !== i) : [...days, i].sort((a, b) => a - b);
+                            if (next.length) setSchedule({ day: next[0], days: next });
+                          }}
+                          className={cn(
+                            "h-8 min-w-11 rounded-md border px-2 text-sm transition-colors",
+                            on ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-muted",
+                          )}
+                        >
+                          {d.slice(0, 3)}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
               <div className="grid gap-2">

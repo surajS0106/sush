@@ -9,7 +9,7 @@ import { ArrowUpIcon, EyeIcon, HistoryIcon, ImagePlusIcon, LightbulbIcon, LogInI
 import { useRef, useState, useSyncExternalStore, type FormEvent } from "react";
 import { toast } from "sonner";
 
-import { toolbarButtonClass } from "@/components/nav-controls";
+import { sectionButtonClass, sectionHeaderClass, sectionLabelClass, toolbarButtonClass } from "@/components/nav-controls";
 import { openShare } from "@/components/session-actions";
 import { ShareAccountSetup } from "@/components/share-dialog";
 import { Button } from "@/components/ui/button";
@@ -168,12 +168,12 @@ export function SharedGroup({
     }
   };
   return (
-    <SidebarGroup>
-      <div className="flex items-center pr-1">
-        <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Shared</SidebarGroupLabel>
+    <SidebarGroup className="py-0">
+      <div className={sectionHeaderClass}>
+        <SidebarGroupLabel className={sectionLabelClass}>Shared</SidebarGroupLabel>
         <Tooltip>
           <TooltipTrigger asChild>
-            <button type="button" aria-label="Join a shared session" className={toolbarButtonClass} onClick={openJoin}>
+            <button type="button" aria-label="Join a shared session" className={cn(toolbarButtonClass, sectionButtonClass)} onClick={openJoin}>
               <PlusIcon />
             </button>
           </TooltipTrigger>
@@ -210,7 +210,7 @@ export function SharedGroup({
           </SidebarMenuItem>
         )}
         {past.length > 0 && (
-          <li className="px-2 pt-2 pb-1 text-xs text-muted-foreground" role="presentation">
+          <li className="px-2 pt-3 pb-1 text-xs text-muted-foreground/80" role="presentation">
             History
           </li>
         )}

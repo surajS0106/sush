@@ -36,6 +36,11 @@ export interface SushMetadata {
    * gets in place of the short text shown, and the exact commands the click already approved.
    */
   instruction?: { text: string; approves?: string[] };
+  /**
+   * On the summary "Compact now" adds (`lib/compact.ts`): the model reads the thread from this
+   * message on (`sush_core::agent::ui::to_core`), with its text in place of what came before.
+   */
+  compaction?: { tokensBefore?: number; model?: string; createdAt?: number };
   /** In a shared session, on a message someone else wrote (set by the host, never by the sender). */
   author?: ShareAuthor;
   /** On a collaborator's suggestion: who sent it on. */

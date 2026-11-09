@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { AppSidebar, type Page, type SessionMode } from "@/components/app-sidebar";
 import { AutomationsPage } from "@/components/automations-page";
+import { FoldersPage } from "@/components/folders-page";
 import { ChatView } from "@/components/chat-view";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { NavControls, type Nav } from "@/components/nav-controls";
@@ -42,7 +43,7 @@ import { errorMessage, type ShareView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
 import { startPriceAlerts } from "@/lib/price-alerts";
 import { whenLeader } from "@/lib/windows";
-import { addWorkspace, getWorkspaces } from "@/lib/workspaces";
+import { addWorkspace, getWorkspaces, openFile } from "@/lib/workspaces";
 
 export default function App() {
   const conversations = useConversations();
@@ -239,6 +240,16 @@ export default function App() {
               />
             </AppHeader>
             <ErrorBoundary title="Something went wrong showing this" resetKey={`${page}:${activeId}`}>
+              {page === "folders" && (
+                <FoldersPage
+                  onNewSession={(id) => startCowork(id)}
+                  onOpenSession={tabs.openInNewTab}
+                  onOpenFile={(id, path) => {
+                    startCowork(id);
+                    openFile(id, path);
+                  }}
+                />
+              )}
               {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
               {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}
               {page === "wiki" && <WikiPage onOpenSession={tabs.openInNewTab} />}

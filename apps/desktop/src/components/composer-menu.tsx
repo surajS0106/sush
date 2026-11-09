@@ -14,11 +14,12 @@ import {
   ScrollTextIcon,
   SettingsIcon,
   SparklesIcon,
+  CircleDotIcon,
   TelescopeIcon,
-  UnplugIcon,
-  VideoIcon,
 } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
+
 
 import {
   PromptInputActionMenu,
@@ -29,14 +30,13 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import {
   DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
+import { brandLogo, catalogEntry, connectorIcon } from "@/lib/connector-catalog";
 import {
   availableConnectors,
   availableDesignSystems,
@@ -83,6 +83,17 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   const connectors = availableConnectors();
   const designSystems = availableDesignSystems();
 
+  // The menu spans the composer: measure it when the menu opens and sit just above its top edge.
+  const anchor = useRef<HTMLSpanElement>(null);
+  const [geo, setGeo] = useState<{ width: number; alignOffset: number; sideOffset: number } | null>(null);
+  const measure = (open: boolean) => {
+    const el = anchor.current;
+    const box = el?.closest("form")?.getBoundingClientRect();
+    if (!open || !el || !box) return;
+    const at = el.getBoundingClientRect();
+    setGeo({ width: box.width, alignOffset: box.left - at.left, sideOffset: at.top - box.top + 8 });
+  };
+
   const manage = (section: SettingsSection) => openSettings({ section });
 
   const addFolder = async () => {
@@ -103,171 +114,161 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   // Sush drafts the skill right here, with this chat as context, and asks before saving it.
   const recordSkill = () => onSend("/create-skill Turn what we did in this chat into a reusable skill.");
 
+  const enabledSkills = skills;
+
   return (
-    <PromptInputActionMenu>
+    <PromptInputActionMenu onOpenChange={measure}>
+      <span ref={anchor} className="inline-flex">
       <PromptInputActionMenuTrigger
         aria-label="Add tools and context"
         className="rounded-full text-muted-foreground hover:text-foreground [&_svg]:transition-transform [&_svg]:duration-150 data-[state=open]:[&_svg]:rotate-45"
       >
         <PlusIcon className="size-4" />
       </PromptInputActionMenuTrigger>
-      <PromptInputActionMenuContent className="w-64 rounded-2xl p-1.5 [&_[role^=menuitem]]:gap-2.5 [&_[role^=menuitem]]:rounded-lg [&_[role^=menuitem]]:py-2 [&_[role^=menuitem]]:font-medium [&_[role^=menuitem]_svg]:text-muted-foreground">
+      </span>
+      <PromptInputActionMenuContent
+        side="top"
+        align="start"
+        alignOffset={geo?.alignOffset ?? 0}
+        sideOffset={geo?.sideOffset ?? 8}
+        style={geo ? { width: geo.width } : undefined}
+        className="max-h-[min(26rem,var(--radix-dropdown-menu-content-available-height))] max-w-none origin-bottom overflow-y-auto rounded-xl p-1.5 data-open:animate-[composer-menu-in_240ms_cubic-bezier(0.22,1,0.36,1)]! [&_[role^=menuitem]]:gap-2.5 [&_[role^=menuitem]]:rounded-md [&_[role^=menuitem]]:py-1.5 [&_[role^=menuitem]]:text-sm [&_[role^=menuitem]_svg]:text-muted-foreground">
+        <Section first>Add</Section>
         <PromptInputActionMenuItem onSelect={() => attachments.openFileDialog()}>
-          <PaperclipIcon /> Add files or photos
+          <PaperclipIcon /> <Label hint="Images, PDFs and text">Files and photos</Label>
           <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>
         </PromptInputActionMenuItem>
         <PromptInputActionMenuItem onSelect={() => void addFolder()}>
-          <FolderPlusIcon /> Add folder
+          <FolderPlusIcon /> <Label hint="Include a folder's files">Add folder</Label>
         </PromptInputActionMenuItem>
         <PromptInputActionMenuItem disabled={!target || messages.length === 0} onSelect={recordSkill}>
-          <VideoIcon /> Record a skill
+          <CircleDotIcon /> <Label hint="Turn this chat into a skill">Record a skill</Label>
         </PromptInputActionMenuItem>
 
-        <DropdownMenuSeparator />
-
-        <Submenu icon={<ScrollTextIcon />} label="Skills" count={skills.filter((s) => s.enabled).length}>
-          {skills.map((s) => (
-            <DropdownMenuCheckboxItem
-              key={s.id}
-              checked={s.enabled}
-              onCheckedChange={(on) => toggleSkill(s.id, on)}
-              onSelect={(e) => e.preventDefault()}
-            >
-              <span className="truncate">{s.name}</span>
-            </DropdownMenuCheckboxItem>
-          ))}
-          {skills.length > 0 && <DropdownMenuSeparator />}
-          <PromptInputActionMenuItem onSelect={createSkillInChat}>
-            <SparklesIcon /> Create a skill
-          </PromptInputActionMenuItem>
-          {skills.length > 0 && (
-            <PromptInputActionMenuItem onSelect={() => manage("skills")}>
-              <SettingsIcon /> Manage skills
-            </PromptInputActionMenuItem>
-          )}
-        </Submenu>
-
-        <Submenu icon={<PlugIcon />} label="Connectors" count={connectors.filter((c) => c.enabled).length}>
-          {connectors.map((c) => {
-            const s = status[c.id];
-            return (
-              <DropdownMenuCheckboxItem
-                key={c.id}
-                checked={c.enabled}
-                onCheckedChange={(on) => toggleConnector(c.id, on)}
-                onSelect={(e) => e.preventDefault()}
-              >
-                <span className="flex-1 truncate">{c.name}</span>
-                {c.enabled && (
-                  <span
-                    title={s?.state === "error" ? s.error : s?.state === "needs-auth" ? "Sign in under Manage connectors" : s?.state}
-                    className={cn(
-                      "size-1.5 shrink-0 rounded-full",
-                      s?.state === "ready"
-                        ? "bg-emerald-500"
-                        : s?.state === "error"
-                          ? "bg-destructive"
-                          : s?.state === "needs-auth"
-                            ? "bg-amber-500"
-                            : "bg-muted-foreground/40",
-                    )}
-                  />
-                )}
-              </DropdownMenuCheckboxItem>
-            );
-          })}
-          {connectors.length > 0 && <DropdownMenuSeparator />}
-          <PromptInputActionMenuItem onSelect={() => manage("connectors")}>
-            {connectors.length > 0 ? <SettingsIcon /> : <UnplugIcon />}{" "}
-            {connectors.length > 0 ? "Manage connectors" : "Add a connector"}
-          </PromptInputActionMenuItem>
-        </Submenu>
-
-        <Submenu icon={<PaletteIcon />} label="Design system" count={prefs.designSystemId ? 1 : 0}>
-          <DropdownMenuRadioGroup
-            value={prefs.designSystemId ?? ""}
-            onValueChange={(id) => setPrefs({ designSystemId: id || null })}
-          >
-            <DropdownMenuRadioItem value="" onSelect={(e) => e.preventDefault()}>
-              None
-            </DropdownMenuRadioItem>
-            {designSystems.map((d) => (
-              <DropdownMenuRadioItem key={d.id} value={d.id} onSelect={(e) => e.preventDefault()}>
-                <span className="truncate">{d.name}</span>
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
-          <DropdownMenuSeparator />
-          <PromptInputActionMenuItem onSelect={() => manage("design")}>
-            <SettingsIcon /> {designSystems.length > 0 ? "Manage design systems" : "Create a design system"}
-          </PromptInputActionMenuItem>
-        </Submenu>
-
-        <Submenu icon={<BlocksIcon />} label="Plugins" count={plugins.filter((p) => p.enabled).length}>
-          {plugins.map((p) => (
-            <DropdownMenuCheckboxItem
-              key={p.id}
-              checked={p.enabled}
-              onCheckedChange={(on) => togglePlugin(p.id, on)}
-              onSelect={(e) => e.preventDefault()}
-            >
-              <span className="truncate">{p.name}</span>
-            </DropdownMenuCheckboxItem>
-          ))}
-          {plugins.length > 0 && <DropdownMenuSeparator />}
-          <PromptInputActionMenuItem onSelect={() => manage("plugins")}>
-            <SettingsIcon /> {plugins.length > 0 ? "Manage plugins" : "Install a plugin"}
-          </PromptInputActionMenuItem>
-        </Submenu>
-
-        <DropdownMenuSeparator />
-
+        <Section>Settings</Section>
         <DropdownMenuCheckboxItem
           checked={prefs.research && researchAvailable}
           disabled={!researchAvailable}
           onCheckedChange={(on) => setPrefs({ research: on })}
+          onSelect={(e) => e.preventDefault()}
         >
-          <TelescopeIcon /> Research
-          {!researchAvailable && <span className="ml-auto text-xs font-normal">Web search off</span>}
+          <TelescopeIcon /> <Label hint={researchAvailable ? "Search the web in depth" : "Turn on web search first"}>Research</Label>
         </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem
-          checked={prefs.memory}
-          onCheckedChange={(on) => setPrefs({ memory: on })}
-        >
-          <BrainIcon /> Memory
+        <DropdownMenuCheckboxItem checked={prefs.memory} onCheckedChange={(on) => setPrefs({ memory: on })} onSelect={(e) => e.preventDefault()}>
+          <BrainIcon /> <Label hint="Remember things across chats">Memory</Label>
         </DropdownMenuCheckboxItem>
-        <DropdownMenuCheckboxItem checked={askUser} onCheckedChange={setAskUser}>
-          <MessageCircleQuestionMarkIcon /> Ask clarifying questions
+        <DropdownMenuCheckboxItem checked={askUser} onCheckedChange={setAskUser} onSelect={(e) => e.preventDefault()}>
+          <MessageCircleQuestionMarkIcon /> <Label hint="Check in before big tasks">Ask clarifying questions</Label>
         </DropdownMenuCheckboxItem>
+
+        <Section>Skills</Section>
+        {enabledSkills.map((x) => (
+          <DropdownMenuCheckboxItem key={x.id} checked={x.enabled} onCheckedChange={(on) => toggleSkill(x.id, on)} onSelect={(e) => e.preventDefault()}>
+            <ScrollTextIcon /> <Label>{x.name}</Label>
+          </DropdownMenuCheckboxItem>
+        ))}
+        <PromptInputActionMenuItem onSelect={createSkillInChat}>
+          <SparklesIcon /> <Label hint="Write a new skill">Create a skill</Label>
+        </PromptInputActionMenuItem>
+
+        <Section>Connectors</Section>
+        {connectors.map((c) => {
+          const s = status[c.id];
+          return (
+            <DropdownMenuCheckboxItem key={c.id} checked={c.enabled} onCheckedChange={(on) => toggleConnector(c.id, on)} onSelect={(e) => e.preventDefault()}>
+              <ConnectorMark connector={c} />
+              <Label>{c.name}</Label>
+              {c.enabled && (
+                <span
+                  title={s?.state === "error" ? s.error : s?.state === "needs-auth" ? "Sign in under Manage connectors" : s?.state}
+                  className={cn(
+                    "mr-4 size-1.5 shrink-0 rounded-full",
+                    s?.state === "ready" ? "bg-emerald-500" : s?.state === "error" ? "bg-destructive" : s?.state === "needs-auth" ? "bg-amber-500" : "bg-muted-foreground/40",
+                  )}
+                />
+              )}
+            </DropdownMenuCheckboxItem>
+          );
+        })}
+        <PromptInputActionMenuItem onSelect={() => manage("connectors")}>
+          <SettingsIcon /> <Label hint={connectors.length > 0 ? "Sign in, add or remove" : "Connect an app or data source"}>{connectors.length > 0 ? "Manage connectors" : "Add a connector"}</Label>
+        </PromptInputActionMenuItem>
+
+        <Section>Design system</Section>
+        <DropdownMenuRadioGroup value={prefs.designSystemId ?? ""} onValueChange={(id) => setPrefs({ designSystemId: id || null })}>
+          <DropdownMenuRadioItem value="" onSelect={(e) => e.preventDefault()}>
+            <PaletteIcon /> <Label hint="Don't apply a brand">None</Label>
+          </DropdownMenuRadioItem>
+          {designSystems.map((d) => (
+            <DropdownMenuRadioItem key={d.id} value={d.id} onSelect={(e) => e.preventDefault()}>
+              <PaletteIcon /> <Label>{d.name}</Label>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <PromptInputActionMenuItem onSelect={() => manage("design")}>
+          <SettingsIcon /> <Label>{designSystems.length > 0 ? "Manage design systems" : "Create a design system"}</Label>
+        </PromptInputActionMenuItem>
+
+        <Section>Plugins</Section>
+        {plugins.map((p) => (
+          <DropdownMenuCheckboxItem key={p.id} checked={p.enabled} onCheckedChange={(on) => togglePlugin(p.id, on)} onSelect={(e) => e.preventDefault()}>
+            <BlocksIcon /> <Label>{p.name}</Label>
+          </DropdownMenuCheckboxItem>
+        ))}
+        <PromptInputActionMenuItem onSelect={() => manage("plugins")}>
+          <SettingsIcon /> <Label>{plugins.length > 0 ? "Manage plugins" : "Install a plugin"}</Label>
+        </PromptInputActionMenuItem>
 
         <DropdownMenuSeparator />
         <PromptInputActionMenuItem onSelect={onOpenSettings}>
-          <SettingsIcon /> Manage providers
+          <SettingsIcon /> <Label hint="Models and API keys">Manage providers</Label>
         </PromptInputActionMenuItem>
       </PromptInputActionMenuContent>
     </PromptInputActionMenu>
   );
 }
 
-function Submenu({
-  icon,
-  label,
-  count,
-  children,
+/** A connector's own logo: full colour where it ships one, else its mark in the brand colour, else a plug. */
+export function ConnectorMark({
+  connector,
+  className = "size-4",
 }: {
-  icon: React.ReactNode;
-  label: string;
-  count: number;
-  children: React.ReactNode;
+  connector: Parameters<typeof connectorIcon>[0];
+  className?: string;
 }) {
+  const brand = brandLogo(connector);
+  if (brand) return <img src={brand} alt="" className={cn("shrink-0 rounded-[20%] object-cover", className)} />;
+  const src = connectorIcon(connector);
+  if (!src) return <PlugIcon className={className} />;
   return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
-        {icon} {label}
-        {count > 0 && <span className="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{count}</span>}
-      </DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="max-h-80 w-56 overflow-y-auto rounded-xl p-1.5">{children}</DropdownMenuSubContent>
-    </DropdownMenuSub>
+    <span
+      aria-hidden
+      className={cn("shrink-0 bg-current", className)}
+      style={{
+        backgroundColor: catalogEntry(connector.catalogId)?.color,
+        mask: `url("${src}") center / contain no-repeat`,
+        WebkitMask: `url("${src}") center / contain no-repeat`,
+      }}
+    />
+  );
+}
+
+/** A group heading, as in the slash-command picker. */
+function Section({ first, children }: { first?: boolean; children: React.ReactNode }) {
+  return (
+    <DropdownMenuLabel className={cn("px-2 pb-1 text-xs font-medium text-muted-foreground/70", first ? "pt-1" : "pt-3")}>
+      {children}
+    </DropdownMenuLabel>
+  );
+}
+
+/** A row's name in bold with its description beside it, muted. */
+function Label({ hint, children }: { hint?: string; children: React.ReactNode }) {
+  return (
+    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="shrink-0 font-medium">{children}</span>
+      {hint && <span className="truncate text-[13px] font-normal text-muted-foreground">{hint}</span>}
+    </span>
   );
 }
 

@@ -319,6 +319,23 @@ export function MascotSprite({ kind, scale = 1, closed, className }: { kind: str
   );
 }
 
+/** Sushi's body with happy closed eyes, in sprite pixels, for scenes drawn elsewhere (`compact-sushi.tsx`). */
+export function SushiPixels() {
+  return (
+    <>
+      <Pixels runs={SUSHI.body} />
+      {SUSHI.eyes.map((e) => (
+        <rect key={e.x} x={e.x} y={e.y + 1} width={2} height={1} fill={COLORS.E} />
+      ))}
+    </>
+  );
+}
+
+/** Rows of pixel characters as rects, with Sushi's palette plus any extra colours. */
+export function PixelRows({ rows, colors, y = 0 }: { rows: string[]; colors?: Record<string, string>; y?: number }) {
+  return <Pixels runs={runs(rows, colors ? { ...COLORS, ...colors } : COLORS, y)} />;
+}
+
 /** What a running reply is doing right now; each one has its own act. */
 export type MascotStage = "thinking" | "tools" | "writing";
 

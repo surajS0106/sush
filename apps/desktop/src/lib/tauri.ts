@@ -1065,6 +1065,8 @@ export const api = {
   threadDelete: (id: string) => invoke<void>("thread_delete", { id }),
   /** Restore a checkpoint: stop the run, put back the files changed from that turn on, and drop the user message `messageId` and all after it. */
   threadRewind: (thread: ThreadMeta, messageId: string) => invoke<UndoResult>("thread_rewind", { thread, messageId }),
+  /** Add a summary message (`metadata.compaction`) to a session that isn't running; the model then reads the thread from it. */
+  threadCompact: (thread: ThreadMeta, message: unknown) => invoke<void>("thread_compact", { thread, message }),
   threadsImport: (threads: StoredThread[]) => invoke<number>("threads_import", { threads }),
   blobPut: (dataUrl: string) => invoke<string>("blob_put", { dataUrl }),
   /** A stored blob's bytes as a `data:` URL. */

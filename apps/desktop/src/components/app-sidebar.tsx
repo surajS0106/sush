@@ -18,7 +18,6 @@ import {
   MoonIcon,
   MoreHorizontalIcon,
   PencilIcon,
-  PinIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
@@ -37,6 +36,7 @@ import { toast } from "sonner";
 import { CoworkStatusBadge, StatusDot } from "@/components/cowork-status-dot";
 import { confirmDeleteProject, openProjectEditor, SessionMenuItems } from "@/components/session-actions";
 import { SharedGroup } from "@/components/shared-sessions";
+import { SidebarCards } from "@/components/sidebar-cards";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -67,7 +67,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { NavControls, toolbarButtonClass, type Nav } from "@/components/nav-controls";
+import { NavControls, sectionButtonClass, sectionHeaderClass, sectionLabelClass, toolbarButtonClass, type Nav } from "@/components/nav-controls";
 import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -93,6 +93,7 @@ const RECENT_LIMIT = 8;
 /** The sidebar's destinations, in order. "Edit sidebar…" moves any of them under "More". */
 const NAV = [
   { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
+  { id: "folders", label: "Folders", icon: FolderIcon },
   { id: "automations", label: "Automations", icon: TimerIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
@@ -113,7 +114,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "automations" | "security" | "review" | "wiki" | "shared";
+export type Page = "session" | "folders" | "automations" | "security" | "review" | "wiki" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -226,7 +227,7 @@ export function AppSidebar({
         <ModeToggle mode={mode} onChange={onSwitchMode} />
       </div>
 
-      <div className="flex flex-col gap-1 px-2 pb-1">
+      <div className="flex flex-col gap-1.5 px-2 pb-2">
         <div className="relative">
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
           <SidebarInput
@@ -253,14 +254,15 @@ export function AppSidebar({
         </SidebarMenu>
       </div>
 
-      <SidebarContent>
+      {/* The list fades out at both edges instead of being cut off under the search and the cards. */}
+      <SidebarContent className="[mask-image:linear-gradient(to_bottom,transparent,black_12px,black_calc(100%-16px),transparent)]">
         {/* One background glides between rows on hover; the buttons' own hover fill is turned off. */}
         <HoverHighlight
           itemSelector='[data-sidebar="menu-item"]'
-          className="flex flex-col [&_[data-sidebar=menu-button]:hover]:bg-transparent"
+          className="flex flex-col gap-4 pt-2 pb-4 [&_[data-sidebar=menu-button]:hover]:bg-transparent"
           highlightClassName="rounded-md bg-sidebar-accent"
         >
-          <SidebarGroup>
+          <SidebarGroup className="py-0">
             <SidebarMenu>
               {shown.map((n) =>
                 n.id === "cowork" ? (
@@ -281,12 +283,12 @@ export function AppSidebar({
 
           <SharedGroup activeId={page === "shared" ? sharedId : null} onOpen={onOpenShared} onOpenSession={onSelect} />
 
-          <SidebarGroup>
-            <div className="flex items-center pr-1">
-              <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Projects</SidebarGroupLabel>
+          <SidebarGroup className="py-0">
+            <div className={sectionHeaderClass}>
+              <SidebarGroupLabel className={sectionLabelClass}>Projects</SidebarGroupLabel>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <button type="button" aria-label="New project" className={toolbarButtonClass} onClick={() => openProjectEditor()}>
+                  <button type="button" aria-label="New project" className={cn(toolbarButtonClass, sectionButtonClass)} onClick={() => openProjectEditor()}>
                     <PlusIcon />
                   </button>
                 </TooltipTrigger>
@@ -310,25 +312,29 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroup>
 
-          <SidebarGroup>
-            <div className="flex items-center pr-1">
-              <SidebarGroupLabel className="flex-1 text-sm text-sidebar-foreground">Sessions</SidebarGroupLabel>
-              <SessionsMenu showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} onNew={onNew} />
-            </div>
-
-            {pinned.length > 0 && (
+          {pinned.length > 0 && (
+            <SidebarGroup className="py-0">
               <Collapsible defaultOpen className="group/pinned">
-                <SidebarGroupLabel asChild>
-                  <CollapsibleTrigger className="w-full gap-1.5 hover:bg-sidebar-accent">
-                    <PinIcon /> Pinned <span className="tabular-nums">{pinned.length}</span>
-                    <ChevronRightIcon className="ml-auto transition-transform group-data-[state=open]/pinned:rotate-90" />
-                  </CollapsibleTrigger>
-                </SidebarGroupLabel>
+                <div className={sectionHeaderClass}>
+                  <SidebarGroupLabel asChild className={sectionLabelClass}>
+                    <CollapsibleTrigger className="gap-1.5 hover:text-foreground">
+                      Pinned <span className="tabular-nums opacity-70">{pinned.length}</span>
+                      <ChevronRightIcon className="size-3.5! opacity-0 transition group-hover/section:opacity-100 group-data-[state=open]/pinned:rotate-90" />
+                    </CollapsibleTrigger>
+                  </SidebarGroupLabel>
+                </div>
                 <CollapsibleContent>
                   <SidebarMenu>{pinned.map(row)}</SidebarMenu>
                 </CollapsibleContent>
               </Collapsible>
-            )}
+            </SidebarGroup>
+          )}
+
+          <SidebarGroup className="py-0">
+            <div className={sectionHeaderClass}>
+              <SidebarGroupLabel className={sectionLabelClass}>Sessions</SidebarGroupLabel>
+              <SessionsMenu showAll={showAll} onToggleShowAll={() => setShowAll(!showAll)} onNew={onNew} />
+            </div>
 
             <SidebarMenu>
               {visible.map(row)}
@@ -350,7 +356,8 @@ export function AppSidebar({
         </HoverHighlight>
       </SidebarContent>
 
-      <SidebarFooter>
+      <SidebarFooter className="gap-3 pt-1">
+        <SidebarCards onNew={onNew} onCowork={() => onSwitchMode("cowork")} onAutomations={() => onOpenPage("automations")} />
         <SidebarMenu>
           <UpgradeButton />
           <SidebarMenuItem>
@@ -686,7 +693,7 @@ function SessionsMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
-            <button type="button" aria-label="Session options" className={toolbarButtonClass}>
+            <button type="button" aria-label="Session options" className={cn(toolbarButtonClass, sectionButtonClass)}>
               <MoreHorizontalIcon />
             </button>
           </DropdownMenuTrigger>

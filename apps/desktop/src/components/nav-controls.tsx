@@ -36,6 +36,12 @@ export function NavControls({ nav, coworkStatus = false }: { nav: Nav; coworkSta
   );
 }
 
+/** A sidebar section's header row (Shared, Projects, Sessions): a quiet label, its buttons shown on hover. */
+export const sectionHeaderClass = "group/section flex h-7 items-center pr-1 mb-0.5";
+export const sectionLabelClass = "h-7 flex-1 px-2 text-xs font-normal text-muted-foreground";
+export const sectionButtonClass =
+  "opacity-0 transition-opacity group-hover/section:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100";
+
 export const toolbarButtonClass =
   "flex size-7 items-center justify-center rounded-md text-sidebar-foreground/70 outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:pointer-events-none disabled:opacity-40 data-[state=open]:bg-sidebar-accent [&>svg]:size-4";
 

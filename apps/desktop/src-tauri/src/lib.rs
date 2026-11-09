@@ -98,6 +98,7 @@ pub fn run() {
             runs::run_cancel,
             runs::agent_spawn,
             runs::thread_rewind,
+            runs::thread_compact,
             runs::run_interrupt,
             runs::tool_result,
             share::share_account,

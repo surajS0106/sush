@@ -8,13 +8,13 @@
 import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
-import { WEEKDAYS, type Schedule } from "@/lib/automation-save";
+import { WEEKDAYS, weeklyDays, type Schedule } from "@/lib/automation-save";
 import { library, requestChat } from "@/lib/library";
 import { sendMessage } from "@/lib/sessions";
 import { createConversation, createStore, getConversations, getTarget } from "@/lib/store";
 import { getWorkspaces } from "@/lib/workspaces";
 
-export { DEFAULT_SCHEDULE, WEEKDAYS, type Frequency, type Schedule } from "@/lib/automation-save";
+export { DEFAULT_SCHEDULE, WEEKDAYS, weeklyDays, type Frequency, type Schedule } from "@/lib/automation-save";
 
 export interface AutomationRun {
   threadId: string;
@@ -83,7 +83,8 @@ export function markSeen(id: string) {
   }
 }
 
-const sameSchedule = (a: Schedule, b: Schedule) => a.frequency === b.frequency && a.time === b.time && a.day === b.day;
+const sameSchedule = (a: Schedule, b: Schedule) =>
+  a.frequency === b.frequency && a.time === b.time && weeklyDays(a).join() === weeklyDays(b).join();
 
 // --- running ---------------------------------------------------------------------
 
@@ -140,7 +141,7 @@ export function nextRun(s: Schedule, after: number): Date | null {
     if (d.getTime() <= after) continue;
     const day = d.getDay();
     if (s.frequency === "weekdays" && (day === 0 || day === 6)) continue;
-    if (s.frequency === "weekly" && day !== s.day) continue;
+    if (s.frequency === "weekly" && !weeklyDays(s).includes(day)) continue;
     return d;
   }
   return null;
@@ -233,9 +234,13 @@ export function describeSchedule(s: Schedule): string {
     case "weekdays":
       return `Weekdays at ${formatTime(s.time)}`;
     case "weekly":
-      return `Every ${WEEKDAYS[s.day]} at ${formatTime(s.time)}`;
+      return `Every ${listOf(weeklyDays(s).map((d) => WEEKDAYS[d]))} at ${formatTime(s.time)}`;
   }
 }
+
+/** "Monday", "Monday and Tuesday", "Monday, Wednesday and Friday". */
+const listOf = (items: string[]) =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 
 /** "Today at 8:00 AM", "Tomorrow at …", "Fri, Oct 17 at …". */
 export function formatWhen(d: Date, now = new Date()): string {
