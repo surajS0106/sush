@@ -26,17 +26,23 @@ export interface Release {
 }
 
 /** Landed since the last release; never shown. Becomes the next release's notes. */
-export const UNRELEASED: Change[] = [
-  { kind: "new", title: "Folders", text: "A Folders page in the sidebar shows every folder Sush works in, the sessions that worked there, and each folder's files. Open a file to start a session with it in the viewer." },
-  { kind: "improved", title: "Automations on several days", text: "Weekly automations can run on several days, like every Monday and Tuesday at 11 AM." },
-  { kind: "fixed", text: "Asking for an automation in your own words saves it on the first try, at the time you asked for, instead of failing again and again." },
-  { kind: "new", title: "Context meter", text: "A ring beside the microphone shows how full the model's context is. Hover it to see what's taking up the space and how much of your budget is spent." },
-  { kind: "new", title: "Compact now", text: "When a chat fills up the context, “Compact now” in the context meter swaps the conversation so far for a summary, so the model has room again. Earlier messages stay on screen." },
-  { kind: "new", text: "Cards at the foot of the sidebar show what's new in this release and a getting-started checklist." },
-  { kind: "new", title: "Sub-agents tray", text: "Sub-agents show in a tray above the message box, with where each one stands and how long it has run." },
-];
+export const UNRELEASED: Change[] = [];
 
 export const CHANGELOG: Release[] = [
+  {
+    version: "2.7.0",
+    date: "2026-11-09",
+    summary: "Folders, a context meter with Compact now, and a sub-agents tray.",
+    changes: [
+      { kind: "new", title: "Folders", text: "A Folders page in the sidebar shows every folder Sush works in, the sessions that worked there, and each folder's files. Open a file to start a session with it in the viewer." },
+      { kind: "improved", title: "Automations on several days", text: "Weekly automations can run on several days, like every Monday and Tuesday at 11 AM." },
+      { kind: "fixed", text: "Asking for an automation in your own words saves it on the first try, at the time you asked for, instead of failing again and again." },
+      { kind: "new", title: "Context meter", text: "A ring beside the microphone shows how full the model's context is. Hover it to see what's taking up the space and how much of your budget is spent." },
+      { kind: "new", title: "Compact now", text: "When a chat fills up the context, “Compact now” in the context meter swaps the conversation so far for a summary, so the model has room again. Earlier messages stay on screen." },
+      { kind: "new", text: "Cards at the foot of the sidebar show what's new in this release and a getting-started checklist." },
+      { kind: "new", title: "Sub-agents tray", text: "Sub-agents show in a tray above the message box, with where each one stands and how long it has run." },
+    ],
+  },
   {
     version: "2.6.0",
     date: "2026-11-08",
