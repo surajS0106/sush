@@ -156,7 +156,7 @@ fn leads_to_call(rest: &[Part]) -> bool {
 }
 
 fn tool_output(call_id: &str, output: &Value) -> Value {
-    let output = output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string());
+    let output = crate::message::tool_output_text(output);
     json!({ "type": "function_call_output", "call_id": call_id, "output": output })
 }
 
@@ -223,7 +223,7 @@ impl Decoder for ResponsesDecoder {
             "response.output_text.annotation.added" if v["annotation"]["type"] == "url_citation" => {
                 if let Some(url) = v["annotation"]["url"].as_str() {
                     let title = v["annotation"]["title"].as_str().map(str::to_owned);
-                    out.push(ChatEvent::Citation { url: url.to_owned(), title });
+                    out.push(ChatEvent::Citation { url: url.to_owned(), title, quote: None });
                 }
             }
             "response.completed" | "response.incomplete" => {
@@ -387,7 +387,7 @@ data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output
         let events = decode_all(ResponsesDecoder::default(), sse);
         assert_eq!(events[0], ChatEvent::ServerToolCall { id: "ws_1".into(), name: "web_search".into(), input: json!({ "query": "rust 2026" }) });
         assert_eq!(events[1], ChatEvent::WebSources { call_id: "ws_1".into(), sources: vec![WebSource { url: "https://a.dev".into(), title: None }] });
-        assert_eq!(events[3], ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()) });
+        assert_eq!(events[3], ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()), quote: None });
         assert_eq!(events[4], ChatEvent::Finish { reason: FinishReason::Stop });
     }
 

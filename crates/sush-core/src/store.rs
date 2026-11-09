@@ -152,10 +152,10 @@ const MIGRATIONS: &[&str] = &[r#"
     CREATE INDEX share_events_share ON share_events (share_id, seq);
 "#, r#"
     ALTER TABLE workspaces ADD COLUMN commands TEXT NOT NULL DEFAULT 'sandbox';
-"#];
+"#, crate::notebooks::MIGRATION, crate::notebooks::MIGRATION_EXTRAS, crate::notebooks::MIGRATION_NOTES];
 
 pub struct Store {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
     blob_dir: PathBuf,
 }
 
@@ -319,6 +319,7 @@ impl Store {
         tx.execute("DELETE FROM threads WHERE parent_id = ?1", [id])?;
         tx.execute("DELETE FROM threads WHERE id = ?1", [id])?;
         tx.execute("DELETE FROM chats_fts WHERE thread_id = ?1", [id])?;
+        tx.execute("DELETE FROM notebook_threads WHERE thread_id = ?1", [id])?;
         tx.commit()?;
         Ok(())
     }

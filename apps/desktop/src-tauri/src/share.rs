@@ -1548,6 +1548,8 @@ fn intent_kind(intent: &Intent) -> &'static str {
         Intent::BranchStatus { .. } => "branch-status",
         Intent::PrChecks { .. } => "pr-checks",
         Intent::CheckFailure { .. } => "check-failure",
+        Intent::GetNotebook => "get-notebook",
+        Intent::GetPassage { .. } => "get-passage",
         Intent::Steer { .. } => "steer",
         Intent::SuggestionAccept { .. } => "suggestion-accept",
         Intent::SuggestionDrop { .. } => "suggestion-drop",
@@ -1575,12 +1577,12 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
     };
     let store = state.store.clone();
     let id = share.thread_id.clone();
-    let (saved, children, workspace, turns) = blocking(move || {
+    let (saved, children, workspace, turns, notebook) = blocking(move || {
         let workspace = match store.thread_workspace(&id)? {
             Some(w) => store.workspace(&w)?,
             None => None,
         };
-        Ok((store.messages(&id)?, store.children(&id)?, workspace, store.turn_changes(&id)?))
+        Ok((store.messages(&id)?, store.children(&id)?, workspace, store.turn_changes(&id)?, store.notebook_for_thread(&id)?))
     })
     .await
     .map_err(|e| e.to_string())?;
@@ -1631,6 +1633,7 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
         role: member.as_ref().map(|m| m.role),
         policy: &policy_now,
         cowork: workspace.is_some(),
+        notebook: notebook.is_some(),
         touched: &touched,
         turns: &turn_ids,
         blobs: &blobs,
@@ -1715,6 +1718,13 @@ async fn handle_intent(app: &AppHandle, share: &HostShare, from: &Peer, intent: 
         })
         .await
         .map_err(failed),
+        // A notebook chat's notebook, as `notebooks::guest_view` lets guests see it.
+        Intent::GetNotebook => notebook.as_ref().map(sush_core::notebooks::guest_view).ok_or_else(|| "This session isn't a notebook's chat.".to_string()),
+        // `authorize` checked the owner shares sources; this checks it's this notebook's own.
+        Intent::GetPassage { url } => {
+            let notebook = notebook.ok_or_else(|| "This session isn't a notebook's chat.".to_string())?;
+            blocking(move || sush_core::notebooks::guest_passage(&store, &notebook, &url).map_err(AppError::Invalid)).await.map_err(failed)
+        }
         Intent::GetBlob { sha } => blocking(move || {
             let (media_type, bytes) = store.blob(&sha)?.ok_or_else(|| AppError::NotFound("That file is no longer stored.".into()))?;
             if bytes.len() > MAX_BLOB {

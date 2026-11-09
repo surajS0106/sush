@@ -285,6 +285,7 @@ export function admit(threadId: string, userId: string, allow: boolean) {
 export const kick = (threadId: string, userId: string) => api.shareKick(threadId, userId);
 export const setBrowseFiles = (share: ShareView, browseFiles: boolean) => api.shareSetPolicy(share.threadId, { ...share.policy, browseFiles });
 export const setHideBrowser = (share: ShareView, hideBrowser: boolean) => api.shareSetPolicy(share.threadId, { ...share.policy, hideBrowser });
+export const setShowSources = (share: ShareView, showSources: boolean) => api.shareSetPolicy(share.threadId, { ...share.policy, showSources });
 export const setDelegation = (share: ShareView, delegation: ShareDelegation) => api.shareSetPolicy(share.threadId, { ...share.policy, delegation });
 export const setRole = (threadId: string, userId: string, role: Exclude<ShareRole, "owner">) => api.shareSetRole(threadId, userId, role);
 export const endShare = (threadId: string) => api.shareEnd(threadId);

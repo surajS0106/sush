@@ -34,6 +34,42 @@ pub enum Part {
     ToolResult { call_id: String, output: Value, #[serde(default)] is_error: bool },
 }
 
+/// A tool output made of passages the model can cite: an object with these
+/// passages under `SEARCH_RESULTS` and the same passages as plain text under
+/// `"text"`. Anthropic gets them as `search_result` blocks, so its citations
+/// point at them; every other format gets the text (`tool_output_text`).
+pub const SEARCH_RESULTS: &str = "searchResults";
+/// A line to the model beside the passages of a `SEARCH_RESULTS` output (it's
+/// also in `"text"`); Anthropic gets it as a text block after them.
+pub const SEARCH_NOTE: &str = "note";
+
+/// One citable passage in a `SEARCH_RESULTS` tool output.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SearchResult {
+    /// What a citation of it points at (a `sushsrc:` URL).
+    pub source: String,
+    pub title: String,
+    pub text: String,
+}
+
+/// A tool output as text, for wire formats that only take strings.
+pub fn tool_output_text(output: &Value) -> String {
+    if let Some(s) = output.as_str() {
+        return s.to_owned();
+    }
+    if output.get(SEARCH_RESULTS).is_some() {
+        if let Some(text) = output.get("text").and_then(Value::as_str) {
+            return text.to_owned();
+        }
+    }
+    output.to_string()
+}
+
+/// The passages of a `SEARCH_RESULTS` tool output, if it is one.
+pub fn search_results(output: &Value) -> Option<Vec<SearchResult>> {
+    serde_json::from_value(output.get(SEARCH_RESULTS)?.clone()).ok()
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
@@ -148,8 +184,15 @@ pub enum ChatEvent {
     /// Pages a server tool returned (search results, a fetched page).
     WebSources { call_id: String, sources: Vec<WebSource> },
     /// The text streamed since the previous citation (or text start) is backed
-    /// by this page. Arrives right after the cited text.
-    Citation { url: String, title: Option<String> },
+    /// by this page, or by a notebook passage (`crate::notebooks`, a `sushsrc:`
+    /// URL). Arrives right after the cited text. `quote` is the exact text
+    /// cited, when the provider says.
+    Citation {
+        url: String,
+        title: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        quote: Option<String>,
+    },
     Finish { reason: FinishReason },
     Error { message: String },
 }

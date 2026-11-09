@@ -257,15 +257,18 @@ function DropdownMenuSubContent({
   children,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.SubContent>) {
+  // Portalled: rendered in-tree it sits inside the parent SURFACE, whose overflow clips it.
   return (
-    <DropdownMenuPrimitive.SubContent
-      data-slot="dropdown-menu-sub-content"
-      className={cn(SURFACE, "min-w-32 origin-(--radix-dropdown-menu-content-transform-origin)", className)}
-      {...props}
-    >
-      <FollowHighlight selector={HIGHLIGHT} />
-      {children}
-    </DropdownMenuPrimitive.SubContent>
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.SubContent
+        data-slot="dropdown-menu-sub-content"
+        className={cn(SURFACE, "min-w-32 origin-(--radix-dropdown-menu-content-transform-origin)", className)}
+        {...props}
+      >
+        <FollowHighlight selector={HIGHLIGHT} />
+        {children}
+      </DropdownMenuPrimitive.SubContent>
+    </DropdownMenuPrimitive.Portal>
   )
 }
 

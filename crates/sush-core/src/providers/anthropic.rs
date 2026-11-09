@@ -124,7 +124,7 @@ pub(crate) fn request_body_with(req: &ChatRequest, native_web: bool) -> Value {
                     blocks.push(json!({ "type": "tool_use", "id": id, "name": name, "input": input }))
                 }
                 Part::ToolResult { call_id, output, is_error } => {
-                    let content = output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string());
+                    let content = tool_result_content(output);
                     let block = json!({ "type": "tool_result", "tool_use_id": call_id, "content": content, "is_error": is_error });
                     // Tool results must be sent from the user side.
                     if m.role == Role::User { blocks.push(block) } else { results.push(block) }
@@ -200,6 +200,33 @@ pub(crate) fn request_body_with(req: &ChatRequest, native_web: bool) -> Value {
     body
 }
 
+/// A tool result's content. Citable passages (`message::SEARCH_RESULTS`) go as
+/// `search_result` blocks, so the model's citations of them come back as
+/// `search_result_location`s naming each passage's `source`.
+fn tool_result_content(output: &Value) -> Value {
+    match crate::message::search_results(output) {
+        Some(results) if !results.is_empty() => {
+            let mut blocks: Vec<Value> = results
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "type": "search_result",
+                        "source": r.source,
+                        "title": r.title,
+                        "content": [{ "type": "text", "text": r.text }],
+                        "citations": { "enabled": true },
+                    })
+                })
+                .collect();
+            if let Some(note) = output.get(crate::message::SEARCH_NOTE).and_then(Value::as_str).filter(|n| !n.is_empty()) {
+                blocks.push(json!({ "type": "text", "text": note }));
+            }
+            Value::Array(blocks)
+        }
+        _ => Value::String(crate::message::tool_output_text(output)),
+    }
+}
+
 /// `(family, major, minor)` from ids like `claude-opus-4-6` or Bedrock's
 /// `anthropic.claude-opus-5-5`. Minor is 0 when absent (`claude-opus-5`) or a date.
 fn claude_version(model: &str) -> Option<(&str, u32, u32)> {
@@ -264,8 +291,8 @@ pub(crate) struct AnthropicDecoder {
     tool_blocks: HashMap<u64, u32>,
     /// Content-block index -> (id, name, input JSON so far) for server-run tools.
     server_blocks: HashMap<u64, (String, String, String)>,
-    /// Content-block index -> pages a text block cites, emitted when it closes.
-    citations: HashMap<u64, Vec<WebSource>>,
+    /// Content-block index -> what a text block cites (with the quoted text), emitted when it closes.
+    citations: HashMap<u64, Vec<(WebSource, Option<String>)>>,
     finished: bool,
     done: bool,
 }
@@ -330,8 +357,8 @@ impl Decoder for AnthropicDecoder {
                     let input = serde_json::from_str(&input).unwrap_or(Value::Object(Default::default()));
                     out.push(ChatEvent::ServerToolCall { id, name, input });
                 }
-                for WebSource { url, title } in self.citations.remove(&index).unwrap_or_default() {
-                    out.push(ChatEvent::Citation { url, title });
+                for (WebSource { url, title }, quote) in self.citations.remove(&index).unwrap_or_default() {
+                    out.push(ChatEvent::Citation { url, title, quote });
                 }
             }
             "content_block_delta" => {
@@ -359,13 +386,20 @@ impl Decoder for AnthropicDecoder {
                             });
                         }
                     }
-                    // Only web results carry a URL; document citations are skipped.
+                    // Web results carry a URL and notebook passages a `source`
+                    // (`tool_result_content`); citations of whole documents are skipped.
                     Some("citations_delta") => {
                         let c = &delta["citation"];
-                        if let Some(url) = c["url"].as_str() {
+                        let url = match c["type"].as_str() {
+                            Some("search_result_location") => c["source"].as_str(),
+                            _ => c["url"].as_str(),
+                        };
+                        if let Some(url) = url {
                             let cited = self.citations.entry(v["index"].as_u64().unwrap_or(0)).or_default();
-                            if !cited.iter().any(|s| s.url == url) {
-                                cited.push(WebSource { url: url.to_string(), title: c["title"].as_str().map(str::to_owned) });
+                            if !cited.iter().any(|(s, _)| s.url == url) {
+                                let quote = c["cited_text"].as_str().map(str::trim).filter(|q| !q.is_empty()).map(str::to_owned);
+                                let source = WebSource { url: url.to_string(), title: c["title"].as_str().map(str::to_owned) };
+                                cited.push((source, quote));
                             }
                         }
                     }
@@ -814,7 +848,65 @@ data: {"type":"content_block_stop","index":2}
             &evs[..2],
             [
                 ChatEvent::TextDelta { delta: "Cited claim.".into() },
-                ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()) },
+                ChatEvent::Citation { url: "https://a.dev".into(), title: Some("A".into()), quote: Some("x".into()) },
+            ]
+        );
+    }
+
+    #[test]
+    fn notebook_passages_go_as_search_results_and_their_citations_come_back() {
+        let output = json!({
+            "searchResults": [{ "source": "sushsrc:s1/7", "title": "Habits.pdf · p. 3", "text": "Cue, routine, reward." }],
+            "text": "[sushsrc:s1/7] Cue, routine, reward.",
+            "note": "Also matched, already shown above (cite them there): sushsrc:s1/2.",
+        });
+        let req = ChatRequest {
+            model: "claude-opus-5-5".into(),
+            messages: vec![
+                Message { role: Role::Assistant, parts: vec![Part::ToolCall { id: "c1".into(), name: "source_search".into(), input: json!({}) }] },
+                Message { role: Role::User, parts: vec![Part::ToolResult { call_id: "c1".into(), output, is_error: false }] },
+            ],
+            system: None,
+            max_tokens: None,
+            temperature: None,
+            tools: vec![],
+            research: false,
+            thinking: None,
+            effort: None,
+        };
+        let body = request_body(&req);
+        let block = &body["messages"][1]["content"][0]["content"][0];
+        assert_eq!(block["type"], "search_result");
+        assert_eq!(block["source"], "sushsrc:s1/7");
+        assert_eq!(block["citations"]["enabled"], true);
+        assert_eq!(block["content"][0]["text"], "Cue, routine, reward.");
+        // The note on passages already shown follows them as text.
+        let note = &body["messages"][1]["content"][0]["content"][1];
+        assert_eq!(note["type"], "text");
+        assert!(note["text"].as_str().unwrap().contains("sushsrc:s1/2"));
+
+        let stream = r#"event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"","citations":[]}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"type":"search_result_location","source":"sushsrc:s1/7","title":"Habits.pdf · p. 3","cited_text":"Cue, routine, reward.","search_result_index":0,"start_block_index":0,"end_block_index":1}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A habit has three parts."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+"#;
+        let evs = decode_all(AnthropicDecoder::default(), stream);
+        assert_eq!(
+            &evs[..2],
+            [
+                ChatEvent::TextDelta { delta: "A habit has three parts.".into() },
+                ChatEvent::Citation {
+                    url: "sushsrc:s1/7".into(),
+                    title: Some("Habits.pdf · p. 3".into()),
+                    quote: Some("Cue, routine, reward.".into()),
+                },
             ]
         );
     }

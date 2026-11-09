@@ -28,6 +28,7 @@ import {
   TerminalIcon,
   TimerIcon,
   Trash2Icon,
+  NotebookTextIcon,
 } from "lucide-react";
 import { useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -55,10 +56,12 @@ import { PullRequestCard } from "@/components/ui/PullRequestCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TopicCard } from "@/components/topic-card";
 import { WeatherCard } from "@/components/weather-card";
+import { sourceTitle } from "@/lib/notebooks";
 import {
   CHATS_SEARCH,
   findConnectorTool,
   MEMORY_DELETE,
+  SOURCE_SEARCH,
   STOPPED,
   toolKind,
   useRunningToolCalls,
@@ -163,6 +166,8 @@ function ToolCard(props: ToolPartProps) {
       return <WebToolPart part={props.part} />;
     case "location":
       return <LocationPart {...props} />;
+    case "notebook":
+      return <NotebookToolPart part={props.part} />;
     case "agent":
       // Shown with the rest of its step's sub-agents (`components/subagents.tsx`).
       return null;
@@ -448,6 +453,42 @@ function ChatsPart({ part }: { part: DynamicToolUIPart }) {
       label={
         <>
           <MessagesSquareIcon className="size-4 shrink-0" />
+          <span className="line-clamp-1 text-left">{label}</span>
+        </>
+      }
+    />
+  );
+}
+
+// --- notebook sources ------------------------------------------------------------
+
+/** A notebook chat searching or reading its sources; the passages found list under it. */
+function NotebookToolPart({ part }: { part: DynamicToolUIPart }) {
+  const input = (part.input ?? {}) as { query?: string; source_id?: string; page?: number };
+  const searching = part.toolName === SOURCE_SEARCH;
+  if (part.state === "input-streaming" || part.state === "input-available") {
+    return <LoadingState label={searching ? "Searching the sources" : "Reading a source"} />;
+  }
+  const found = (part.state === "output-available" && (part.output as { searchResults?: { title: string }[] } | null)?.searchResults) || [];
+  const where = input.source_id ? (sourceTitle(input.source_id) ?? "a source") : "a source";
+  const label = searching
+    ? `Searched the sources for “${input.query ?? ""}”${found.length ? ` · ${found.length} ${found.length === 1 ? "passage" : "passages"}` : ""}`
+    : `Read ${where}${input.page ? `, page ${input.page}` : ""}`;
+  const detail =
+    part.state === "output-error"
+      ? part.errorText
+      : found.length
+        ? found.map((r) => r.title).join("\n")
+        : typeof part.output === "string"
+          ? part.output
+          : undefined;
+  return (
+    <ToolResultRow
+      error={part.state === "output-error"}
+      detail={detail}
+      label={
+        <>
+          <NotebookTextIcon className="size-4 shrink-0" />
           <span className="line-clamp-1 text-left">{label}</span>
         </>
       }

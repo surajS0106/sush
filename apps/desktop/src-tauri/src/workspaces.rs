@@ -319,7 +319,7 @@ fn find(store: &sush_core::store::Store, id: &str) -> AppResult<Workspace> {
     store.workspace(id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))
 }
 
-fn open(store: &sush_core::store::Store, id: &str) -> AppResult<WorkspaceFs> {
+pub(crate) fn open(store: &sush_core::store::Store, id: &str) -> AppResult<WorkspaceFs> {
     let workspace = store.workspace(id)?.ok_or_else(|| AppError::NotFound("That workspace no longer exists.".into()))?;
     WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)
 }

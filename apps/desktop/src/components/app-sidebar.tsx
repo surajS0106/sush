@@ -18,6 +18,7 @@ import {
   MonitorIcon,
   MoonIcon,
   MoreHorizontalIcon,
+  NotebookTextIcon,
   PencilIcon,
   PlugIcon,
   PlusIcon,
@@ -81,6 +82,7 @@ import { automationForThread, useAutomations } from "@/lib/automations";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
 import { useProjects, type Project } from "@/lib/projects";
+import { useNotebookThreads } from "@/lib/notebooks";
 import { useReportThreads } from "@/lib/reports";
 import { errorMessage } from "@/lib/tauri";
 import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
@@ -102,6 +104,7 @@ const NAV = [
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
   { id: "wiki", label: "Wiki", icon: BookOpenIcon },
+  { id: "notebooks", label: "Notebooks", icon: NotebookTextIcon },
 ] as const;
 
 type NavItem = (typeof NAV)[number];
@@ -118,7 +121,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "shared";
+export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -190,7 +193,10 @@ export function AppSidebar({
   // The blank chat behind "New session" isn't listed until something is sent; incognito chats never are.
   // Reviews and wikis run on threads of their own, shown on their pages.
   const reportThreads = useReportThreads();
-  const started = conversations.filter((c) => c.messages.length > 0 && !c.incognito && !reportThreads.has(c.id));
+  const notebookThreads = useNotebookThreads();
+  const started = conversations.filter(
+    (c) => c.messages.length > 0 && !c.incognito && !reportThreads.has(c.id) && !notebookThreads.has(c.id),
+  );
   const matches = searching ? started.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase())) : started;
   const projects = useProjects();
   const projectIds = new Set(projects.map((p) => p.id));

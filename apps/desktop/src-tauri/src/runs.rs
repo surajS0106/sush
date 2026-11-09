@@ -42,6 +42,7 @@ use sush_core::agent::ui::{self, ToolCall, STOPPED};
 use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
 use sush_core::browser as browser_tools;
 use sush_core::provider::EventStream;
+use sush_core::notebooks::{self, Notebook};
 use sush_core::reports::{self, Report, ReportStatus, Role};
 use sush_core::share::policy as share_policy;
 use sush_core::store::ThreadMeta;
@@ -74,6 +75,10 @@ pub enum RunFrame {
     FilesChanged { thread_id: String, workspace_id: String },
     /// A report changed: its run started or ended, or recorded results.
     Report { report: Report },
+    /// A notebook changed: a source added, read, checked or removed, a chat added (`notebooks.rs`).
+    Notebook { notebook: Notebook },
+    /// A notebook was deleted.
+    NotebookGone { id: String },
     /// A share hosted or joined here changed: who's in it, its connection, its end (`share.rs`).
     Share { share: crate::share::ShareView },
     /// A share is gone from this app: ended here, or left.
@@ -316,6 +321,16 @@ impl Runs {
         self.send(RunFrame::Report { report });
     }
 
+    /// Tell every window a notebook changed.
+    pub fn notebook_changed(&self, notebook: Notebook) {
+        self.send(RunFrame::Notebook { notebook });
+    }
+
+    /// Tell every window a notebook is gone.
+    pub fn notebook_gone(&self, id: String) {
+        self.send(RunFrame::NotebookGone { id });
+    }
+
     /// Call `f` with the live copies of a thread and its sub-agents' threads,
     /// while no run can send a frame: what `f` sees lines up exactly with the
     /// next frame any of them sends (a share's snapshot relies on it).
@@ -454,6 +469,49 @@ impl RunHost for Host {
                 Ok(Value::String(said))
             }
             ToolExec::Agent => self.spawn_agent(call, cancel).await,
+            ToolExec::Notebook if call.name == notebooks::STUDIO_SAVE => {
+                // A quiz, deck or mind map handed over: checked, then kept on its note.
+                let (store, thread, input) = (state.store.clone(), self.thread_id.clone(), call.input.clone());
+                let (said, notebook) = blocking(move || {
+                    let (_, note) = store
+                        .studio_for_thread(&thread)?
+                        .ok_or_else(|| AppError::NotFound("This output was deleted.".into()))?;
+                    let mut said = String::new();
+                    let saved = store.update_note(&note.id, now_ms(), |n| {
+                        said = notebooks::save_studio(n, &input)?;
+                        Ok(())
+                    });
+                    match saved {
+                        Ok(n) => Ok((Ok(said), store.notebook(&n.notebook_id)?)),
+                        // What to fix goes back to the model.
+                        Err(sush_core::store::StoreError::Invalid(e)) => Ok((Err(e), None)),
+                        Err(e) => Err(e.into()),
+                    }
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                if let Some(notebook) = notebook {
+                    state.runs.notebook_changed(notebook);
+                }
+                said.map(Value::String)
+            }
+            ToolExec::Notebook => {
+                // Read the notebook as it is now: sources may have been added or checked mid-chat.
+                let (store, thread, name, input) = (state.store.clone(), self.thread_id.clone(), call.name.clone(), call.input.clone());
+                blocking(move || {
+                    let notebook = match store.notebook_for_thread(&thread)? {
+                        Some(n) => Some(n),
+                        // A Studio output's run.
+                        None => store.studio_for_thread(&thread)?.map(|(n, _)| n),
+                    }
+                    .ok_or_else(|| AppError::NotFound("This chat's notebook was deleted.".into()))?;
+                    // Passages this answer already has (saved at each step) aren't sent again.
+                    let seen = notebooks::seen_this_turn(&store.messages(&thread)?);
+                    Ok(notebooks::execute(&store, &notebook, &name, &input, &seen))
+                })
+                .await
+                .map_err(|e| e.to_string())?
+            }
         }
     }
 
@@ -792,7 +850,7 @@ async fn start(
     let runs = &state.runs;
     let mut starting = runs.starting.lock().await;
     let ui_config = config.clone();
-    let (config, cowork, report) = prepare(&state, &thread, config).await?;
+    let (config, cowork, report, studio) = prepare(&state, &thread, config).await?;
     loop {
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
         let Some(live) = existing else { break };
@@ -862,6 +920,18 @@ async fn start(
     tauri::async_runtime::spawn(async move {
         let cancel = host.live.cancel.clone();
         agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
+        // A Studio output's run: what it ended on is the document.
+        if let Some(note_id) = &studio {
+            let (text, error) = {
+                let s = host.live.state.lock().unwrap();
+                match (cancel.is_cancelled(), s.status) {
+                    (true, _) => (None, Some("Stopped before it finished.".to_string())),
+                    (false, RunStatus::Error) => (None, Some(s.error.clone().unwrap_or_else(|| "The model ran into an error.".into()))),
+                    _ => (subagents::final_text(&s.messages), None),
+                }
+            };
+            crate::notebooks::studio_finished(&host.app.state::<AppState>(), note_id, text, error).await;
+        }
         if let Some(id) = &report {
             let (status, error) = {
                 let s = host.live.state.lock().unwrap();
@@ -888,40 +958,64 @@ async fn start(
 /// browser, report or sub-agent tool, plus the workspace's and the browser's
 /// tools and instructions for a Cowork session, and `spawn_agent` (or, on a
 /// sub-agent's thread, its instructions). A report's thread gets its own (`report_config`).
-async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>)> {
+/// The fourth value is the Studio output (a note's id) the thread writes, if it's one's run.
+async fn prepare(
+    state: &AppState,
+    thread: &ThreadMeta,
+    mut config: RunConfig,
+) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>, Option<String>)> {
     config.tools.retain(|t| {
-        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Report | ToolExec::Agent)
+        !matches!(t.exec, ToolExec::Workspace | ToolExec::Browser | ToolExec::Report | ToolExec::Agent | ToolExec::Notebook)
             && !ws_tools::is_workspace_tool(&t.spec.name)
+            && !notebooks::is_notebook_tool(&t.spec.name)
             && !browser_tools::is_browser_tool(&t.spec.name)
             && !reports::is_report_tool(&t.spec.name)
             && !subagents::is_agent_tool(&t.spec.name)
     });
     // Incognito is chat only: Cowork would leave checkpoints of its edits on disk.
     if thread.incognito {
-        return Ok((config, None, None));
+        return Ok((config, None, None, None));
     }
     let store = state.store.clone();
     let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
-    let (workspace, report) = blocking(move || {
+    let (workspace, report, notebook) = blocking(move || {
         // A saved session keeps the workspace it was created with.
         let workspace_id = store.thread_workspace(&id)?.or(claimed);
         let workspace = match workspace_id {
             Some(w) => store.workspace(&w)?,
             None => None,
         };
-        Ok((workspace, store.report_for_thread(&id)?))
+        Ok((workspace, store.report_for_thread(&id)?, (store.studio_for_thread(&id)?, store.notebook_for_thread(&id)?)))
     })
     .await?;
+    let (studio, notebook) = notebook;
+    if let Some((notebook, note)) = studio {
+        let mut config = notebook_config(state, config, &notebook);
+        let section = notebooks::studio_section(note.kind);
+        config.system = Some(format!("{}\n\n---\n\n{section}", config.system.unwrap_or_default()));
+        if note.kind.interactive() {
+            config.tools.push(RunTool {
+                spec: notebooks::studio_save_spec(note.kind),
+                exec: ToolExec::Notebook,
+                approval: Approval::Auto,
+                deferred: false,
+            });
+        }
+        return Ok((config, None, None, Some(note.id)));
+    }
+    if let Some(notebook) = notebook {
+        return Ok((notebook_config(state, config, &notebook), None, None, None));
+    }
     if let Some(report) = report {
         let workspace = workspace.ok_or_else(|| AppError::Invalid("This report's folder was removed, so it can't run.".into()))?;
         let role = report.role_of(&thread.id).unwrap_or(Role::Ask);
         let (config, cowork) = report_config(config, &report, role, workspace)?;
-        return Ok((config, Some(cowork), Some(ReportRun { report, role })));
+        return Ok((config, Some(cowork), Some(ReportRun { report, role }), None));
     }
     let Some(workspace) = workspace else {
         // A plain chat seldom needs sub-agents, so their tool loads on demand there.
         add_subagents(&mut config, thread, true);
-        return Ok((config, None, None));
+        return Ok((config, None, None, None));
     };
     let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
     let mut sandbox = state.sandbox.status().await;
@@ -950,7 +1044,7 @@ async fn prepare(state: &AppState, thread: &ThreadMeta, mut config: RunConfig) -
         browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask, deferred: false }),
     );
     add_subagents(&mut config, thread, false);
-    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None))
+    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None, None))
 }
 
 /// A session's run can start sub-agents; a sub-agent's gets their instructions instead.
@@ -989,6 +1083,29 @@ fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspa
         reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto, deferred: false }),
     );
     Ok((config, Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }))
+}
+
+/// A notebook chat's config: the source tools and instructions in place of the
+/// UI's tools and system prompt, so answers come from the sources. Anthropic
+/// cites the passages itself; other models are told how to write citations.
+fn notebook_config(state: &AppState, mut config: RunConfig, notebook: &Notebook) -> RunConfig {
+    let native = state.provider(&config.provider_id).is_some_and(|p| matches!(p.format, sush_core::WireFormat::AnthropicMessages));
+    config.tools = notebooks::specs()
+        .into_iter()
+        .map(|spec| RunTool { spec, exec: ToolExec::Notebook, approval: Approval::Auto, deferred: false })
+        .collect();
+    config.research = false;
+    // What the UI sends for a notebook chat is the user's own context (how to
+    // answer, what Sush remembers about them); the notebook's rules come first.
+    let section = notebooks::system_section(notebook, native);
+    config.system = Some(match config.system.take().filter(|s| !s.trim().is_empty()) {
+        Some(own) => format!(
+            "{section}\n\n---\n\nThe user's own preferences follow. They shape how you answer, never what counts as an answer: \
+             that comes from the sources.\n\n{own}"
+        ),
+        None => section,
+    });
+    config
 }
 
 /// Set a report's run status, if `thread_id` still runs it (a wiki's regeneration moves it to a new thread).

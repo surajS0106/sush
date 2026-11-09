@@ -26,6 +26,7 @@ use crate::workspace::tools::{FS_READ, FS_SEARCH};
 pub const SECRET_FILE: &str = "[hidden from guests: secret file]";
 pub const PRIVATE: &str = "[private to the host]";
 pub const MASK: &str = "[redacted]";
+pub const SOURCE_TEXT: &str = "[hidden from guests: source text]";
 
 /// Tools whose calls hold the host's own data: memory, other conversations and
 /// where they are. A map counts because its start or end can be the host's saved
@@ -47,8 +48,20 @@ pub fn op(op: &Op) -> Op {
         Op::Push { message: m } => Op::Push { message: message(m) },
         Op::PushPart { part: p } => Op::PushPart { part: part(p) },
         Op::SetPart { index, part: p } => Op::SetPart { index: *index, part: part(p) },
-        Op::AppendText { .. } | Op::SetMetadata { .. } => op.clone(),
+        // A citation marker arrives whole in one delta (`agent::ui::citation_marker`).
+        Op::AppendText { index, delta } => Op::AppendText { index: *index, delta: strip_passage_quotes(delta) },
+        Op::SetMetadata { .. } => op.clone(),
     }
+}
+
+/// Passage citations carry the words they cite (`sushsrc:<source>/<chunk>?q=…`);
+/// guests get the address without them, since those words are source text.
+pub fn strip_passage_quotes(text: &str) -> String {
+    static QUOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(sushsrc:[^\s)?]+)\?q=[^\s)]*").expect("valid regex"));
+    if !text.contains("sushsrc:") {
+        return text.to_owned();
+    }
+    QUOTE.replace_all(text, "$1").into_owned()
 }
 
 pub fn messages(messages: &[Value]) -> Vec<Value> {
@@ -66,6 +79,13 @@ pub fn message(message: &Value) -> Value {
 }
 
 pub fn part(part: &Value) -> Value {
+    if part.get("type").and_then(Value::as_str) == Some("text") {
+        let mut out = part.clone();
+        if let Some(Value::String(text)) = out.get_mut("text") {
+            *text = strip_passage_quotes(text);
+        }
+        return out;
+    }
     if part.get("type").and_then(Value::as_str) != Some("dynamic-tool") {
         return part.clone();
     }
@@ -75,6 +95,15 @@ pub fn part(part: &Value) -> Value {
         out["input"] = json!({ "title": PRIVATE, "query": PRIVATE });
         if out.get("output").is_some() {
             out["output"] = json!(PRIVATE);
+        }
+        return out;
+    }
+    // A notebook's sources are the host's: guests see which passages were found
+    // (their titles and addresses, so citations still number and name them),
+    // not their text, which they can ask for only if the owner shares it.
+    if crate::notebooks::is_notebook_tool(name) && name != crate::notebooks::STUDIO_SAVE {
+        if let Some(output) = out.get_mut("output") {
+            hide_source_text(output);
         }
         return out;
     }
@@ -97,6 +126,24 @@ pub fn part(part: &Value) -> Value {
         *text = scrub(text);
     }
     out
+}
+
+/// A notebook tool's output with every passage's text replaced; a plain-text
+/// output (a "nothing matched" note) is kept, scrubbed.
+fn hide_source_text(output: &mut Value) {
+    match output {
+        Value::Object(o) => {
+            let found = o.get(crate::message::SEARCH_RESULTS).and_then(Value::as_array).map_or(0, Vec::len);
+            if let Some(Value::Array(results)) = o.get_mut(crate::message::SEARCH_RESULTS) {
+                for r in results {
+                    r["text"] = json!(SOURCE_TEXT);
+                }
+            }
+            o.insert("text".into(), json!(format!("{found} passages from the host's sources {SOURCE_TEXT}")));
+        }
+        Value::String(s) => *s = scrub(s),
+        _ => *output = json!(SOURCE_TEXT),
+    }
 }
 
 /// `fs_search` output (`path:line: text`), without the lines from secret-looking files.
@@ -156,6 +203,26 @@ mod tests {
 
     fn tool(name: &str, input: Value, output: Value) -> Value {
         json!({ "type": "dynamic-tool", "toolName": name, "toolCallId": "c", "state": "output-available", "input": input, "output": output })
+    }
+
+    #[test]
+    fn notebook_passages_reach_guests_without_their_text() {
+        let found = json!({ "type": "dynamic-tool", "toolName": "source_search", "toolCallId": "c", "state": "output-available",
+            "input": { "query": "habit loop" },
+            "output": { "searchResults": [{ "source": "sushsrc:s1/7", "title": "Habits.pdf · p. 3", "text": "Cue, routine, reward." }],
+                        "text": "<passage id=\"sushsrc:s1/7\">Cue, routine, reward.</passage>" } });
+        let out = part(&found);
+        assert_eq!(out["output"]["searchResults"][0]["title"], "Habits.pdf · p. 3");
+        assert_eq!(out["output"]["searchResults"][0]["source"], "sushsrc:s1/7");
+        assert_eq!(out["output"]["searchResults"][0]["text"], SOURCE_TEXT);
+        assert!(!out["output"]["text"].as_str().unwrap().contains("Cue"));
+        assert_eq!(out["input"]["query"], "habit loop", "what was searched for is the chat's own");
+
+        let text = json!({ "type": "text", "text": "Loops. [cite](sushsrc:s1/7?q=cue%20routine \"Habits.pdf\")" });
+        assert_eq!(part(&text)["text"], "Loops. [cite](sushsrc:s1/7 \"Habits.pdf\")");
+        let delta = Op::AppendText { index: 1, delta: " [cite](sushsrc:s1/7?q=cue)".into() };
+        assert_eq!(op(&delta), Op::AppendText { index: 1, delta: " [cite](sushsrc:s1/7)".into() });
+        assert_eq!(strip_passage_quotes("see https://x.dev/?q=1"), "see https://x.dev/?q=1");
     }
 
     #[test]

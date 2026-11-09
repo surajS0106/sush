@@ -3,6 +3,7 @@
 // text it backs (`citation_marker` in `sush_core::agent::ui`); the message view
 // turns those into numbered markers.
 
+import { isPassageUrl, parsePassageUrl, passageKey, sourceTitle } from "@/lib/notebooks";
 import type { SushUIMessage } from "@/lib/transport";
 import { partWebSources } from "@/lib/web";
 
@@ -72,6 +73,15 @@ export function citedSources(message: SushUIMessage): CitedSource[] {
     if (p.type !== "text") continue;
     for (const [, href, title] of p.text.matchAll(CITE_RE)) {
       const url = safeDecode(href);
+      if (isPassageUrl(url)) {
+        // A notebook passage: the same passage cited with different words is one source.
+        const key = passageKey(url);
+        if (byUrl.has(key)) continue;
+        const ref = parsePassageUrl(url);
+        const name = title || (ref && sourceTitle(ref.sourceId)) || "Source";
+        byUrl.set(key, { n: byUrl.size + 1, url, title: name, domain: "Notebook source", letter: (name[0] ?? "S").toUpperCase(), tone: "bg-brand" });
+        continue;
+      }
       if (byUrl.has(url)) continue;
       const domain = hostname(url);
       let hash = 0;

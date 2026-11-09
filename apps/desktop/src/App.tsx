@@ -12,6 +12,7 @@ import { ChatView } from "@/components/chat-view";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { NavControls, type Nav } from "@/components/nav-controls";
 import { ReportsPage } from "@/components/reports-page";
+import { NotebooksPage } from "@/components/notebooks-page";
 import { WikiPage } from "@/components/wiki-page";
 import { IncognitoToggle, SessionDialogs, SessionMenu } from "@/components/session-actions";
 import { ShareActivityButton } from "@/components/share-activity";
@@ -271,6 +272,14 @@ export default function App() {
               {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
               {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}
               {page === "wiki" && <WikiPage onOpenSession={tabs.openInNewTab} />}
+              {page === "notebooks" && (
+                <NotebooksPage
+                  catalog={catalog}
+                  hasProviders={providers ? providers.length > 0 : null}
+                  onOpenSettings={() => openSettings({ section: "providers" })}
+                  onOpenSession={tabs.openInNewTab}
+                />
+              )}
               {page === "shared" && watched && (
                 <PromptInputProvider key={watched.threadId}>
                   <ChatView

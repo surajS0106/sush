@@ -201,6 +201,21 @@ const ANSWER_STYLE =
   "markdown (bold, lists, headings, tables) where it helps reading, not for its own sake. Don't pad: no restating the " +
   "question, no closing summaries of what you just said.";
 
+/**
+ * What a notebook chat (or Studio output) gets of the user's own context:
+ * how to answer, and what Sush remembers about them, read-only. Its tools are
+ * the notebook's (Rust adds them), so nothing here mentions tools.
+ */
+export function notebookContext(): string {
+  const prefs = library.prefs();
+  const sections = [ANSWER_STYLE];
+  if (prefs.memory) {
+    const memory = renderMemory().trim();
+    if (memory) sections.push(`What you know about the user, from their memory (read-only here; use it only to fit answers to them):\n\n${memory}`);
+  }
+  return sections.join("\n\n");
+}
+
 export interface RequestContext {
   system?: string;
   tools: ToolSpec[];
@@ -321,7 +336,12 @@ export type ToolKind =
   | "agent"
   | "connector"
   | "tools-load"
+  | "notebook"
   | "unknown";
+
+/** A notebook chat's source tools. Rust offers and runs them (`sush_core::notebooks`). */
+export const SOURCE_SEARCH = "source_search";
+export const SOURCE_READ = "source_read";
 
 /** Cowork file and shell tools. Rust offers and runs them (`sush_core::workspace::tools`). */
 export const WORKSPACE_TOOLS = new Set([
@@ -378,6 +398,7 @@ export function toolKind(name: string): ToolKind {
   if (name === TOPIC_LOOKUP) return "topic";
   if (name === WEB_SEARCH || name === WEB_FETCH) return "web";
   if (name === LOCATION_GET) return "location";
+  if (name === SOURCE_SEARCH || name === SOURCE_READ) return "notebook";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
 }

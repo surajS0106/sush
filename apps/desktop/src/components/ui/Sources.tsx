@@ -102,8 +102,11 @@ export function SourcesProvider({ defaultExpanded = true, children }: { defaultE
   return <SourcesContext.Provider value={value}>{children}</SourcesContext.Provider>;
 }
 
-/** An inline numbered marker; focusing or clicking it opens and highlights its source. */
-export function Citation({ n, title }: { n: number; title: string }) {
+/**
+ * An inline numbered marker; focusing or clicking it opens and highlights its
+ * source. `onOpen` also runs on click (a notebook passage opens in its viewer).
+ */
+export function Citation({ n, title, onOpen }: { n: number; title: string; onOpen?: () => void }) {
   const { activeId, setActiveId, clearIfActive, setExpanded } = useSourcesState();
   const active = activeId === n;
   return (
@@ -116,8 +119,9 @@ export function Citation({ n, title }: { n: number; title: string }) {
       onClick={() => {
         setExpanded(true);
         setActiveId(n);
+        onOpen?.();
       }}
-      aria-label={`Jump to source ${n}: ${title}`}
+      aria-label={onOpen ? `Open source ${n}: ${title}` : `Jump to source ${n}: ${title}`}
       className={`relative -top-1 mx-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1 align-baseline text-[11px] font-semibold leading-none transition-[color,background-color,border-color,transform,opacity] duration-150 ${FOCUS_RING} ${
         active ? "scale-110 bg-brand text-brand-foreground ring-2 ring-brand/50" : "bg-brand/10 text-brand hover:bg-brand hover:text-brand-foreground"
       }`}

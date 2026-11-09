@@ -202,9 +202,10 @@ async fn public_address(url: &reqwest::Url) -> Result<SocketAddr, String> {
     Ok(addrs[0])
 }
 
-/// Fetches a public page from this machine, following redirects one at a time so
-/// each hop's address is checked, and connecting to the address that was checked.
-async fn fetch_here(start: &reqwest::Url) -> Result<(String, Option<String>, String), String> {
+/// GETs a public URL from this machine, following redirects one at a time so
+/// each hop's address is checked, and connecting to the address that was
+/// checked. Returns the final URL and the successful response.
+async fn get_public(start: &reqwest::Url, accept: &str, timeout: Duration) -> Result<(reqwest::Url, reqwest::Response), String> {
     let mut url = start.clone();
     for _ in 0..=MAX_REDIRECTS {
         let addr = public_address(&url).await?;
@@ -212,16 +213,11 @@ async fn fetch_here(start: &reqwest::Url) -> Result<(String, Option<String>, Str
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .resolve(&host, addr)
-            .timeout(TIMEOUT)
+            .timeout(timeout)
             .user_agent(concat!("Sush/", env!("CARGO_PKG_VERSION"), " (web_fetch)"))
             .build()
             .map_err(|e| e.to_string())?;
-        let mut resp = client
-            .get(url.clone())
-            .header("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5")
-            .send()
-            .await
-            .map_err(|_| format!("couldn't reach {host}"))?;
+        let resp = client.get(url.clone()).header("Accept", accept).send().await.map_err(|_| format!("couldn't reach {host}"))?;
         let status = resp.status();
         if status.is_redirection() {
             let location = resp.headers().get("location").and_then(|l| l.to_str().ok()).ok_or("the page redirected nowhere")?;
@@ -234,24 +230,158 @@ async fn fetch_here(start: &reqwest::Url) -> Result<(String, Option<String>, Str
         if !status.is_success() {
             return Err(format!("{host} answered HTTP {}", status.as_u16()));
         }
-        let kind = resp.headers().get("content-type").and_then(|t| t.to_str().ok()).unwrap_or("text/html").to_ascii_lowercase();
-        let html = kind.contains("html") || kind.contains("xml");
-        let text_like = html || kind.starts_with("text/") || kind.contains("json");
-        if !text_like {
-            return Err(format!("that's a {} file, not a page web_fetch can read", kind.split(';').next().unwrap_or("binary")));
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = resp.chunk().await.map_err(|_| format!("{host} stopped sending the page"))? {
-            body.extend_from_slice(&chunk);
-            if body.len() >= MAX_BODY {
-                break;
-            }
-        }
-        let raw = String::from_utf8_lossy(&body);
-        let final_url = url.to_string();
-        return Ok(if html { (final_url, html_title(&raw), html_text(&raw)) } else { (final_url, None, raw.trim().to_owned()) });
+        return Ok((url, resp));
     }
     Err("the page redirected too many times".into())
+}
+
+/// A response's body, up to `max` bytes (`None` if it was longer and `whole` is required).
+async fn read_body(resp: &mut reqwest::Response, host: &str, max: usize, whole: bool) -> Result<Option<Vec<u8>>, String> {
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|_| format!("{host} stopped sending the page"))? {
+        body.extend_from_slice(&chunk);
+        if body.len() >= max {
+            return Ok((!whole).then_some(body));
+        }
+    }
+    Ok(Some(body))
+}
+
+fn content_type(resp: &reqwest::Response) -> String {
+    resp.headers().get("content-type").and_then(|t| t.to_str().ok()).unwrap_or("text/html").to_ascii_lowercase()
+}
+
+/// Fetches a public page from this machine (see `get_public`).
+async fn fetch_here(start: &reqwest::Url) -> Result<(String, Option<String>, String), String> {
+    let (url, mut resp) = get_public(start, "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5", TIMEOUT).await?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    let kind = content_type(&resp);
+    let html = kind.contains("html") || kind.contains("xml");
+    let text_like = html || kind.starts_with("text/") || kind.contains("json");
+    if !text_like {
+        return Err(format!("that's a {} file, not a page web_fetch can read", kind.split(';').next().unwrap_or("binary")));
+    }
+    let body = read_body(&mut resp, &host, MAX_BODY, false).await?.unwrap_or_default();
+    let raw = String::from_utf8_lossy(&body);
+    let final_url = url.to_string();
+    Ok(if html { (final_url, html_title(&raw), html_text(&raw)) } else { (final_url, None, raw.trim().to_owned()) })
+}
+
+/// Largest PDF a notebook source may be.
+pub const MAX_SOURCE_PDF: usize = 64 * 1024 * 1024;
+
+/// What a notebook source's address held (`crate::notebooks`).
+pub enum Fetched {
+    /// A web page's readable text.
+    Page { url: String, title: Option<String>, text: String },
+    /// A PDF's bytes.
+    Pdf { url: String, bytes: Vec<u8> },
+}
+
+/// Fetch a notebook source from this machine, public addresses only (as
+/// `web_fetch` does), whole: a page's readable text or a PDF.
+pub async fn fetch_source(url: &str) -> Result<Fetched, String> {
+    let start = parse_url(url)?;
+    let accept = "text/html,application/xhtml+xml,application/pdf;q=0.9,text/plain;q=0.8,*/*;q=0.5";
+    let (url, mut resp) = get_public(&start, accept, Duration::from_secs(60)).await?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    let kind = content_type(&resp);
+    let pdf = kind.contains("pdf") || (kind.contains("octet-stream") && url.path().to_ascii_lowercase().ends_with(".pdf"));
+    if pdf {
+        let bytes = read_body(&mut resp, &host, MAX_SOURCE_PDF, true)
+            .await?
+            .ok_or_else(|| format!("that PDF is larger than {} MB", MAX_SOURCE_PDF / (1024 * 1024)))?;
+        return Ok(Fetched::Pdf { url: url.to_string(), bytes });
+    }
+    let html = kind.contains("html") || kind.contains("xml");
+    if !(html || kind.starts_with("text/") || kind.contains("json")) {
+        return Err(format!("that's a {} file, which notebooks can't read yet", kind.split(';').next().unwrap_or("binary")));
+    }
+    let body = read_body(&mut resp, &host, MAX_BODY * 4, false).await?.unwrap_or_default();
+    let raw = String::from_utf8_lossy(&body);
+    let (title, text) = if html { (html_title(&raw), html_text(&raw)) } else { (None, raw.trim().to_owned()) };
+    Ok(Fetched::Page { url: url.to_string(), title, text })
+}
+
+/// A YouTube video's title and captions (start in ms, text), from its watch
+/// page's caption tracks: the language's own captions over automatic ones,
+/// English first. Fetched from this machine, with no key, under the same
+/// rules as every source.
+pub async fn youtube_transcript(id: &str) -> Result<(Option<String>, Vec<(u64, String)>), String> {
+    const NO_CAPTIONS: &str = "YouTube didn't share captions for this video. Paste its transcript as text instead";
+    let watch = parse_url(&format!("https://www.youtube.com/watch?v={id}&hl=en&has_verified=1&bpctr=9999999999"))?;
+    let (url, mut resp) = get_public(&watch, "text/html", Duration::from_secs(30)).await?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    let body = read_body(&mut resp, &host, MAX_BODY * 4, false).await?.unwrap_or_default();
+    let html = String::from_utf8_lossy(&body);
+    let title = html_title(&html).map(|t| t.trim_end_matches(" - YouTube").trim().to_owned()).filter(|t| !t.is_empty());
+    let tracks = json_after(&html, "\"captionTracks\":").ok_or(NO_CAPTIONS)?;
+    let tracks: Vec<Value> = serde_json::from_str(tracks).map_err(|_| NO_CAPTIONS.to_string())?;
+    // Made by people beats automatic ("asr"); English beats other languages.
+    let rank = |t: &Value| {
+        let lang = t["languageCode"].as_str().unwrap_or_default();
+        (t["kind"].as_str() == Some("asr"), !lang.starts_with("en"))
+    };
+    let track = tracks.iter().filter(|t| t["baseUrl"].is_string()).min_by_key(|t| rank(t)).ok_or(NO_CAPTIONS)?;
+    let base = track["baseUrl"].as_str().unwrap_or_default();
+    let captions = parse_url(&format!("{base}&fmt=json3"))?;
+    let (url, mut resp) = get_public(&captions, "application/json", Duration::from_secs(30)).await?;
+    let host = url.host_str().unwrap_or_default().to_owned();
+    let body = read_body(&mut resp, &host, MAX_BODY * 4, false).await?.unwrap_or_default();
+    let json: Value = serde_json::from_slice(&body).map_err(|_| NO_CAPTIONS.to_string())?;
+    let lines: Vec<(u64, String)> = json["events"]
+        .as_array()
+        .map(|events| {
+            events
+                .iter()
+                .filter_map(|e| {
+                    let text: String = e["segs"].as_array()?.iter().filter_map(|s| s["utf8"].as_str()).collect();
+                    let text = decode_entities(text.trim());
+                    (!text.is_empty()).then(|| (e["tStartMs"].as_u64().unwrap_or(0), text))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if lines.is_empty() {
+        return Err(NO_CAPTIONS.into());
+    }
+    Ok((title, lines))
+}
+
+/// The JSON value (an array or object) right after `marker` in a page's script.
+fn json_after<'a>(html: &'a str, marker: &str) -> Option<&'a str> {
+    let start = html.find(marker)? + marker.len();
+    let rest = &html[start..];
+    let open = rest.chars().next()?;
+    let close = match open {
+        '[' => ']',
+        '{' => '}',
+        _ => return None,
+    };
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for (i, c) in rest.char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            c if c == open => depth += 1,
+            c if c == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&rest[..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn decode_entities(text: &str) -> String {
@@ -319,6 +449,13 @@ fn html_text(html: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn json_after_takes_the_whole_value_with_brackets_in_strings() {
+        let html = r#"x "captionTracks":[{"baseUrl":"https://a/?b=]","n":{"t":"}"}}],"after":1"#;
+        assert_eq!(json_after(html, "\"captionTracks\":"), Some(r#"[{"baseUrl":"https://a/?b=]","n":{"t":"}"}}]"#));
+        assert_eq!(json_after("nothing", "\"captionTracks\":"), None);
+    }
 
     #[test]
     fn results_keep_web_pages_and_cut_long_snippets() {

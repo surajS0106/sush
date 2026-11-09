@@ -482,6 +482,123 @@ export type ThreadOp =
   | { type: "set-part"; index: number; part: unknown }
   | { type: "set-metadata"; metadata: Record<string, unknown> };
 
+// --- notebooks (`notebooks.rs`, `sush_core::notebooks`) --------------------------------
+
+export type SourceKind = "pdf" | "web" | "paper" | "text" | "youtube" | "audio" | "chat" | "file";
+export type SourceStatus = "reading" | "ready" | "failed";
+
+/** A notebook source (`sush_core::notebooks::Source`). */
+export interface NotebookSource {
+  id: string;
+  notebookId: string;
+  kind: SourceKind;
+  title: string;
+  /** Where a web page or paper was read from. */
+  url?: string;
+  /** The original file (a PDF, or the text as added). */
+  blob?: string;
+  status: SourceStatus;
+  error?: string;
+  /** Whether chats search it. */
+  checked: boolean;
+  /** A PDF's page count. */
+  pages?: number;
+  chars: number;
+  chunks: number;
+  /** Its text was cut at the size limit. */
+  truncated?: boolean;
+  /** A short guide, written the first time it's opened. */
+  guide?: SourceGuide;
+  addedAt: number;
+}
+
+export interface SourceGuide {
+  /** Markdown, key terms in bold. */
+  summary: string;
+  topics: string[];
+  /** Its chunk count when written; a different count means it was read again since. */
+  chunks: number;
+}
+
+/** A cover's framing: the point kept in view (percent across and down) and zoom, 1 to 3. */
+export interface CoverPosition {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+/** A model's summary of a notebook's sources (`sush_core::notebooks::Overview`). */
+export interface NotebookOverview {
+  summary: string;
+  questions: string[];
+  /** The sources it was written from; see `sourcesKey` in `lib/notebooks.ts`. */
+  sourcesKey: string;
+  generatedAt: number;
+}
+
+export interface Notebook {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  sources: NotebookSource[];
+  /** Its chats, oldest first. */
+  threadIds: string[];
+  emoji?: string;
+  /** A cover image's blob URL. */
+  cover?: string;
+  /** How the cover is framed; none shows it centred. */
+  coverPosition?: CoverPosition;
+  /** The user's own summary, shown in place of the generated one. */
+  customSummary?: string;
+  overview?: NotebookOverview;
+  /** The user named it, so overviews don't suggest a title. */
+  named?: boolean;
+  /** Notes and Studio outputs, newest first. */
+  notes: NotebookNote[];
+}
+
+export type NoteKind = "note" | "briefing" | "study-guide" | "faq" | "timeline" | "quiz" | "flashcards" | "mind-map" | "audio-overview";
+
+/** A passage id (`sushsrc:…`) an item came from. */
+type From = { source?: string | null };
+export type QuizData = { questions: ({ question: string; options: string[]; answer: number; explanation: string } & From)[] };
+export type FlashcardsData = { cards: ({ front: string; back: string } & From)[] };
+export type MindMapNode = { label: string; note?: string | null; children: MindMapNode[] } & From;
+export type MindMapData = { root: MindMapNode };
+/** An audio overview's script; `audio` is each turn's clip once voiced, `voices` what voiced them. */
+export type AudioTurn = { host: "a" | "b"; text: string; audio?: string | null } & From;
+export type AudioOverviewData = { chapters: { title: string; turns: AudioTurn[] }[]; voices?: string };
+export type NoteStatus = "writing" | "ready" | "failed";
+
+/** A note, or a Studio output (`sush_core::notebooks::Note`). */
+export interface NotebookNote {
+  id: string;
+  notebookId: string;
+  kind: NoteKind;
+  title: string;
+  /** Markdown with `[cite](sushsrc:…)` markers. */
+  body: string;
+  status: NoteStatus;
+  error?: string;
+  /** A Studio output's run. */
+  threadId?: string;
+  /** A quiz's, flashcards' or mind map's content. */
+  data?: QuizData | FlashcardsData | MindMapData | AudioOverviewData;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** A chunk of a source's text, as searched and cited. */
+export interface Passage {
+  id: number;
+  sourceId: string;
+  ordinal: number;
+  page: number | null;
+  heading: string | null;
+  text: string;
+}
+
 export type RunStatus = "submitted" | "streaming" | "awaiting" | "ready" | "error";
 
 export type RunFrame =
@@ -492,6 +609,8 @@ export type RunFrame =
   | { type: "saved"; thread: ThreadMeta }
   | { type: "files-changed"; threadId: string; workspaceId: string }
   | { type: "report"; report: Report }
+  | { type: "notebook"; notebook: Notebook }
+  | { type: "notebook-gone"; id: string }
   | { type: "share"; share: ShareView }
   | { type: "share-gone"; threadId: string }
   /** Build the config for a run someone in a shared session starts; answer with `shareConfigResult`. */
@@ -532,6 +651,26 @@ export interface SharePolicy {
   away: ShareAwayPolicy;
   /** Keep the page in the owner's browser to themselves (guests follow it otherwise). */
   hideBrowser?: boolean;
+  /** In a notebook's chat, guests may read the passages it cites. */
+  showSources?: boolean;
+}
+
+/** A notebook as guests of one of its shared chats see it (`notebooks::guest_view`). */
+export interface GuestNotebook {
+  title: string;
+  emoji: string | null;
+  sources: { id: string; title: string; kind: SourceKind; pages: number | null; checked: boolean }[];
+  outputs: { id: string; kind: NoteKind; title: string; body: string; data: NotebookNote["data"] | null; updatedAt: number }[];
+}
+
+/** One cited passage, for a guest (`notebooks::guest_passage`). */
+export interface GuestPassage {
+  sourceTitle: string;
+  kind: SourceKind;
+  url: string | null;
+  page: number | null;
+  heading: string | null;
+  text: string;
 }
 
 /** The page open in the host's built-in browser, as guests follow it. */
@@ -717,6 +856,8 @@ export type ShareIntent =
   | { kind: "branch-status"; base: string | null }
   | { kind: "pr-checks"; pr: number | null }
   | { kind: "check-failure"; job: number }
+  | { kind: "get-notebook" }
+  | { kind: "get-passage"; url: string }
   | { kind: "steer"; text: string; images: ShareImage[] }
   | { kind: "suggestion-accept"; id: string; text?: string | null }
   | { kind: "suggestion-drop"; id: string }
@@ -1124,6 +1265,57 @@ export const api = {
   reportRerun: (id: string, threadId: string) => invoke<Report>("report_rerun", { id, threadId }),
   reportAskThread: (id: string, threadId: string | null) => invoke<Report>("report_ask_thread", { id, threadId }),
   reportDelete: (id: string) => invoke<void>("report_delete", { id }),
+
+  notebooksList: () => invoke<Notebook[]>("notebooks_list"),
+  notebookCreate: (title: string) => invoke<Notebook>("notebook_create", { title }),
+  notebookRename: (id: string, title: string) => invoke<Notebook>("notebook_rename", { id, title }),
+  /** Everything the Customize dialog sets, the cover included (`null` removes it). */
+  notebookCustomize: (
+    id: string,
+    title: string,
+    emoji: string | null,
+    customSummary: string | null,
+    cover: string | null,
+    coverPosition: CoverPosition | null,
+  ) => invoke<Notebook>("notebook_customize", { id, title, emoji, customSummary, cover, coverPosition }),
+  notebookSetOverview: (id: string, overview: NotebookOverview, title: string | null, emoji: string | null) =>
+    invoke<Notebook>("notebook_set_overview", { id, overview, title, emoji }),
+  /** Ask for a cover image and store it; the notebook only gets it from `notebookCustomize`. `null` if cancelled. */
+  notebookPickCover: () => invoke<string | null>("notebook_pick_cover"),
+  notebookSourceSetGuide: (sourceId: string, guide: SourceGuide) => invoke<NotebookSource>("notebook_source_set_guide", { sourceId, guide }),
+  /** The model scanned PDFs are read with. */
+  notebookSetReader: (providerId: string | null, model: string | null) => invoke<void>("notebook_set_reader", { providerId, model }),
+  notebookNoteCreate: (id: string, title: string, body: string) => invoke<NotebookNote>("notebook_note_create", { id, title, body }),
+  notebookNoteUpdate: (noteId: string, title: string, body: string) => invoke<NotebookNote>("notebook_note_update", { noteId, title, body }),
+  /** Returns a Studio output's thread, for the UI to delete. */
+  notebookNoteDelete: (noteId: string) => invoke<string | null>("notebook_note_delete", { noteId }),
+  notebookStudioStart: (id: string, kind: NoteKind, threadId: string) => invoke<NotebookNote>("notebook_studio_start", { id, kind, threadId }),
+  /** An audio overview's script with its clips. */
+  notebookNoteSetData: (noteId: string, data: AudioOverviewData) => invoke<NotebookNote>("notebook_note_set_data", { noteId, data }),
+  /** Speak text with a provider's `/audio/speech`; returns the stored MP3's URL. */
+  ttsSpeak: (providerId: string, model: string, voice: string, text: string, instructions: string | null) =>
+    invoke<string>("tts_speak", { providerId, model, voice, text, instructions }),
+  /** Returns its chats' threads, for the UI to delete. */
+  notebookDelete: (id: string) => invoke<string[]>("notebook_delete", { id }),
+  notebookAddThread: (id: string, threadId: string) => invoke<Notebook>("notebook_add_thread", { id, threadId }),
+  /** Pasted text, or (`kind: "audio"`) a transcript the UI made of an audio file. */
+  notebookAddText: (id: string, title: string, text: string, kind: "text" | "audio" = "text") =>
+    invoke<NotebookSource>("notebook_add_text", { id, title, text, kind }),
+  notebookAddChat: (id: string, threadId: string) => invoke<NotebookSource>("notebook_add_chat", { id, threadId }),
+  notebookAddWorkspaceFile: (id: string, workspaceId: string, path: string) =>
+    invoke<NotebookSource>("notebook_add_workspace_file", { id, workspaceId, path }),
+  notebookAddLink: (id: string, url: string) => invoke<NotebookSource>("notebook_add_link", { id, url }),
+  /** Opens a file dialog; empty if cancelled. */
+  notebookAddFiles: (id: string) => invoke<NotebookSource[]>("notebook_add_files", { id }),
+  /** A dropped file, by its contents (base64). */
+  notebookAddFileData: (id: string, name: string, data: string) => invoke<NotebookSource>("notebook_add_file_data", { id, name, data }),
+  notebookSourceUpdate: (sourceId: string, change: { checked?: boolean; title?: string }) =>
+    invoke<NotebookSource>("notebook_source_update", { sourceId, checked: change.checked ?? null, title: change.title ?? null }),
+  notebookSourceDelete: (sourceId: string) => invoke<void>("notebook_source_delete", { sourceId }),
+  notebookSourceRetry: (sourceId: string) => invoke<NotebookSource>("notebook_source_retry", { sourceId }),
+  /** A source's passages; with `limit`, only that many from the start. */
+  notebookSourceText: (sourceId: string, limit?: number) =>
+    invoke<{ source: NotebookSource; passages: Passage[] }>("notebook_source_text", { sourceId, limit: limit ?? null }),
   /** Save a file the user edited in the viewer. */
   workspaceWriteFile: (id: string, path: string, text: string) => invoke<void>("workspace_write_file", { id, path, text }),
   /** Show a workspace file or folder in the system file manager. */

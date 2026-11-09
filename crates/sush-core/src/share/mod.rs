@@ -87,6 +87,10 @@ pub struct SharePolicy {
     /// default: guests follow the page (its address, never its content).
     #[serde(default)]
     pub hide_browser: bool,
+    /// In a notebook's chat, guests may read the passages it cites (`Intent::GetPassage`).
+    /// Off by default: guests see which sources are cited, not their text.
+    #[serde(default)]
+    pub show_sources: bool,
 }
 
 /// The page open in the host's built-in browser, as guests follow it.
@@ -363,6 +367,11 @@ pub enum Intent {
     },
     /// Why a failed CI job failed.
     CheckFailure { job: u64 },
+    /// A notebook chat's notebook as guests may see it: its title, its sources'
+    /// titles and its Studio outputs; never the sources' text or the owner's notes.
+    GetNotebook,
+    /// One cited passage's text (`sushsrc:` address), if the owner shares sources.
+    GetPassage { url: String },
     /// A message for the run: a driver's joins it, a collaborator's waits as a suggestion.
     Steer {
         #[serde(default)]
@@ -509,6 +518,8 @@ mod tests {
             (json!({ "kind": "branch-status" }), Intent::BranchStatus { base: None }),
             (json!({ "kind": "pr-checks", "pr": 128 }), Intent::PrChecks { pr: Some(128) }),
             (json!({ "kind": "check-failure", "job": 42 }), Intent::CheckFailure { job: 42 }),
+            (json!({ "kind": "get-notebook" }), Intent::GetNotebook),
+            (json!({ "kind": "get-passage", "url": "sushsrc:s1/7" }), Intent::GetPassage { url: "sushsrc:s1/7".into() }),
         ];
         for (wire, intent) in intents {
             let text = Body::encode(GuestMsg::Intent { id: "i".into(), intent: intent.clone() });

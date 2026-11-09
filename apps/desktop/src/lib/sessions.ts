@@ -24,13 +24,14 @@ import type { FileUIPart } from "ai";
 import { useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
-import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
+import { buildContext, notebookContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
 import { budgetBlock } from "@/lib/budget";
 import { library } from "@/lib/library";
 import { expandMentions, mentionSegments } from "@/lib/mentions";
 import { recordModelUse } from "@/lib/model-usage";
 import { getProject } from "@/lib/projects";
 import { reasoningCaps, reasoningRequest } from "@/lib/reasoning";
+import { applyNotebook, applyNotebookGone, isNotebookThread } from "@/lib/notebooks";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
 import {
@@ -194,6 +195,12 @@ function onFrame(frame: RunFrame) {
     case "report":
       applyReport(frame.report);
       break;
+    case "notebook":
+      applyNotebook(frame.notebook);
+      break;
+    case "notebook-gone":
+      applyNotebookGone(frame.id);
+      break;
     case "share":
     case "share-gone":
       shareFrames?.(frame);
@@ -320,6 +327,10 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   const report = reportForThread(id);
   if (report) {
     return { providerId: target.providerId, model: target.model, system: null, tools: reportRunTools(report, id), research: false, ...reasoning, expansions: {} };
+  }
+  // A notebook chat answers from its sources: Rust gives it the source tools and instructions.
+  if (isNotebookThread(id)) {
+    return { providerId: target.providerId, model: target.model, system: notebookContext(), tools: [], research: false, ...reasoning, expansions: {} };
   }
   const convo = getConversations().find((c) => c.id === id);
   const ctx = buildContext({

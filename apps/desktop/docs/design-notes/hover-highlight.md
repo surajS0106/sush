@@ -1,8 +1,11 @@
 # Hover Highlight — Design Notes
 
-Last updated: 2026-10-12
+Last updated: 2026-11-09
 
 ## What changed
+
+### 2026-11-09 (submenus clipped)
+- `DropdownMenuSubContent` now renders inside `DropdownMenuPrimitive.Portal`, like `DropdownMenuContent` already did (`src/components/ui/dropdown-menu.tsx`). This fixes every submenu, including the profile menu's Theme picker.
 
 ### 2026-10-12 (glide in Radix menus)
 - `FollowHighlight` waits 80ms (`HIDE_DELAY`) before hiding when its list has no active item, and cancels the hide if a new item becomes active first (`src/components/ui/motion-highlight.tsx`).
@@ -41,6 +44,8 @@ The original dropdown glitched while scrolling. `layoutId` remounts the highligh
 Action menus (with per-item actions, separators and submenus) stay on Radix for its focus handling and collision-aware placement. They take their surface, row and motion values from the value picker, so every dropdown looks and moves the same.
 
 Radix menus clear `data-highlighted` on pointer-leave before the next row sets it, so between two rows there is briefly no highlighted item. The highlight read that as leaving the list: it hid, then reappeared at the next row without moving, so the profile menu and other Radix menus never glided. Measured in WebKit, the highlight went from row 1 to row 3 in under 25ms before the fix. After it, the move takes about 175ms on the spring. The 80ms grace period is short enough that leaving the menu still fades the highlight promptly.
+
+Submenus were rendered inside the parent menu's DOM. `SURFACE` gives every menu `overflow-x-hidden overflow-y-auto` (needed so long menus scroll and the highlight stays inside the scrolled box), so a submenu positioned to the parent's right was cut down to a few pixels at its edge. Portalling the submenu takes it out of the parent's overflow box while Radix still places it against the sub-trigger and keeps pointer grace and keyboard handling between the two menus.
 
 Trade-offs: each open list runs one `MutationObserver`. The composer pickers keep their hand-rolled listboxes instead of moving to a library menu, because a Radix menu takes focus away from the textarea and the pickers must leave the caret in place while you type.
 

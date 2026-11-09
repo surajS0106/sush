@@ -150,6 +150,8 @@ pub enum ToolExec {
     /// `spawn_agent`: a sub-agent's run on a thread of its own
     /// (`super::subagents`). Only the host adds it.
     Agent,
+    /// A notebook chat's source search and reading (`crate::notebooks`). Only the host adds these.
+    Notebook,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -495,9 +497,12 @@ impl Runner<'_> {
             (Some(system), Some(section)) => Some(format!("{system}\n\n---\n\n{section}")),
             (system, section) => system.or(section),
         };
+        let mut messages = ui::to_core(&self.messages, &self.config.expansions);
+        // Notebook passages from earlier turns go as a line each, not their text again.
+        crate::notebooks::compact_earlier_passages(&mut messages);
         let request = ChatRequest {
             model: self.config.model.clone(),
-            messages: ui::to_core(&self.messages, &self.config.expansions),
+            messages,
             system,
             max_tokens: None,
             temperature: None,

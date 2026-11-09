@@ -14,6 +14,7 @@ mod location;
 #[cfg(unix)]
 mod login_env;
 mod maps;
+mod notebooks;
 mod paths;
 mod reports;
 mod runs;
@@ -157,6 +158,31 @@ pub fn run() {
             reports::report_rerun,
             reports::report_ask_thread,
             reports::report_delete,
+            notebooks::notebooks_list,
+            notebooks::notebook_create,
+            notebooks::notebook_rename,
+            notebooks::notebook_customize,
+            notebooks::notebook_set_overview,
+            notebooks::notebook_pick_cover,
+            notebooks::notebook_source_set_guide,
+            notebooks::notebook_set_reader,
+            notebooks::notebook_note_create,
+            notebooks::notebook_note_update,
+            notebooks::notebook_note_delete,
+            notebooks::notebook_note_set_data,
+            notebooks::notebook_studio_start,
+            notebooks::notebook_delete,
+            notebooks::notebook_add_thread,
+            notebooks::notebook_add_text,
+            notebooks::notebook_add_link,
+            notebooks::notebook_add_files,
+            notebooks::notebook_add_file_data,
+            notebooks::notebook_add_chat,
+            notebooks::notebook_add_workspace_file,
+            notebooks::notebook_source_update,
+            notebooks::notebook_source_delete,
+            notebooks::notebook_source_retry,
+            notebooks::notebook_source_text,
             browser::browser_subscribe,
             browser::browser_open,
             browser::browser_go,
@@ -195,6 +221,7 @@ pub fn run() {
             connector_auth::connector_cancel_authorize,
             connector_auth::connector_save_secrets,
             speech::transcribe,
+            speech::tts_speak,
             images::image_generate,
             maps::maps_key_status,
             maps::maps_key_set,

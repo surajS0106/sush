@@ -25,6 +25,7 @@ import {
   type DictationEngine,
 } from "@/lib/speech";
 import { api, type ModelInfo, type ProviderView, type TranscribeApi } from "@/lib/tauri";
+import { setVoiceSettings, systemVoices, useVoiceSettings, type VoiceSettings } from "@/lib/voices";
 
 const PROVIDER_HINT = "Built-in Whisper runs offline. Claude models don't accept audio, so Anthropic providers can't transcribe.";
 const API_HINT = "Ollama audio chat for local Gemma 4. The transcription endpoint for OpenAI, Azure Foundry and Groq.";
@@ -192,6 +193,7 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
         {engine === "yammer" && <YammerSettings />}
       </Group>
       {engine === "sush" && <SushSpeech form={form} providers={providers} />}
+      <OverviewVoices providers={providers} />
     </Page>
   );
 }
@@ -255,5 +257,93 @@ export function SpeechFields({ providers }: { providers: ProviderView[] }) {
         </>
       )}
     </div>
+  );
+}
+
+/** Voices for notebooks' audio overviews: the computer's own, or a provider's speech endpoint. */
+function OverviewVoices({ providers }: { providers: ProviderView[] }) {
+  const v = useVoiceSettings();
+  const speakers = providers.filter((p) => p.format === "openai-chat");
+  // The browser lists its voices a moment after asking.
+  const [system, setSystem] = useState(systemVoices);
+  useEffect(() => {
+    if (typeof speechSynthesis === "undefined") return;
+    const update = () => setSystem(systemVoices());
+    speechSynthesis.addEventListener("voiceschanged", update);
+    update();
+    return () => speechSynthesis.removeEventListener("voiceschanged", update);
+  }, []);
+  const systemItems = [{ value: "", label: "Default" }, ...system.map((x) => ({ value: x.voiceURI, label: x.name, hint: x.lang }))];
+  const voiceInput = (key: keyof Pick<VoiceSettings, "voiceA" | "voiceB">, label: string, placeholder: string) => (
+    <Input
+      aria-label={label}
+      className="w-full sm:w-56"
+      value={v[key]}
+      placeholder={placeholder}
+      onChange={(e) => setVoiceSettings({ [key]: e.target.value })}
+      spellCheck={false}
+    />
+  );
+  return (
+    <Group title="Audio overviews">
+      <Setting
+        title="Voices"
+        description="Your computer's voices read an overview aloud as it plays: free, offline, nothing saved. A provider's voices sound far more natural and are made once, then kept."
+      >
+        <Segmented<VoiceSettings["engine"]>
+          label="Voices for audio overviews"
+          value={v.engine}
+          onChange={(engine) => setVoiceSettings({ engine })}
+          options={[
+            { value: "system", label: "This computer" },
+            { value: "provider", label: "A provider" },
+          ]}
+        />
+      </Setting>
+      {v.engine === "system" ? (
+        <>
+          <Setting title="First host" description="Leads the conversation.">
+            <DropdownMenu label="First host's voice" align="end" variant="field" className="w-full sm:w-56" value={v.systemA} onChange={(id) => setVoiceSettings({ systemA: id })} items={systemItems} />
+          </Setting>
+          <Setting title="Second host" description="Asks and pushes back. Pick a different voice from the first.">
+            <DropdownMenu label="Second host's voice" align="end" variant="field" className="w-full sm:w-56" value={v.systemB} onChange={(id) => setVoiceSettings({ systemB: id })} items={systemItems} />
+          </Setting>
+        </>
+      ) : (
+        <>
+          <Setting
+            title="Provider"
+            description="Any provider with an OpenAI-style speech endpoint: OpenAI, Azure Foundry, Groq, or a local server like Kokoro-FastAPI added as an OpenAI-compatible provider."
+          >
+            <DropdownMenu
+              label="Speech provider for audio overviews"
+              align="end"
+              variant="field"
+              className="w-full sm:w-56"
+              placeholder="Choose a provider"
+              value={v.providerId ?? ""}
+              onChange={(id) => setVoiceSettings({ providerId: id || null })}
+              items={speakers.map((p) => ({ value: p.id, label: p.name }))}
+            />
+          </Setting>
+          <Setting title="Model" description="gpt-4o-mini-tts or tts-1 on OpenAI; your deployment name on Azure; kokoro on a Kokoro server.">
+            <Input
+              aria-label="Speech model"
+              className="w-full sm:w-56"
+              value={v.model}
+              placeholder="gpt-4o-mini-tts"
+              onChange={(e) => setVoiceSettings({ model: e.target.value })}
+              spellCheck={false}
+            />
+          </Setting>
+          <Setting title="First host's voice" description="The provider's voice name, such as alloy, ash, coral or nova (OpenAI), or af_bella (Kokoro).">
+            {voiceInput("voiceA", "First host's voice", "alloy")}
+          </Setting>
+          <Setting title="Second host's voice" description="A different voice from the first.">
+            {voiceInput("voiceB", "Second host's voice", "verse")}
+          </Setting>
+        </>
+      )}
+    </Group>
   );
 }

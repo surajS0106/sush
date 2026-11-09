@@ -149,6 +149,8 @@ export function useTarget() {
 }
 
 export const setTarget = (t: ModelTarget | null) => target.set(t);
+/** Follow the picked model outside React (notebooks read scanned PDFs with it). */
+export const onTargetChange = (listener: () => void) => target.subscribe(listener);
 
 /** Non-React reads, for tools and one-shot model calls. */
 export const getConversations = () => conversations.get();

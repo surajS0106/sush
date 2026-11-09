@@ -5,23 +5,35 @@
 // followed in this app's own. Every read is a request the host checks
 // (`share.rs`); secret files never come. Its left edge drags to resize.
 
-import { ChevronRightIcon, FileIcon, FolderIcon, GitGraphIcon, GlobeIcon, MessageSquareTextIcon, PanelRightCloseIcon, PanelRightOpenIcon } from "lucide-react";
+import {
+  ChevronRightIcon,
+  FileIcon,
+  FolderIcon,
+  GitGraphIcon,
+  GlobeIcon,
+  MessageSquareTextIcon,
+  NotebookTextIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { GitGraph, type GitSource } from "@/components/git-graph-pane";
 import { RoomView } from "@/components/share-activity";
+import { SharedNotebookTab, useGuestNotebook } from "@/components/shared-notebook";
 import { LoadingState } from "@/components/ui/loading-state";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Switch } from "@/components/ui/switch";
 import { BrowserPane } from "@/components/workspace-panel";
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { followUrl, requestDir, requestFile, requestGitCommit, requestGitLog } from "@/lib/share";
+import { useOpenPassage } from "@/lib/notebooks";
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type FileView, type ShareView, type WorkspaceEntry } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
-type Tab = "room" | "files" | "graph" | "browser";
+type Tab = "room" | "notebook" | "files" | "graph" | "browser";
 
 const panelTab = createStore<Tab>("sush.shared-panel-tab", "room");
 const panelOpen = createStore<boolean>("sush.shared-panel-open", true);
@@ -33,8 +45,17 @@ export function SharedPanel({ share, changed }: { share: ShareView; changed: Set
   const ref = useRef<HTMLElement>(null);
   const [path, setPath] = useState<string | null>(null);
   const cowork = share.thread.kind === "cowork";
+  // A notebook's chat: its sources and Studio outputs, and cited passages.
+  const notebook = useGuestNotebook(share);
+  const passage = useOpenPassage();
+  useEffect(() => {
+    if (!notebook || !passage) return;
+    panelOpen.set(true);
+    panelTab.set("notebook");
+  }, [passage, notebook]);
   const tabs: { key: Tab; label: string; Icon: typeof FileIcon }[] = [
     { key: "room", label: "Room", Icon: MessageSquareTextIcon },
+    ...(notebook ? [{ key: "notebook" as const, label: "Notebook", Icon: NotebookTextIcon }] : []),
     ...(cowork
       ? [
           { key: "files" as const, label: "Files", Icon: FolderIcon },
@@ -108,6 +129,7 @@ export function SharedPanel({ share, changed }: { share: ShareView; changed: Set
           <RoomView share={share} className="flex-1" />
         </section>
       )}
+      {tab === "notebook" && notebook && <SharedNotebookTab share={share} notebook={notebook} />}
       {tab === "files" && <FilesTab share={share} changed={changed} path={path} onPath={setPath} />}
       {tab === "graph" && <GraphTab share={share} changed={changed} onOpenFile={openFile} />}
       {tab === "browser" && <FollowBrowser share={share} onClose={() => panelOpen.set(false)} />}

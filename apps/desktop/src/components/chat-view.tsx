@@ -8,6 +8,7 @@ import {
   FolderKanbanIcon,
   GhostIcon,
   HistoryIcon,
+  NotebookPenIcon,
   PauseIcon,
   PencilIcon,
   PlayIcon,
@@ -16,7 +17,7 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import {
@@ -96,6 +97,8 @@ import {
   useQueued,
   useThread,
 } from "@/lib/sessions";
+import { isNotebookThread } from "@/lib/notebooks";
+import { saveReplyToNote } from "@/lib/notebook-studio";
 import { forkConversation, setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { InstamartThread, instamartThread } from "@/lib/instamart-cart";
 import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
@@ -120,9 +123,15 @@ interface ChatViewProps {
   watching?: ShareView;
   /** Open another session (a reply's "Branch in new chat"). */
   onOpenSession?: (id: string) => void;
+  /**
+   * Shown above the composer in place of the greeting and starters while the
+   * chat is empty (a notebook's overview). As a function it gets `ask`, which
+   * sends a message, for suggested questions.
+   */
+  emptyState?: ReactNode | ((ask: (text: string) => void) => ReactNode);
 }
 
-export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, watching, onOpenSession }: ChatViewProps) {
+export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, watching, onOpenSession, emptyState }: ChatViewProps) {
   const id = conversation.id;
   // The run lives in Rust, so it keeps going when another chat is opened.
   const { messages, status: runStatus, error } = useThread(id);
@@ -396,9 +405,12 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
       </div>
     ) : (
       // A plain chat: greeting and composer together in the middle, starters below.
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center overflow-y-auto px-6 pb-[10vh]">
-        <div className="w-full max-w-2xl">
-          {hasProviders === null ? null : hasProviders ? (
+      // Centred, except a tall custom opening (a notebook's overview), which would be cut off above.
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto px-6", emptyState ? "pt-10 pb-8" : "justify-center pb-[10vh]")}>
+        <div className={cn("w-full max-w-2xl", emptyState && "my-auto")}>
+          {hasProviders === null ? null : hasProviders && emptyState ? (
+            typeof emptyState === "function" ? emptyState((text) => submit({ text, files: [] })) : emptyState
+          ) : hasProviders ? (
             <>
               {project && (
                 <p className="mb-3 flex items-center justify-center gap-1.5 text-sm text-muted-foreground">
@@ -422,7 +434,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
             <p className="mx-auto mt-6 max-w-sm text-center text-sm text-balance text-muted-foreground">
               Incognito chats stay out of your history, memory and search, and are deleted when you leave them.
             </p>
-          ) : hasProviders && (
+          ) : hasProviders && !emptyState && (
             <Suggestion
               label="Try asking"
               className="mt-5 w-full px-2"
@@ -1105,6 +1117,15 @@ const ChatMessage = memo(function ChatMessage({
             <MessageActions>
               <CopyMessageAction text={text} />
               <ReadAloudAction text={text} />
+              {isNotebookThread(threadId) && (
+                // Kept with its citations, which still open their passages from the note.
+                <MessageAction
+                  tooltip="Save to note"
+                  onClick={() => void saveReplyToNote(threadId, message.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("\n\n"))}
+                >
+                  <NotebookPenIcon className="size-3.5" />
+                </MessageAction>
+              )}
               {canRegenerate && (
                 <MessageAction tooltip="Regenerate" onClick={() => onRegenerate()}>
                   <RefreshCcwIcon className="size-3.5" />

@@ -125,6 +125,8 @@ pub struct Ctx<'a> {
     pub policy: &'a SharePolicy,
     /// Whether the session works in a folder.
     pub cowork: bool,
+    /// Whether the session is a notebook's chat (`crate::notebooks`).
+    pub notebook: bool,
     /// Paths the thread's tool calls named (`outbox::touched_paths`).
     pub touched: &'a HashSet<String>,
     /// Turns that changed files.
@@ -230,6 +232,27 @@ pub fn authorize(ctx: &Ctx, intent: Intent) -> Result<Allowed, String> {
                 return Err("This session has no folder.".into());
             }
             Intent::CheckFailure { job }
+        }
+        // The notebook as the chat already shows it: titles, and the Studio outputs it made.
+        Intent::GetNotebook => {
+            if !ctx.notebook {
+                return Err("This session isn't a notebook's chat.".into());
+            }
+            Intent::GetNotebook
+        }
+        // A passage's text only when the owner shares sources; whether it's this
+        // notebook's own is checked against the store when it's carried out.
+        Intent::GetPassage { url } => {
+            if !ctx.notebook {
+                return Err("This session isn't a notebook's chat.".into());
+            }
+            if !ctx.policy.show_sources {
+                return Err("The host keeps the sources' text to themselves.".into());
+            }
+            if crate::notebooks::parse_passage_url(&url).is_none() {
+                return Err("That isn't a passage.".into());
+            }
+            Intent::GetPassage { url }
         }
         Intent::Steer { text, images } => {
             check_message(&text, &images)?;
@@ -440,6 +463,7 @@ mod tests {
             role,
             policy: &f.policy,
             cowork: true,
+            notebook: false,
             touched: &f.touched,
             turns: &f.turns,
             blobs: &f.blobs,
@@ -448,6 +472,36 @@ mod tests {
             suggestions: &f.suggestions,
         };
         authorize(&ctx, intent)
+    }
+
+    #[test]
+    fn notebook_reads_need_a_notebook_chat_and_passages_need_the_owners_leave() {
+        let mut f = fixture(false);
+        let viewer = Some(Role::Viewer);
+        let passage = || Intent::GetPassage { url: "sushsrc:s1/7".into() };
+        let ctx = |f: &Fixture, notebook: bool, role: Option<Role>, intent: Intent| {
+            let ctx = Ctx {
+                role,
+                policy: &f.policy,
+                cowork: false,
+                notebook,
+                touched: &f.touched,
+                turns: &f.turns,
+                blobs: &f.blobs,
+                waiting: &f.waiting,
+                resumable: f.resumable,
+                suggestions: &f.suggestions,
+            };
+            authorize(&ctx, intent)
+        };
+        assert!(ctx(&f, false, viewer, Intent::GetNotebook).is_err());
+        assert_eq!(ctx(&f, true, viewer, Intent::GetNotebook), Ok(Allowed::Do(Intent::GetNotebook)));
+        assert!(ctx(&f, true, None, Intent::GetNotebook).is_err(), "non-members get nothing");
+        assert!(ctx(&f, true, viewer, passage()).unwrap_err().contains("to themselves"));
+        f.policy.show_sources = true;
+        assert_eq!(ctx(&f, true, viewer, passage()), Ok(Allowed::Do(passage())));
+        assert!(ctx(&f, true, viewer, Intent::GetPassage { url: "https://evil".into() }).is_err());
+        assert!(ctx(&f, false, viewer, passage()).is_err());
     }
 
     fn respond(child: Option<&str>, call: &str) -> Intent {

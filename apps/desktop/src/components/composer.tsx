@@ -19,6 +19,7 @@ import { Mascot, type MascotStage } from "@/components/mascot";
 import { DictationErrorDialog } from "@/components/dictation-error-dialog";
 import { ModelPicker } from "@/components/model-picker";
 import { MENTION_MENU_ID, MentionMenu, useMentionMenu } from "@/components/mention-menu";
+import { NotebookComposerDock, NotebookComposerMenu } from "@/components/notebook-sources";
 import { PermissionModePicker } from "@/components/permission-mode-picker";
 import { ReasoningPicker } from "@/components/reasoning-picker";
 import { hasHighlight, SLASH_MENU_ID, SlashHighlight, SlashMenu, useSlashMenu } from "@/components/slash-menu";
@@ -28,6 +29,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { YammerSetupDialog } from "@/components/yammer-setup-dialog";
 import { useDictation } from "@/hooks/use-dictation";
 import type { ProviderModels } from "@/hooks/use-providers";
+import { useNotebookForThread } from "@/lib/notebooks";
 import { FOLDER_MEDIA_TYPE, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +44,8 @@ const PLACEHOLDERS = [
 const STEER_PLACEHOLDER = "Steer the reply, or add to it…";
 /** Once a conversation has started, including while a card waits for an answer: the starters above would read as noise. */
 const FOLLOW_UP_PLACEHOLDER = "Reply, or ask something else…";
+/** A notebook chat answers from its sources. */
+const NOTEBOOK_PLACEHOLDER = "Ask about your sources…";
 
 // Two soft brand-tinted pools blurred behind the input; tracks --brand in both themes.
 const GLOW =
@@ -117,6 +121,8 @@ export function Composer({
   const mention = useMentionMenu(textInput.value, textInput.setInput);
   const highlighted = hasHighlight(textInput.value);
   const highlightRef = useRef<HTMLDivElement>(null);
+  // A notebook's chat: its menu, strip and prompt are about sources.
+  const notebook = useNotebookForThread(conversationId);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -143,10 +149,10 @@ export function Composer({
 
   // Cycle the placeholder only while the box is empty and idle.
   useEffect(() => {
-    if (!empty || busy || dictating || started) return;
+    if (!empty || busy || dictating || started || notebook) return;
     const id = setInterval(() => setPromptIndex((i) => (i + 1) % PLACEHOLDERS.length), 3200);
     return () => clearInterval(id);
-  }, [empty, busy, dictating, started]);
+  }, [empty, busy, dictating, started, notebook]);
 
   return (
     <div className="group/composer relative isolate flex flex-col gap-2">
@@ -262,7 +268,9 @@ export function Composer({
                               ? STEER_PLACEHOLDER
                               : started
                                 ? FOLLOW_UP_PLACEHOLDER
-                                : PLACEHOLDERS[promptIndex]}
+                                : notebook
+                                  ? NOTEBOOK_PLACEHOLDER
+                                  : PLACEHOLDERS[promptIndex]}
                     </motion.span>
                   </AnimatePresence>
                 </div>
@@ -270,15 +278,20 @@ export function Composer({
             </div>
           </PromptInputBody>
           <PromptInputFooter className="px-2.5 pt-1 pb-2.5">
-            <ComposerMenu
-              target={target}
-              messages={messages}
-              researchAvailable={researchAvailable}
-              onOpenSettings={onOpenSettings}
-              onSend={(text) => submit({ text, files: [] })}
-            />
+            {notebook ? (
+              <NotebookComposerMenu notebook={notebook} onOpenSettings={onOpenSettings} />
+            ) : (
+              <ComposerMenu
+                target={target}
+                messages={messages}
+                researchAvailable={researchAvailable}
+                onOpenSettings={onOpenSettings}
+                onSend={(text) => submit({ text, files: [] })}
+              />
+            )}
             <div className="flex items-center gap-1.5">
-              <PermissionModePicker />
+              {/* A notebook's source tools never ask, so there's no approval mode to pick. */}
+              {!notebook && <PermissionModePicker />}
               <div className="composer-pill [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
                 <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
               </div>
@@ -362,13 +375,21 @@ export function Composer({
             </div>
           </PromptInputFooter>
         </PromptInput>
-        <ComposerDock conversationId={conversationId} workspaceId={workspaceId} started={started} />
+        {notebook ? (
+          <NotebookComposerDock notebook={notebook} />
+        ) : (
+          <ComposerDock conversationId={conversationId} workspaceId={workspaceId} started={started} />
+        )}
       </div>
       <p className="px-1 text-right text-[11px] text-muted-foreground opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
         <kbd className="rounded border px-1 py-0.5 font-sans">Enter</kbd> to send ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">Shift+Enter</kbd> for new line ·{" "}
-        <kbd className="rounded border px-1 py-0.5 font-sans">/</kbd> for skills ·{" "}
-        <kbd className="rounded border px-1 py-0.5 font-sans">@</kbd> for connectors ·{" "}
+        {!notebook && (
+          <>
+            <kbd className="rounded border px-1 py-0.5 font-sans">/</kbd> for skills ·{" "}
+            <kbd className="rounded border px-1 py-0.5 font-sans">@</kbd> for connectors ·{" "}
+          </>
+        )}
         <kbd className="rounded border px-1 py-0.5 font-sans">Ctrl+D</kbd> to dictate
       </p>
       <DictationErrorDialog

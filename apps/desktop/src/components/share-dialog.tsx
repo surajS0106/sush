@@ -37,6 +37,7 @@ import {
   safeImage,
   setBrowseFiles,
   setHideBrowser,
+  setShowSources,
   setAwayPolicy,
   setDelegation,
   setLocalRelayOpen,
@@ -47,6 +48,7 @@ import {
   useShare,
   useShareAccount,
 } from "@/lib/share";
+import { isNotebookThread } from "@/lib/notebooks";
 import { getConversations } from "@/lib/store";
 import { api, errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -542,6 +544,22 @@ function Sharing({ share }: { share: ShareView }) {
           onCheckedChange={(on) => act(() => setHideBrowser(share, !on), "Couldn’t change that")}
         />
       </label>
+
+      {isNotebookThread(share.threadId) && (
+        <label className="flex items-start justify-between gap-4">
+          <span>
+            <span className="block text-sm font-medium">Let them read cited passages</span>
+            <span className="block text-xs text-muted-foreground">
+              They always see which of the notebook’s sources an answer cites, and its Studio outputs. With this on, they can
+              open a cited passage’s text too. Your notes and the sources themselves stay yours either way.
+            </span>
+          </span>
+          <Switch
+            checked={!!share.policy.showSources}
+            onCheckedChange={(on) => act(() => setShowSources(share, on), "Couldn’t change that")}
+          />
+        </label>
+      )}
 
       {invites && invites.some((i) => !i.revoked && i.expiresAt > Date.now()) && (
         <section className="flex flex-col gap-1.5">

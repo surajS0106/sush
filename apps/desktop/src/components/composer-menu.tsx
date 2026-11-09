@@ -83,16 +83,7 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   const connectors = availableConnectors();
   const designSystems = availableDesignSystems();
 
-  // The menu spans the composer: measure it when the menu opens and sit just above its top edge.
-  const anchor = useRef<HTMLSpanElement>(null);
-  const [geo, setGeo] = useState<{ width: number; alignOffset: number; sideOffset: number } | null>(null);
-  const measure = (open: boolean) => {
-    const el = anchor.current;
-    const box = el?.closest("form")?.getBoundingClientRect();
-    if (!open || !el || !box) return;
-    const at = el.getBoundingClientRect();
-    setGeo({ width: box.width, alignOffset: box.left - at.left, sideOffset: at.top - box.top + 8 });
-  };
+  const { anchor, geo, measure } = useComposerSpan();
 
   const manage = (section: SettingsSection) => openSettings({ section });
 
@@ -119,10 +110,7 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   return (
     <PromptInputActionMenu onOpenChange={measure}>
       <span ref={anchor} className="inline-flex">
-      <PromptInputActionMenuTrigger
-        aria-label="Add tools and context"
-        className="rounded-full text-muted-foreground hover:text-foreground [&_svg]:transition-transform [&_svg]:duration-150 data-[state=open]:[&_svg]:rotate-45"
-      >
+      <PromptInputActionMenuTrigger aria-label="Add tools and context" className={MENU_TRIGGER}>
         <PlusIcon className="size-4" />
       </PromptInputActionMenuTrigger>
       </span>
@@ -132,7 +120,7 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
         alignOffset={geo?.alignOffset ?? 0}
         sideOffset={geo?.sideOffset ?? 8}
         style={geo ? { width: geo.width } : undefined}
-        className="max-h-[min(26rem,var(--radix-dropdown-menu-content-available-height))] max-w-none origin-bottom overflow-y-auto rounded-xl p-1.5 data-open:animate-[composer-menu-in_240ms_cubic-bezier(0.22,1,0.36,1)]! [&_[role^=menuitem]]:gap-2.5 [&_[role^=menuitem]]:rounded-md [&_[role^=menuitem]]:py-1.5 [&_[role^=menuitem]]:text-sm [&_[role^=menuitem]_svg]:text-muted-foreground">
+        className={MENU_CONTENT}>
         <Section first>Add</Section>
         <PromptInputActionMenuItem onSelect={() => attachments.openFileDialog()}>
           <PaperclipIcon /> <Label hint="Images, PDFs and text">Files and photos</Label>
@@ -228,6 +216,28 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
   );
 }
 
+/** The `+` button. */
+export const MENU_TRIGGER =
+  "rounded-full text-muted-foreground hover:text-foreground [&_svg]:transition-transform [&_svg]:duration-150 data-[state=open]:[&_svg]:rotate-45";
+
+/** The menu's panel: as wide as the composer, rising out of it. */
+export const MENU_CONTENT =
+  "max-h-[min(26rem,var(--radix-dropdown-menu-content-available-height))] max-w-none origin-bottom overflow-y-auto rounded-xl p-1.5 data-open:animate-[composer-menu-in_240ms_cubic-bezier(0.22,1,0.36,1)]! [&_[role^=menuitem]]:gap-2.5 [&_[role^=menuitem]]:rounded-md [&_[role^=menuitem]]:py-1.5 [&_[role^=menuitem]]:text-sm [&_[role^=menuitem]_svg]:text-muted-foreground";
+
+/** The menu spans the composer: measure it when the menu opens and sit just above its top edge. */
+export function useComposerSpan() {
+  const anchor = useRef<HTMLSpanElement>(null);
+  const [geo, setGeo] = useState<{ width: number; alignOffset: number; sideOffset: number } | null>(null);
+  const measure = (open: boolean) => {
+    const el = anchor.current;
+    const box = el?.closest("form")?.getBoundingClientRect();
+    if (!open || !el || !box) return;
+    const at = el.getBoundingClientRect();
+    setGeo({ width: box.width, alignOffset: box.left - at.left, sideOffset: at.top - box.top + 8 });
+  };
+  return { anchor, geo, measure };
+}
+
 /** A connector's own logo: full colour where it ships one, else its mark in the brand colour, else a plug. */
 export function ConnectorMark({
   connector,
@@ -254,7 +264,7 @@ export function ConnectorMark({
 }
 
 /** A group heading, as in the slash-command picker. */
-function Section({ first, children }: { first?: boolean; children: React.ReactNode }) {
+export function Section({ first, children }: { first?: boolean; children: React.ReactNode }) {
   return (
     <DropdownMenuLabel className={cn("px-2 pb-1 text-xs font-medium text-muted-foreground/70", first ? "pt-1" : "pt-3")}>
       {children}
@@ -263,7 +273,7 @@ function Section({ first, children }: { first?: boolean; children: React.ReactNo
 }
 
 /** A row's name in bold with its description beside it, muted. */
-function Label({ hint, children }: { hint?: string; children: React.ReactNode }) {
+export function Label({ hint, children }: { hint?: string; children: React.ReactNode }) {
   return (
     <span className="flex min-w-0 flex-1 items-baseline gap-2">
       <span className="shrink-0 font-medium">{children}</span>

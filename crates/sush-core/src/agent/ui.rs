@@ -294,9 +294,14 @@ impl StepBuilder {
                     ops.push(Op::SetPart { index: *i, part: json!({ "type": "data-web", "id": call_id, "data": data }) });
                 }
             }
-            ChatEvent::Citation { url, title } => {
+            ChatEvent::Citation { url, title, quote } => {
                 // Cited text always comes first, so a text part is open; the marker goes right after it.
                 if let Some((i, text)) = self.text.as_mut() {
+                    // A notebook passage keeps the words cited, for its viewer to highlight.
+                    let url = match quote {
+                        Some(q) if url.starts_with(crate::notebooks::SOURCE_SCHEME) => crate::notebooks::with_quote(&url, &q),
+                        _ => url,
+                    };
                     let marker = citation_marker(&url, title.as_deref());
                     text.push_str(&marker);
                     ops.push(Op::AppendText { index: *i, delta: marker });
@@ -622,13 +627,24 @@ mod tests {
             ChatEvent::ServerToolCall { id: "s1".into(), name: "web_search".into(), input: json!({ "query": "rust" }) },
             ChatEvent::WebSources { call_id: "s1".into(), sources: vec![WebSource { url: "https://rust-lang.org".into(), title: None }] },
             ChatEvent::TextDelta { delta: "Rust is fast.".into() },
-            ChatEvent::Citation { url: "https://rust-lang.org/a b".into(), title: Some("Say \"hi\"".into()) },
+            ChatEvent::Citation { url: "https://rust-lang.org/a b".into(), title: Some("Say \"hi\"".into()), quote: Some("fast".into()) },
         ]);
         let parts = parts(&messages[0]);
         assert_eq!(parts.len(), 3);
         assert_eq!(parts[1]["data"]["sources"][0]["url"], "https://rust-lang.org");
         assert_eq!(parts[2]["text"], "Rust is fast. [cite](https://rust-lang.org/a%20b \"Say 'hi'\")");
         assert_eq!(strip_citations(parts[2]["text"].as_str().unwrap()), "Rust is fast.");
+    }
+
+    #[test]
+    fn notebook_citations_keep_the_quoted_words() {
+        let (messages, _) = run(vec![
+            ChatEvent::TextDelta { delta: "Habits loop.".into() },
+            ChatEvent::Citation { url: "sushsrc:s1/7".into(), title: Some("Habits.pdf · p. 3".into()), quote: Some("cue (then) routine".into()) },
+        ]);
+        let text = parts(&messages[0])[0]["text"].as_str().unwrap().to_string();
+        assert_eq!(text, "Habits loop. [cite](sushsrc:s1/7?q=cue%20%28then%29%20routine \"Habits.pdf · p. 3\")");
+        assert_eq!(strip_citations(&text), "Habits loop.");
     }
 
     #[test]

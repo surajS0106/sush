@@ -193,7 +193,7 @@ fn push_message(out: &mut Vec<Value>, m: &Message) {
     // Tool results become their own `tool` messages, in order, after the call.
     for p in tool_results {
         if let Part::ToolResult { call_id, output, .. } = p {
-            let content = output.as_str().map(str::to_owned).unwrap_or_else(|| output.to_string());
+            let content = crate::message::tool_output_text(output);
             out.push(json!({ "role": "tool", "tool_call_id": call_id, "content": content }));
         }
     }

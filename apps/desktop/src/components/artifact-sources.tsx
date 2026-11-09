@@ -12,6 +12,7 @@ import { Artifact, type Version } from "@/components/ui/Artifact";
 import { Citation, SourceList } from "@/components/ui/Sources";
 import type { ArtifactView } from "@/lib/artifacts";
 import { isCitationText, type CitedSource } from "@/lib/citations";
+import { isPassageUrl, openPassage, passageKey } from "@/lib/notebooks";
 import { api, errorMessage } from "@/lib/tauri";
 
 // --- artifacts ---------------------------------------------------------------------
@@ -61,19 +62,36 @@ export function citationComponents(sources: CitedSource[]): Components {
     a: (props: ComponentProps<"a"> & ExtraProps) => {
       if (!isCitationText(props.children)) return DefaultLink ? <DefaultLink {...props} /> : <a {...props} />;
       const source = sources.find((s) => sameUrl(s.url, props.href));
-      return source ? <Citation n={source.n} title={source.title} /> : null;
+      if (!source) return null;
+      // A notebook passage opens in the notebook's viewer, highlighting the words this citation quotes.
+      const href = props.href ? safeDecode(props.href) : "";
+      return isPassageUrl(source.url) ? (
+        <Citation n={source.n} title={source.title} onOpen={() => openPassage(href || source.url)} />
+      ) : (
+        <Citation n={source.n} title={source.title} />
+      );
     },
   };
 }
 
 export function CitedSourceList({ sources }: { sources: CitedSource[] }) {
-  return <SourceList sources={sources} onOpen={(s) => s.url && void openUrl(s.url)} />;
+  return <SourceList sources={sources} onOpen={(s) => s.url && (isPassageUrl(s.url) ? openPassage(s.url) : void openUrl(s.url))} />;
+}
+
+function safeDecode(s: string) {
+  try {
+    return decodeURI(s);
+  } catch {
+    return s;
+  }
 }
 
 /** The renderer may re-encode hrefs, so compare decoded forms. */
 function sameUrl(url: string, href: string | undefined) {
   if (!href) return false;
   if (href === url) return true;
+  // A passage is one source whatever words a citation quotes from it.
+  if (isPassageUrl(url)) return passageKey(safeDecode(href)) === passageKey(url);
   try {
     return decodeURI(href) === url || href === encodeURI(url);
   } catch {
