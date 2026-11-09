@@ -10,6 +10,7 @@ import { Children, useState } from "react";
 import { TOOLS_LOAD, toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
 import { SLIDES_WRITE } from "@/lib/slides";
+import { TODO_WRITE } from "@/lib/todos";
 import { isInstamartCartTool } from "@/lib/instamart-cart";
 import { hasSwiggyCard } from "@/lib/swiggy";
 import type { SushUIMessage } from "@/lib/transport";
@@ -35,7 +36,8 @@ function groupable(p: Part, supersededCart: boolean) {
 /**
  * Part indices to render, with runs of finished activity as arrays. A run
  * becomes a group when it holds a tool call and at least two visible steps.
- * The call `keep` names (the live branch card) stays out of every group.
+ * The call `keep` names (the live branch card) stays out of every group, and
+ * so does the latest to-do list: the plan as it stands stays in view.
  */
 export function groupParts(parts: Part[], keep?: string): (number | number[])[] {
   const out: (number | number[])[] = [];
@@ -52,9 +54,11 @@ export function groupParts(parts: Part[], keep?: string): (number | number[])[] 
     run = [];
   };
   const lastCart = parts.findLastIndex((p) => p.type === "dynamic-tool" && isInstamartCartTool(p.toolName));
+  const lastTodo = parts.findLastIndex((p) => p.type === "dynamic-tool" && p.toolName === TODO_WRITE && p.state === "output-available");
   parts.forEach((p, i) => {
     const supersededCart = i !== lastCart && p.type === "dynamic-tool" && isInstamartCartTool(p.toolName);
-    if (groupable(p, supersededCart) && !(keep && p.type === "dynamic-tool" && p.toolCallId === keep)) run.push(i);
+    const kept = (keep && p.type === "dynamic-tool" && p.toolCallId === keep) || i === lastTodo;
+    if (groupable(p, supersededCart) && !kept) run.push(i);
     else {
       flush();
       out.push(i);
@@ -68,7 +72,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} 
 
 /** "Read 3 files, searched twice and ran a command". */
 export function activitySummary(parts: Part[]): { text: string; failed: number } {
-  const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, browser: 0, sources: 0, other: 0 };
+  const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, plan: 0, browser: 0, sources: 0, other: 0 };
   let failed = 0;
   for (const p of parts) {
     if (p.type !== "dynamic-tool" || p.toolName === TOOLS_LOAD) continue;
@@ -88,6 +92,7 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
       else if (kind === "skill") count.skill++;
       else if (kind === "browser") count.browser++;
       else if (kind === "notebook") count.sources++;
+      else if (kind === "todos") count.plan++;
       else count.other++;
     }
   }
@@ -99,6 +104,7 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
     count.commit && `committed ${count.commit === 1 ? "once" : `${count.commit} times`}`,
     count.merge && "merged",
     count.branch && "checked the branch",
+    count.plan && "updated the plan",
     count.memory && "updated memory",
     count.chats && "looked through past chats",
     count.skill && `used ${plural(count.skill, "a skill", "skills")}`,

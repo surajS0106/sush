@@ -18,6 +18,7 @@
 //   flights_search  runs immediately: the chat shows a flight card to book from (flights.ts)
 //   weather_show    runs immediately: the chat shows a pixel-art weather card (weather.ts)
 //   topic_lookup    runs immediately: the chat shows photos and articles about a subject (topic.ts)
+//   todo_write      runs immediately: the chat shows the plan as a checklist (todos.ts)
 //   location_get    reads the device's position, after the user agrees in its card (location.ts)
 //   spawn_agent     offered and run by Rust: a sub-agent on a thread of its own (components/subagents.tsx)
 //   <connector>__*  sent to an MCP connector, after the user approves
@@ -50,6 +51,7 @@ import { loadSkill, SKILL, SKILL_SAVE, skillSaveTool, skillsPrompt, skillTool } 
 import { SLIDES_WRITE, slidesTool, validateSlides } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
+import { runTodoWrite, TODO_SECTION, TODO_WRITE, todoTool } from "@/lib/todos";
 import { runTopicLookup, TOPIC_LOOKUP, topicTool } from "@/lib/topic";
 import { RESEARCH_SECTION, runWebFetch, runWebSearch, WEB_FETCH, WEB_SEARCH, WEB_SECTION, webFetchTool, webSearchTool } from "@/lib/web";
 import { runWeatherShow, WEATHER_SHOW, weatherTool } from "@/lib/weather";
@@ -281,6 +283,8 @@ export function buildContext({
   const web = prefs.webSearch;
   if (web) sections.push(research ? `${WEB_SECTION}\n\n${RESEARCH_SECTION}` : WEB_SECTION);
 
+  sections.push(TODO_SECTION);
+
   const connectors = connectorTools();
   if (connectors.length > 0) {
     sections.push(
@@ -292,6 +296,7 @@ export function buildContext({
 
   const tools: ToolSpec[] = [
     ...(askUser ? [askUserTool] : []),
+    todoTool,
     ...(skills ? [skillTool] : []),
     skillSaveTool,
     automationSaveTool,
@@ -331,6 +336,7 @@ export type ToolKind =
   | "topic"
   | "web"
   | "location"
+  | "todos"
   | "workspace"
   | "browser"
   | "agent"
@@ -398,6 +404,7 @@ export function toolKind(name: string): ToolKind {
   if (name === TOPIC_LOOKUP) return "topic";
   if (name === WEB_SEARCH || name === WEB_FETCH) return "web";
   if (name === LOCATION_GET) return "location";
+  if (name === TODO_WRITE) return "todos";
   if (name === SOURCE_SEARCH || name === SOURCE_READ) return "notebook";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
@@ -421,7 +428,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
   // An old "Always allow" never covers spending money.
@@ -509,6 +516,7 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
     if (name === TOPIC_LOOKUP) return runTopicLookup(args);
     if (name === WEB_SEARCH) return runWebSearch(args);
     if (name === WEB_FETCH) return runWebFetch(args);
+    if (name === TODO_WRITE) return runTodoWrite(args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {
     return { errorText: e instanceof Error ? e.message : String(e) };

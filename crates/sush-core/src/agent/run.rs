@@ -460,6 +460,14 @@ impl Runner<'_> {
             // closes before the last look so nothing can arrive unseen after it;
             // the host starts a new run for anything sent later.
             self.drain(inbox);
+            // Or its to-do list still has items left: send it back to them, once a turn.
+            // Before the inbox closes, since the run carries on.
+            if self.steers.is_empty() && !self.pause && !self.cancel.is_cancelled() && super::plan::applies(&self.config.tools) {
+                if let Some(message) = super::plan::check(&self.messages) {
+                    self.op(Op::Push { message });
+                    continue;
+                }
+            }
             if self.steers.is_empty() {
                 inbox.close();
                 self.drain(inbox);
@@ -498,6 +506,9 @@ impl Runner<'_> {
             (system, section) => system.or(section),
         };
         let mut messages = ui::to_core(&self.messages, &self.config.expansions);
+        if super::plan::applies(&self.config.tools) {
+            super::plan::remind(&self.messages, &mut messages);
+        }
         // Notebook passages from earlier turns go as a line each, not their text again.
         crate::notebooks::compact_earlier_passages(&mut messages);
         let request = ChatRequest {

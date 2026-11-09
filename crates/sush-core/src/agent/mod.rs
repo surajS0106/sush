@@ -3,6 +3,7 @@
 //! app-specific (provider requests, connector calls, saving, UI updates).
 
 pub mod deferred;
+pub mod plan;
 pub mod run;
 pub mod subagents;
 pub mod ui;

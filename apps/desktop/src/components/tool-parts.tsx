@@ -6,6 +6,10 @@ import {
   ArrowRightIcon,
   BrainIcon,
   BookOpenIcon,
+  CircleCheckIcon,
+  CircleDotIcon,
+  CircleIcon,
+  ListTodoIcon,
   CloudSunIcon,
   DownloadIcon,
   FileIcon,
@@ -84,6 +88,7 @@ import { getConversations } from "@/lib/store";
 import { errorMessage, type SandboxStatus } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type SushMetadata, type WebActivity } from "@/lib/transport";
 import { cn } from "@/lib/utils";
+import { parseTodos, todoProgress } from "@/lib/todos";
 import type { TopicOutput } from "@/lib/topic";
 import { webSources } from "@/lib/web";
 import type { WeatherOutput } from "@/lib/weather";
@@ -166,6 +171,8 @@ function ToolCard(props: ToolPartProps) {
       return <WebToolPart part={props.part} />;
     case "location":
       return <LocationPart {...props} />;
+    case "todos":
+      return <TodoPart part={props.part} />;
     case "notebook":
       return <NotebookToolPart part={props.part} />;
     case "agent":
@@ -410,6 +417,65 @@ function LocationPart({ part, canAnswer, onResult }: ToolPartProps) {
       if (!canAnswer) return row("Location not shared");
       return <LocationCard onShare={(output) => onResult({ output })} onDecline={() => onResult({ errorText: LOCATION_DECLINED })} />;
   }
+}
+
+// --- to-do list --------------------------------------------------------------------
+
+/** The model's plan as a checklist. Earlier versions in a reply fold into its activity line. */
+function TodoPart({ part }: { part: DynamicToolUIPart }) {
+  if (part.state === "input-streaming") return <LoadingState label="Planning" />;
+  const todos = parseTodos(part.input);
+  if (part.state === "output-error" || !todos) {
+    return (
+      <ToolResultRow
+        error
+        detail={part.state === "output-error" ? part.errorText : undefined}
+        label={
+          <>
+            <ListTodoIcon className="size-4 shrink-0" />
+            <span className="line-clamp-1 text-left">Couldn't update the plan</span>
+          </>
+        }
+      />
+    );
+  }
+  const { done, total } = todoProgress(todos);
+  return (
+    <div data-todo-call={part.toolCallId} className="flex max-w-xl flex-col gap-2 rounded-lg border bg-card/50 px-3 py-2.5 text-sm">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        <ListTodoIcon className="size-4 shrink-0" />
+        <span>{total === 0 ? "Cleared the plan" : done === total ? "Plan complete" : "Plan"}</span>
+        {total > 0 && (
+          <span className="ml-auto text-xs tabular-nums">
+            {done} of {total} done
+          </span>
+        )}
+      </div>
+      {total > 0 && (
+        <ul className="flex flex-col gap-1">
+          {todos.map((t, i) => (
+            <li key={i} className="flex items-start gap-2">
+              {t.status === "completed" ? (
+                <CircleCheckIcon className="mt-0.5 size-4 shrink-0 text-brand" />
+              ) : t.status === "in_progress" ? (
+                <CircleDotIcon className="mt-0.5 size-4 shrink-0 text-foreground" />
+              ) : (
+                <CircleIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground/60" />
+              )}
+              <span
+                className={cn(
+                  t.status === "completed" && "text-muted-foreground line-through decoration-muted-foreground/40",
+                  t.status === "in_progress" && "font-medium",
+                )}
+              >
+                {t.status === "in_progress" ? (t.activeForm ?? t.content) : t.content}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 // --- memory -----------------------------------------------------------------------

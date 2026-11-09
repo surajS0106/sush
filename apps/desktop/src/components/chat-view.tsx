@@ -11,6 +11,7 @@ import {
   NotebookPenIcon,
   PauseIcon,
   PencilIcon,
+  ListTodoIcon,
   PlayIcon,
   RefreshCcwIcon,
   SettingsIcon,
@@ -31,6 +32,7 @@ import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-e
 import { Greeting } from "@/components/greeting";
 import { ActivityGroup, groupParts } from "@/components/activity-group";
 import { AgentsTray } from "@/components/agents-tray";
+import { PlanTray } from "@/components/plan-tray";
 import { BranchCard, BranchTray, latestBranchCall } from "@/components/branch-card";
 import { ArtifactPart, citationComponents, CitedSourceList } from "@/components/artifact-sources";
 import { CompactSushi } from "@/components/compact-sushi";
@@ -546,6 +548,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
         {(!watching || drives) && <QueuedMessages threadId={id} status={runStatus} />}
         {/* Each tray tucks under the one below it, and the last under the composer. */}
         <div ref={trayRef}>
+          <PlanTray messages={messages} status={runStatus} />
           <AgentsTray threadId={id} messages={messages} />
           {cowork && branchCall && <BranchTray workspaceId={workspaceId ?? undefined} threadId={id} part={branchCall.part} />}
         </div>
@@ -940,6 +943,15 @@ const ChatMessage = memo(function ChatMessage({
   if (message.metadata?.subagentReport) return <SubagentReport message={message} />;
   // Where "Compact now" summarised the conversation; the model reads on from it.
   if (message.metadata?.compaction) return <CompactionDivider message={message} />;
+  // The run sending the model back to the to-do items it left.
+  if (message.metadata?.planCheck) {
+    const left = message.metadata.planCheck.left;
+    return (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">
+        <ListTodoIcon className="size-3" /> Continuing the plan · {left} {left === 1 ? "item" : "items"} left
+      </p>
+    );
+  }
   // The note Resume sends when a reply stopped mid-text.
   if (message.metadata?.resumed) {
     return (

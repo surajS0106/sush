@@ -51,7 +51,7 @@ function StateIcon({ state, className }: { state: AgentState; className?: string
 /** Every `spawn_agent` call in the thread, with whether it came after the user's latest message. */
 function spawnCalls(messages: SushUIMessage[]): { part: DynamicToolUIPart; recent: boolean }[] {
   // A background agent's report arrives as a user message, but it isn't the user writing.
-  const lastHuman = messages.findLastIndex((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.compaction);
+  const lastHuman = messages.findLastIndex((m) => m.role === "user" && !m.metadata?.subagentReport && !m.metadata?.compaction && !m.metadata?.planCheck);
   return messages.flatMap((m, i) =>
     m.role !== "assistant"
       ? []

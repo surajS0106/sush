@@ -246,6 +246,10 @@ function Avatar({ member }: { member: { name: string; image?: string | null; rol
 function MessageView({ message, session }: { message: Message; session: Session }) {
   const author = message.metadata?.author;
   const host = session.get().thread.hostName;
+  // The host's run sending its model back to the to-do items it left (`sush_core::agent::plan`).
+  if (message.role === "user" && message.metadata?.planCheck) {
+    return <p className="small muted">Continuing the plan</p>;
+  }
   if (message.role === "user") {
     return (
       <div className="msg user">
