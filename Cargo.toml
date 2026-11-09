@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/sush-core", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "2.7.0"
+version = "2.8.0"
 edition = "2021"
 license = "MIT"
 
@@ -28,9 +28,10 @@ debug = "line-tables-only"
 debug = false
 
 [profile.release]
-# Thin LTO in parallel codegen units: most of fat LTO's speed for a fraction of the link time
-# (fat LTO with one codegen unit was most of each release job's ~10 minute compile).
-lto = "thin"
+# No cross-crate LTO (rustc still runs thin LTO within each crate): whole-program thin LTO was
+# most of the 2-4 minutes each release job spends compiling Sush's own two crates, for little
+# speed an app like this would notice. Fat LTO with one codegen unit took ~10 minutes.
+lto = false
 opt-level = 3
 panic = "abort"
 strip = true

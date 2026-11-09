@@ -369,8 +369,20 @@ export interface SettingsState {
 
 const settings = createStore<SettingsState | null>("sush.settings", null, false);
 export const useSettings = () => use(settings);
-export const openSettings = (state: SettingsState) => settings.set(state);
+/** Connectors have a page of their own in the sidebar now, so asking for them in Settings opens that. */
+export const openSettings = (state: SettingsState) =>
+  state.section === "connectors" ? openConnectors() : settings.set(state);
 export const closeSettings = () => settings.set(null);
+
+// --- page requests -------------------------------------------------------------
+
+/** A sidebar page App should show, asked for from outside the sidebar. `id` tells repeat requests apart. */
+const pageRequest = createStore<{ id: string; page: "connectors" } | null>("sush.pageRequest", null, false);
+export const usePageRequest = () => use(pageRequest);
+export function openConnectors() {
+  closeSettings();
+  pageRequest.set({ id: crypto.randomUUID(), page: "connectors" });
+}
 
 // --- chat requests -------------------------------------------------------------
 

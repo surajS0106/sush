@@ -1,6 +1,8 @@
 // What's new: the release notes users see in Settings → What's new, and once after an
 // update moves them to a newer version. Written for users, newest release first.
-// Add to UNRELEASED as features land; the release skill moves it into a release.
+// Add to UNRELEASED as features land: they are the notes of the version main is building
+// (main always carries the version it will be released as), so the build that gets tagged
+// already shows them. After tagging, the release skill moves them into RELEASED.
 
 import { getVersion } from "@tauri-apps/api/app";
 import { useSyncExternalStore } from "react";
@@ -25,10 +27,19 @@ export interface Release {
   changes: Change[];
 }
 
-/** Landed since the last release; never shown. Becomes the next release's notes. */
-export const UNRELEASED: Change[] = [];
+/** One line on what the version main is building is about. */
+export const UNRELEASED_SUMMARY = "";
 
-export const CHANGELOG: Release[] = [
+/** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
+export const UNRELEASED: Change[] = [
+  { kind: "new", title: "Board", text: "Keep track of tasks on a Kanban board in the sidebar: drag cards between priority or status columns, switch to a list, and start a session on any task, in its folder, with one click." },
+  { kind: "improved", title: "Connectors", text: "Connectors have their own page in the sidebar: yours, a Popular shortlist and every category in one place, filtered by All, Connected or Available." },
+  { kind: "improved", title: "Most used models", text: "The model picker opens with the models you send the most messages to at the top, so switching back to a favourite is one click." },
+  { kind: "fixed", title: "Check for updates", text: "New versions show up minutes after release, and Check for updates answers in seconds instead of sitting on Checking…" },
+];
+
+/** Released versions, newest first. */
+const RELEASED: Release[] = [
   {
     version: "2.7.0",
     date: "2026-11-09",
@@ -46,14 +57,27 @@ export const CHANGELOG: Release[] = [
   {
     version: "2.6.0",
     date: "2026-11-08",
-    summary: "Web search, dictation through Yammer, and What's new.",
+    summary: "Dictation through Yammer, and What's new.",
     changes: [
       { kind: "new", title: "Dictation with Yammer", text: "Dictation goes through Yammer, Sush's dictation app: press the mic or Ctrl+D and it types what you say into the message box. Without Yammer, Sush walks you through getting it, or keeps using its own in Settings → Speech." },
-      { kind: "new", title: "Web search", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
-      { kind: "improved", title: "Native web search", text: "Claude and GPT models use their provider's own web search." },
-      { kind: "improved", text: "Specialised tools load only when a model needs them, so replies start faster and cost less." },
       { kind: "new", title: "What's new", text: "What's new: see what changed in each release, here and after every update." },
       { kind: "fixed", text: "Checking for updates tries again when GitHub is briefly down, and says what went wrong in plain words." },
+    ],
+  },
+  {
+    version: "2.5.0",
+    date: "2026-11-08",
+    summary: "Web search, more ways to redo a reply, and a glass message box.",
+    changes: [
+      { kind: "new", title: "Web search", text: "Web search: models look things up and read pages when a question needs it, citing their sources. Turn it off or add an Ollama key in Settings → Search." },
+      { kind: "improved", title: "Native web search", text: "Claude and GPT models use their provider's own web search." },
+      { kind: "new", title: "Reply options", text: "The … under a reply shows when it was written and redoes it your way: as is, shorter, longer, searching the web, or with a change you type. It also lists the pages the reply drew on and branches a new chat from it." },
+      { kind: "new", text: "Read aloud: have any reply read out to you from its action row." },
+      { kind: "new", title: "Glass message box", text: "Messages scroll behind a glass message box. Pick frosted, clear, tinted or solid in Settings → General." },
+      { kind: "improved", text: "Specialised tools load only when a model needs them, so replies start faster and cost less." },
+      { kind: "improved", text: "Replies cost less when the provider caches the conversation, and a reply's stats show its context size, model calls and cached input." },
+      { kind: "improved", text: "Research works with any model while web search is on, not only Claude." },
+      { kind: "fixed", text: "On macOS, Gatekeeper offers Open Anyway in Privacy & Security instead of saying to move the app to the Bin." },
     ],
   },
   {
@@ -137,6 +161,12 @@ export const CHANGELOG: Release[] = [
     ],
   },
 ];
+
+/** Every version's notes, newest first: the one being built (dated by its build), then the released ones. */
+export const CHANGELOG: Release[] =
+  UNRELEASED.length && !RELEASED.some((r) => r.version === __APP_VERSION__)
+    ? [{ version: __APP_VERSION__, date: __BUILD_DATE__, summary: UNRELEASED_SUMMARY || undefined, changes: UNRELEASED }, ...RELEASED]
+    : RELEASED;
 
 /** -1, 0 or 1 by semver order (plain `x.y.z`). */
 export function compareVersions(a: string, b: string): number {

@@ -5,6 +5,7 @@
 // have a `setup`: the editor asks for the host and which server, and builds the URL.
 
 import instamartLogo from "@/assets/brands/instamart-square.jpg";
+import plinthLogo from "@/assets/brands/plinth-mark.png";
 import swiggyLogo from "@/assets/brands/swiggy-square.jpg";
 import type { Connector } from "@/lib/library";
 
@@ -105,8 +106,9 @@ export function setupValues(setup: ConnectorSetup, url: string): SetupValues | n
   return null;
 }
 
-/** Logos shown as they are, in full colour: Swiggy's brand rules forbid recolouring them, which the icons below get as masks. */
-const BRAND_LOGOS: Record<string, string> = { swiggy: swiggyLogo, instamart: instamartLogo };
+/** Logos shown as they are, in full colour: Swiggy's brand rules forbid recolouring them, and Plinth's
+ *  mark is a multicolour image, while the icons below get recoloured as masks. */
+const BRAND_LOGOS: Record<string, string> = { swiggy: swiggyLogo, instamart: instamartLogo, plinth: plinthLogo };
 
 /** The full-colour logo of a catalog entry or a connector, if it has one. */
 export const brandLogo = (item: { id?: string; catalogId?: string }): string | undefined => BRAND_LOGOS[item.catalogId ?? item.id ?? ""];

@@ -17,7 +17,6 @@ import {
   PaletteIcon,
   PencilIcon,
   PlaneIcon,
-  PlugIcon,
   ScrollTextIcon,
   SearchIcon,
   SettingsIcon,
@@ -31,7 +30,6 @@ import { useEffect, useRef, useState, type ComponentType, type FormEvent } from 
 import { toast } from "sonner";
 
 import { ChangelogSection } from "@/components/changelog";
-import { ConnectorsSection } from "@/components/connectors-section";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { FlightsSection } from "@/components/flights-section";
 import { ImagesSection } from "@/components/images-section";
@@ -96,7 +94,6 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Customize",
     items: [
       { id: "skills", label: "Skills", icon: ScrollTextIcon, keywords: "instructions" },
-      { id: "connectors", label: "Connectors", icon: PlugIcon, keywords: "mcp tools servers" },
       { id: "plugins", label: "Plugins", icon: BlocksIcon, keywords: "extensions install" },
     ],
   },
@@ -219,7 +216,6 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "sharing" && <SharingSection />}
           {state?.section === "design" && <DesignSection />}
           {state?.section === "skills" && <SkillsSection />}
-          {state?.section === "connectors" && <ConnectorsSection />}
           {state?.section === "plugins" && <PluginsSection />}
           {state?.section === "changelog" && <ChangelogSection />}
         </motion.div>

@@ -1,4 +1,4 @@
-import { BoxIcon, ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
+import { BoxIcon, ChevronDownIcon, ChevronRightIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Fragment, useEffect, useRef, useState } from "react";
 
@@ -17,6 +17,7 @@ import {
 import { PromptInputButton } from "@/components/ai-elements/prompt-input";
 import type { ProviderModels } from "@/hooks/use-providers";
 import { logoColor, modelLogo, providerLogo } from "@/lib/logos";
+import { topModels, useModelUsage } from "@/lib/model-usage";
 import type { ModelTarget } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +67,19 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
   const currentValue = current && value ? itemValue(current.name, value.model, currentModel?.displayName) : "";
   const currentLogo = value ? (modelLogo(value.model) ?? (current && providerLogo(current))) : undefined;
   const reduceMotion = useReducedMotion();
+
+  // The user's most used models (other than the current one) as quick picks at the top.
+  const usage = useModelUsage();
+  const suggestions = topModels(
+    usage,
+    (t) =>
+      !(t.providerId === value?.providerId && t.model === value.model) &&
+      !!catalog.find((c) => c.provider.id === t.providerId)?.models.some((m) => m.id === t.model),
+  ).map((t) => {
+    const entry = catalog.find((c) => c.provider.id === t.providerId)!;
+    const model = entry.models.find((m) => m.id === t.model)!;
+    return { target: t, provider: entry.provider, model, uses: usage[`${t.providerId}/${t.model}`].count };
+  });
 
   // The highlighted row: the current model when the list opens, then wherever the keyboard or search moves it.
   const [active, setActive] = useState("");
@@ -152,6 +166,38 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
           {/* cmdk counts rendered rows, so collapsed groups alone would otherwise read as "no models". */}
           {(search || catalog.every((c) => c.models.length === 0)) && (
             <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
+          )}
+          {!search && suggestions.length > 0 && (
+            <>
+              <ModelSelectorGroup
+                heading={
+                  <span className="flex items-center gap-1.5">
+                    <SparklesIcon className="size-3 shrink-0" />
+                    Most used
+                  </span>
+                }
+              >
+                {suggestions.map(({ target, provider, model, uses }) => (
+                  <ModelSelectorItem
+                    key={`${target.providerId}/${target.model}`}
+                    // Its own value, so it doesn't share cmdk's highlight with the same model's row below.
+                    value={`most-used ${itemValue(provider.name, model.id, model.displayName)}`}
+                    onSelect={() => {
+                      onChange(target);
+                      setOpen(false);
+                    }}
+                  >
+                    <Logo className="text-foreground/80" src={modelLogo(model.id) ?? providerLogo(provider)} />
+                    <ModelSelectorName>{model.displayName ?? model.id}</ModelSelectorName>
+                    <span className="truncate text-xs text-muted-foreground">{provider.name}</span>
+                    <span className="ml-auto shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                      {uses} {uses === 1 ? "message" : "messages"}
+                    </span>
+                  </ModelSelectorItem>
+                ))}
+              </ModelSelectorGroup>
+              <ModelSelectorSeparator />
+            </>
           )}
           {catalog.map(({ provider, models, error }, i) => {
             const pLogo = providerLogo(provider);

@@ -151,17 +151,43 @@ export function useTurnDiff(threadId: string, turnId: string | undefined): FileD
 
 // --- git ------------------------------------------------------------------------------
 
+// Each workspace's last known git state, kept across page visits and launches so
+// icons and branch names show at once and are refreshed behind them.
+const GIT_CACHE_KEY = "sush.git-info";
+const gitCache: Map<string, GitInfo | null> = (() => {
+  try {
+    return new Map(Object.entries(JSON.parse(localStorage.getItem(GIT_CACHE_KEY) ?? "{}")));
+  } catch {
+    return new Map();
+  }
+})();
+
+/** The workspace's last known git state: undefined if never loaded. */
+export function cachedGitInfo(workspaceId: string): GitInfo | null | undefined {
+  return gitCache.get(workspaceId);
+}
+
+/** Reads the workspace's git state (null outside a repo) and remembers it. */
+export async function loadGitInfo(workspaceId: string): Promise<GitInfo | null> {
+  const g = await api.workspaceGit(workspaceId).catch(() => null);
+  gitCache.set(workspaceId, g);
+  try {
+    localStorage.setItem(GIT_CACHE_KEY, JSON.stringify(Object.fromEntries(gitCache)));
+  } catch {
+    // Storage unavailable: the in-memory cache still serves this window.
+  }
+  return g;
+}
+
 /** The workspace's git state, or null outside a repo; refreshed as files change. */
 export function useGitInfo(workspaceId: string | undefined): GitInfo | null {
   const version = useFilesVersion(workspaceId);
-  const [info, setInfo] = useState<GitInfo | null>(null);
+  const [info, setInfo] = useState<GitInfo | null>(() => (workspaceId ? cachedGitInfo(workspaceId) ?? null : null));
   useEffect(() => {
     if (!workspaceId) return setInfo(null);
+    setInfo(cachedGitInfo(workspaceId) ?? null);
     let live = true;
-    api
-      .workspaceGit(workspaceId)
-      .then((g) => live && setInfo(g))
-      .catch(() => live && setInfo(null));
+    loadGitInfo(workspaceId).then((g) => live && setInfo(g));
     return () => {
       live = false;
     };

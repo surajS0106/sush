@@ -28,6 +28,7 @@ import { buildContext, runTool, runTools, setToolRunning, type ToolResult } from
 import { budgetBlock } from "@/lib/budget";
 import { library } from "@/lib/library";
 import { expandMentions, mentionSegments } from "@/lib/mentions";
+import { recordModelUse } from "@/lib/model-usage";
 import { getProject } from "@/lib/projects";
 import { reasoningCaps, reasoningRequest } from "@/lib/reasoning";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
@@ -374,6 +375,10 @@ async function start(id: string, action: RunAction, messages: SushUIMessage[], a
     const blocked = action.type === "respond" ? null : budgetBlock(config.providerId);
     if (blocked) throw new Error(blocked);
     await api.runStart(thread, action, config);
+    // What the user sends to a model is what makes it "most used" in the picker; reports run by themselves.
+    if (action.type !== "respond" && action.type !== "resume" && !isReportThread(id)) {
+      recordModelUse({ providerId: config.providerId, model: config.model });
+    }
   } catch (e) {
     // A steer that fails leaves the run it was meant for going; it stays queued, unsent.
     if (action.type === "steer") toast.error("Couldn’t send that message", { description: errorMessage(e) });

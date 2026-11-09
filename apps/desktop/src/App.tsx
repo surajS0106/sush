@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { AppSidebar, type Page, type SessionMode } from "@/components/app-sidebar";
 import { AutomationsPage } from "@/components/automations-page";
+import { BoardPage } from "@/components/board-page";
+import { ConnectorsPage } from "@/components/connectors-section";
 import { FoldersPage } from "@/components/folders-page";
 import { ChatView } from "@/components/chat-view";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -26,10 +28,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { useProviders } from "@/hooks/use-providers";
 import { useAppearance } from "@/lib/appearance";
+import { linkSession, taskPrompt, type Task } from "@/lib/board";
 import { automationForThread, getAutomations, markSeen, startScheduler, useOpenRunRequest } from "@/lib/automations";
 import { watchBudget } from "@/lib/budget";
 import { useLayout } from "@/lib/layout";
-import { openSettings, syncConnectors, useChatRequest, type ChatRequest } from "@/lib/library";
+import { openSettings, syncConnectors, useChatRequest, usePageRequest, type ChatRequest } from "@/lib/library";
 import {
   createIncognitoConversation,
   deleteConversation,
@@ -49,13 +52,11 @@ export default function App() {
   const conversations = useConversations();
   const { providers, catalog, refresh } = useProviders();
   const ids = conversations.map((c) => c.id);
-  const [activeId, openSession, nav] = useSessionHistory(lastActiveTab() ?? conversations[0]?.id ?? null, ids);
   // The main area shows the open session, or a page like Automations; opening any session goes back to it.
-  const [page, setPage] = useState<Page>("session");
-  const setActiveId = (id: string | null) => {
-    setPage("session");
-    openSession(id);
-  };
+  // Back and forward walk both, so leaving a chat for Connectors and pressing back returns to the chat.
+  const [{ page, id: activeId }, go, nav] = useNavHistory(lastActiveTab() ?? conversations[0]?.id ?? null, ids);
+  const setPage = (page: Page) => go((cur) => ({ page, id: cur.id }));
+  const setActiveId = (id: string | null) => go({ page: "session", id });
   // A session someone shared with this app, watched on a page of its own; it isn't one of ours, so it has no tab.
   const [sharedId, setSharedId] = useState<string | null>(null);
   const openShared = (threadId: string) => {
@@ -165,7 +166,22 @@ export default function App() {
   useEffect(() => {
     if (prefill) requestAnimationFrame(focusComposer);
   }, [prefill]);
+  // "Start session" on a board task: Cowork in the task's folder (a chat without one), prefilled with the task.
+  const startTask = (task: Task) => {
+    const workspaceId = task.workspaceId && getWorkspaces().some((w) => w.id === task.workspaceId) ? task.workspaceId : undefined;
+    const conversationId = getOrCreateEmptyConversation(workspaceId).id;
+    linkSession(task.id, conversationId);
+    tabs.openInNewTab(conversationId);
+    setPage("session");
+    setPrefill({ id: crypto.randomUUID(), prompt: taskPrompt(task), conversationId });
+  };
   const prefilled = prefill && prefill.conversationId === current?.id ? prefill : null;
+
+  // A page asked for from elsewhere, e.g. "Manage connectors" in the composer.
+  const pageRequest = usePageRequest();
+  useEffect(() => {
+    if (pageRequest) setPage(pageRequest.page);
+  }, [pageRequest]);
 
   // Always have a conversation to type into.
   // Start the connectors that were on last time.
@@ -250,6 +266,8 @@ export default function App() {
                   }}
                 />
               )}
+              {page === "board" && <BoardPage onStartTask={startTask} onOpenSession={tabs.openInNewTab} />}
+              {page === "connectors" && <ConnectorsPage />}
               {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
               {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}
               {page === "wiki" && <WikiPage onOpenSession={tabs.openInNewTab} />}
@@ -353,33 +371,44 @@ function watchedConversation(share: ShareView): Conversation {
   return { id: share.threadId, title: share.thread.title, createdAt: 0, updatedAt: 0, messages: [] };
 }
 
-/** The open session plus back/forward stacks of the ones visited before it; deleted sessions are skipped. */
-function useSessionHistory(initial: string | null, ids: string[]) {
-  const [activeId, setActive] = useState(initial);
-  const [past, setPast] = useState<string[]>([]);
-  const [future, setFuture] = useState<string[]>([]);
-  const live = (stack: string[]) => stack.filter((id) => id !== activeId && ids.includes(id));
+/** Where the main area is: a page, and the open session (the one shown on the "session" page). */
+type NavLocation = { page: Page; id: string | null };
+type NavHistory = { past: NavLocation[]; current: NavLocation; future: NavLocation[] };
 
-  const open = (id: string | null) => {
-    if (id === activeId) return;
-    if (activeId) setPast([...past, activeId]);
-    setFuture([]);
-    setActive(id);
-  };
-  const step = (from: string[], to: string[], setFrom: (s: string[]) => void, setTo: (s: string[]) => void) => {
-    const stack = live(from);
-    const id = stack.pop();
-    if (!id) return;
-    setFrom(stack);
-    setTo(activeId ? [...live(to), activeId] : live(to));
-    setActive(id);
-  };
+const sameLocation = (a: NavLocation, b: NavLocation) => a.page === b.page && a.id === b.id;
+
+/**
+ * The current location plus back/forward stacks of the ones visited before it, sessions and
+ * pages alike. Deleted sessions are skipped. Updates are functional, so several moves in one
+ * event (open a tab, then show the session page) land as one.
+ */
+function useNavHistory(initial: string | null, ids: string[]) {
+  const [history, setHistory] = useState<NavHistory>({ past: [], current: { page: "session", id: initial }, future: [] });
+  const exists = (id: string | null) => id !== null && ids.includes(id);
+  // A session entry needs its session; a page entry is always worth going back to.
+  const live = (l: NavLocation, current: NavLocation) => (l.page !== "session" || exists(l.id)) && !sameLocation(l, current);
+
+  const go = (to: NavLocation | ((current: NavLocation) => NavLocation)) =>
+    setHistory((h) => {
+      const next = typeof to === "function" ? to(h.current) : to;
+      return sameLocation(next, h.current) ? h : { past: [...h.past, h.current], current: next, future: [] };
+    });
+  const step = (back: boolean) =>
+    setHistory((h) => {
+      const from = (back ? h.past : h.future).filter((l) => live(l, h.current));
+      const entry = from.pop();
+      if (!entry) return h;
+      // A page keeps the session that's open now if the one it was visited with is gone.
+      const current = exists(entry.id) || entry.page === "session" ? entry : { ...entry, id: h.current.id };
+      const to = [...(back ? h.future : h.past), h.current];
+      return back ? { past: from, current, future: to } : { past: to, current, future: from };
+    });
 
   const nav: Nav = {
-    canBack: live(past).length > 0,
-    canForward: live(future).length > 0,
-    back: () => step(past, future, setPast, setFuture),
-    forward: () => step(future, past, setFuture, setPast),
+    canBack: history.past.some((l) => live(l, history.current)),
+    canForward: history.future.some((l) => live(l, history.current)),
+    back: () => step(true),
+    forward: () => step(false),
   };
-  return [activeId, open, nav] as const;
+  return [history.current, go, nav] as const;
 }

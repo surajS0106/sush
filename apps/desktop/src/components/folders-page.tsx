@@ -37,7 +37,15 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createStore, useConversations, type Conversation } from "@/lib/store";
 import { api, errorMessage, type GitInfo, type Workspace, type WorkspaceEntry } from "@/lib/tauri";
-import { addWorkspace, removeWorkspace, useFilesVersion, useGitInfo, useWorkspaces } from "@/lib/workspaces";
+import {
+  addWorkspace,
+  cachedGitInfo,
+  loadGitInfo,
+  removeWorkspace,
+  useFilesVersion,
+  useGitInfo,
+  useWorkspaces,
+} from "@/lib/workspaces";
 import { cn } from "@/lib/utils";
 
 /** Grid or list, remembered per window. */
@@ -99,15 +107,20 @@ const SORTS: { value: FolderSort; label: string }[] = [
 
 /** Each folder's git state, loaded once per folder for the cards and the filter. */
 function useGitInfos(workspaces: Workspace[]): Record<string, GitInfo | null> {
-  const [infos, setInfos] = useState<Record<string, GitInfo | null>>({});
+  // Start from the last known state so the icons are right on the first frame.
+  const [infos, setInfos] = useState<Record<string, GitInfo | null>>(() => {
+    const known: Record<string, GitInfo | null> = {};
+    for (const w of workspaces) {
+      const g = cachedGitInfo(w.id);
+      if (g !== undefined) known[w.id] = g;
+    }
+    return known;
+  });
   const ids = workspaces.map((w) => w.id).join("|");
   useEffect(() => {
     let live = true;
     for (const w of workspaces) {
-      api
-        .workspaceGit(w.id)
-        .then((g) => live && setInfos((all) => ({ ...all, [w.id]: g })))
-        .catch(() => live && setInfos((all) => ({ ...all, [w.id]: null })));
+      loadGitInfo(w.id).then((g) => live && setInfos((all) => ({ ...all, [w.id]: g })));
     }
     return () => {
       live = false;

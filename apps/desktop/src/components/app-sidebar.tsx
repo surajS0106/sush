@@ -11,6 +11,7 @@ import {
   FolderPlusIcon,
   LogOutIcon,
   GitPullRequestIcon,
+  KanbanIcon,
   LoaderCircleIcon,
   MessageSquareIcon,
   MessagesSquareIcon,
@@ -18,6 +19,7 @@ import {
   MoonIcon,
   MoreHorizontalIcon,
   PencilIcon,
+  PlugIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
@@ -94,6 +96,8 @@ const RECENT_LIMIT = 8;
 const NAV = [
   { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
   { id: "folders", label: "Folders", icon: FolderIcon },
+  { id: "board", label: "Board", icon: KanbanIcon },
+  { id: "connectors", label: "Connectors", icon: PlugIcon },
   { id: "automations", label: "Automations", icon: TimerIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
@@ -114,7 +118,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "folders" | "automations" | "security" | "review" | "wiki" | "shared";
+export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];

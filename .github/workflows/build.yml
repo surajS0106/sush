@@ -1,0 +1,179 @@
+name: Build
+
+# Builds signed installers for every platform from each push to main and keeps them on the run.
+# Nothing is published here: pushing a tag runs release.yml, which takes this run's installers
+# for the tagged commit and publishes them, so a release ships exactly what main built.
+# Main always carries the version it will be released as (the release skill bumps it right after
+# tagging), so these installers are ready to ship as they are.
+on:
+  push:
+    branches: [main]
+  # Weekly, before GitHub evicts unused caches, and to pick up a new stable rustc.
+  schedule:
+    - cron: "0 3 * * 1"
+  # Also started by release.yml when the tagged commit has no finished build (e.g. it was cancelled).
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push to main supersedes a build still running. A run started for a tag has its own group.
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bun_target: bun-windows-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bun_target: bun-darwin-arm64
+            extra_config: --config src-tauri/tauri.macos-icon.conf.json
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bun_target: bun-darwin-x64
+            extra_config: --config src-tauri/tauri.macos-icon.conf.json
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            bun_target: bun-linux-x64
+            # No rpm: gzipping it took 4 of the job's 9 minutes. The updater uses the AppImage.
+            extra_config: --bundles deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev pkg-config cmake libclang-dev
+
+      # Bun comes from GitHub's release downloads, which sometimes answer 504: try three times.
+      # Pinned to the version the lockfile is made with, which also skips a "latest" lookup.
+      - uses: oven-sh/setup-bun@v2
+        id: bun1
+        continue-on-error: true
+        with: &bun
+          bun-version: 1.2.20
+      - if: steps.bun1.outcome == 'failure'
+        shell: bash
+        run: sleep 30
+      - uses: oven-sh/setup-bun@v2
+        id: bun2
+        if: steps.bun1.outcome == 'failure'
+        continue-on-error: true
+        with: *bun
+      - if: steps.bun2.outcome == 'failure'
+        shell: bash
+        run: sleep 60
+      - uses: oven-sh/setup-bun@v2
+        if: steps.bun2.outcome == 'failure'
+        with: *bun
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # Only main saves caches: every other ref (a tag's fallback build) can read main's.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # Bun's download cache (Windows spent over a minute in bun install).
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # The auth server ships as a Tauri sidecar named sush-auth-<target-triple>.
+      - name: Compile auth server sidecar
+        shell: bash
+        working-directory: apps/server
+        run: |
+          ext=""
+          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
+          # binaries/ is gitignored, and bun on Windows won't create the output folder.
+          mkdir -p ../desktop/src-tauri/binaries
+          bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
+            --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
+
+      # The browser viewer for invite links, bundled for the auth server to serve (tauri.release.conf.json).
+      - name: Build browser viewer
+        run: bun run build:viewer
+
+      # macOS 26 swaps the app icon with the system appearance; needs Xcode's actool.
+      - name: Compile adaptive macOS icon
+        if: runner.os == 'macOS'
+        run: apps/desktop/src-tauri/icons/build-mac-icon.sh
+
+      # Bundling downloads its tools from GitHub (WiX and NSIS, linuxdeploy), which can answer 504:
+      # a failed bundle gets one more try, which reuses the compiled crates.
+      - name: Build and bundle
+        id: bundle1
+        continue-on-error: true
+        working-directory: apps/desktop
+        env: &bundle-env
+          VITE_AUTH_URL: http://localhost:47321
+          # Signs the update bundles; the app checks them against the pubkey in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json ${{ matrix.extra_config }}
+      - name: Build and bundle (retry)
+        if: steps.bundle1.outcome == 'failure'
+        working-directory: apps/desktop
+        env: *bundle-env
+        shell: bash
+        run: |
+          sleep 30
+          bun tauri build --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json ${{ matrix.extra_config }}
+
+      # The installers, their update signatures, and this platform's entries for latest.json
+      # (file names only; release.yml fills in the download URLs for the tag).
+      - name: Collect installers
+        shell: bash
+        run: |
+          set -euo pipefail
+          b=target/${{ matrix.target }}/release/bundle
+          out=dist-release
+          mkdir -p "$out"
+          entry() { # <platform keys...> -- <file>: one updater entry per key, signed by <file>.sig
+            local file="${@: -1}"
+            for key in "${@:1:$#-2}"; do
+              jq -n --arg k "$key" --arg f "$(basename "$file")" --arg s "$(cat "$file.sig")" \
+                '{($k): {file: $f, signature: $s}}'
+            done
+          }
+          case "${{ matrix.target }}" in
+            *-apple-darwin)
+              arch=$([ "${{ matrix.target }}" = aarch64-apple-darwin ] && echo aarch64 || echo x64)
+              key=$([ "$arch" = aarch64 ] && echo darwin-aarch64 || echo darwin-x86_64)
+              cp "$b"/dmg/*.dmg "$out"/
+              cp "$b/macos/Sush.app.tar.gz" "$out/Sush_$arch.app.tar.gz"
+              cp "$b/macos/Sush.app.tar.gz.sig" "$out/Sush_$arch.app.tar.gz.sig"
+              entry "$key" "$key-app" -- "$out/Sush_$arch.app.tar.gz" > parts.ndjson ;;
+            *-windows-msvc)
+              cp "$b"/msi/*.msi "$b"/msi/*.msi.sig "$b"/nsis/*.exe "$b"/nsis/*.exe.sig "$out"/
+              { entry windows-x86_64 windows-x86_64-msi -- "$(ls "$out"/*.msi)"
+                entry windows-x86_64-nsis -- "$(ls "$out"/*-setup.exe)"; } > parts.ndjson ;;
+            *-linux-gnu)
+              cp "$b"/appimage/*.AppImage "$b"/appimage/*.AppImage.sig "$b"/deb/*.deb "$b"/deb/*.deb.sig "$out"/
+              { entry linux-x86_64 linux-x86_64-appimage -- "$(ls "$out"/*.AppImage)"
+                entry linux-x86_64-deb -- "$(ls "$out"/*.deb)"; } > parts.ndjson ;;
+          esac
+          jq -s 'add' parts.ndjson > "$out/platforms-${{ matrix.target }}.json"
+          ls -la "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.target }}
+          path: dist-release/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30

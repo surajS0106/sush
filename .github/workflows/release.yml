@@ -1,181 +1,103 @@
 name: Release
 
-# Push a tag like v0.1.0 (matching the version in tauri.conf.json) to build
-# installers for every platform and publish them as a GitHub release.
+# Push a tag like v2.8.0 on a commit of main to publish it. Nothing is compiled here: the
+# installers come from build.yml's run for that exact commit (waited for if it's still running,
+# started if there is none), so the release ships what main built and goes out in about a minute.
+#
+# As GitHub recommends, the release is made as a draft, every file attached, then published,
+# so /releases/latest (the app's update feed) never points at a half-uploaded release, and it
+# keeps working if immutable releases are turned on.
 on:
   push:
     tags: ["v*"]
-    # Also on main when dependencies change (and weekly, before GitHub evicts unused caches
-    # and to pick up a new stable rustc), to compile them into a cache the tag builds can use:
-    # a tag's run can only read caches saved on itself or on main, never on an earlier tag.
-    # These runs only build; they publish nothing.
-    branches: [main]
-    paths:
-      - "Cargo.lock"
-      - "**/Cargo.toml"
-      - ".github/workflows/release.yml"
-  schedule:
-    - cron: "0 3 * * 1"
-  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: write # create the release
+  actions: write # read build.yml's runs and artifacts, and start one if the commit has none
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # True for the cache-warming runs (main and the weekly schedule), which skip bundling and publishing.
-  WARM: ${{ github.ref_type == 'branch' && github.event_name != 'workflow_dispatch' }}
-
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            bun_target: bun-windows-x64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            bun_target: bun-darwin-arm64
-            extra_config: --config src-tauri/tauri.macos-icon.conf.json
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            bun_target: bun-darwin-x64
-            extra_config: --config src-tauri/tauri.macos-icon.conf.json
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            bun_target: bun-linux-x64
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev pkg-config cmake libclang-dev
-
-      # Bun comes from GitHub's release downloads, which sometimes answer 504: try three times.
-      # Pinned to the version the lockfile is made with, which also skips a "latest" lookup.
-      - uses: oven-sh/setup-bun@v2
-        id: bun1
-        continue-on-error: true
-        with: &bun
-          bun-version: 1.2.20
-      - if: steps.bun1.outcome == 'failure'
-        shell: bash
-        run: sleep 30
-      - uses: oven-sh/setup-bun@v2
-        id: bun2
-        if: steps.bun1.outcome == 'failure'
-        continue-on-error: true
-        with: *bun
-      - if: steps.bun2.outcome == 'failure'
-        shell: bash
-        run: sleep 60
-      - uses: oven-sh/setup-bun@v2
-        if: steps.bun2.outcome == 'failure'
-        with: *bun
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-${{ matrix.target }}
-          # A cache saved on a tag is unreadable by every other tag, so only main saves.
-          save-if: ${{ github.ref_type == 'branch' }}
-
-      - run: bun install --frozen-lockfile
-
-      # The auth server ships as a Tauri sidecar named sush-auth-<target-triple>.
-      - name: Compile auth server sidecar
-        shell: bash
-        working-directory: apps/server
-        run: |
-          ext=""
-          if [ "$RUNNER_OS" = "Windows" ]; then ext=".exe"; fi
-          # binaries/ is gitignored, and bun on Windows won't create the output folder.
-          mkdir -p ../desktop/src-tauri/binaries
-          bun build --compile --minify --target=${{ matrix.bun_target }} src/index.ts \
-            --outfile ../desktop/src-tauri/binaries/sush-auth-${{ matrix.target }}$ext
-
-      # The browser viewer for invite links, bundled for the auth server to serve (tauri.release.conf.json).
-      - name: Build browser viewer
-        run: bun run build:viewer
-
-      # macOS 26 swaps the app icon with the system appearance; needs Xcode's actool.
-      - name: Compile adaptive macOS icon
-        if: runner.os == 'macOS' && env.WARM != 'true'
-        run: apps/desktop/src-tauri/icons/build-mac-icon.sh
-
-      # Cache warming: the same cargo build as a release, without bundles or a GitHub release.
-      - name: Build (cache warming only)
-        if: env.WARM == 'true'
-        working-directory: apps/desktop
-        env:
-          VITE_AUTH_URL: http://localhost:47321
-        run: bun tauri build --no-bundle --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json
-
-      # Bundling downloads its tools from GitHub (NSIS and WiX on Windows, linuxdeploy for the
-      # AppImage), which can answer 504 too. Keep them between runs; tags read main's copy.
-      - uses: actions/cache@v4
-        if: runner.os != 'macOS'
-        with:
-          path: |
-            ~/AppData/Local/tauri
-            ~/.cache/tauri
-          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: tauri-tools-${{ runner.os }}-
-
-      # Bundles and publishes; tried a second time if a download fails. The retry reuses the
-      # compiled crates, and uploads to the same release.
-      - uses: tauri-apps/tauri-action@v0
-        id: bundle1
-        if: env.WARM != 'true'
-        continue-on-error: true
-        env: &bundle-env
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VITE_AUTH_URL: http://localhost:47321
-          # Signs the update bundles; the app checks them against the pubkey in tauri.conf.json.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with: &bundle-with
-          projectPath: apps/desktop
-          tauriScript: bun tauri
-          args: --target ${{ matrix.target }} --config src-tauri/tauri.release.conf.json ${{ matrix.extra_config }}
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: Sush ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseBody: See the assets below to download the installer for your platform.
-          # A draft until every platform is up (the publish job): a published release is what
-          # /releases/latest points at, so publishing early sends the app's update check to a
-          # release with no latest.json yet, and it fails with a 404.
-          releaseDraft: true
-          prerelease: false
-      - if: steps.bundle1.outcome == 'failure'
-        shell: bash
-        run: sleep 60
-      - uses: tauri-apps/tauri-action@v0
-        if: steps.bundle1.outcome == 'failure'
-        env: *bundle-env
-        with: *bundle-with
-
-  # Publishes the draft once every build has uploaded its bundles and its part of latest.json.
-  # If any platform failed it stays a draft, and the update feed keeps serving the previous release.
   publish:
-    needs: build
-    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v5
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check the tag matches the app version
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then tag="${{ github.ref_name }}"
-          else tag="v$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)"; fi
-          gh release edit "$tag" --draft=false --latest
+          version=$(jq -r .version apps/desktop/src-tauri/tauri.conf.json)
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG is on a commit whose app version is $version. Tag the commit that carries v${TAG#v}."
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      # A successful build of this commit, else wait for one in progress, else start one.
+      # A newer push to main can cancel a build of an older commit, so this tries again.
+      - name: Find this commit's build
+        run: |
+          set -euo pipefail
+          runs() { gh run list --workflow build.yml --commit "$SHA" --limit 20 --json databaseId,status,conclusion,createdAt; }
+          for attempt in 1 2 3; do
+            ok=$(runs | jq -r '[.[] | select(.conclusion == "success")][0].databaseId // empty')
+            if [ -n "$ok" ]; then echo "RUN=$ok" >> "$GITHUB_ENV"; echo "Using build run $ok"; exit 0; fi
+            live=$(runs | jq -r '[.[] | select(.status != "completed")][0].databaseId // empty')
+            if [ -z "$live" ]; then
+              echo "No build of $SHA to use; starting one."
+              gh workflow run build.yml --ref "$TAG"
+              for _ in $(seq 1 30); do
+                sleep 5
+                live=$(runs | jq -r '[.[] | select(.status != "completed")][0].databaseId // empty')
+                [ -n "$live" ] && break
+              done
+              [ -n "$live" ] || { echo "::error::The build didn't start."; exit 1; }
+            fi
+            echo "Waiting for build run $live"
+            gh run watch "$live" --interval 20 > /dev/null || true
+          done
+          ok=$(runs | jq -r '[.[] | select(.conclusion == "success")][0].databaseId // empty')
+          if [ -n "$ok" ]; then echo "RUN=$ok" >> "$GITHUB_ENV"; echo "Using build run $ok"; exit 0; fi
+          echo "::error::No successful build of $SHA. See the Build workflow's runs for this commit."
+          exit 1
+
+      - name: Download the installers
+        run: |
+          gh run download "$RUN" --pattern 'installers-*' --dir dl
+          mkdir assets
+          find dl -type f ! -name 'platforms-*.json' -exec mv {} assets/ \;
+          ls -la assets
+
+      # The update feed: every platform's entries, pointing at this release's files.
+      - name: Write latest.json
+        run: |
+          set -euo pipefail
+          count=$(ls dl/*/platforms-*.json | wc -l)
+          if [ "$count" -ne 4 ]; then echo "::error::Expected 4 platforms, found $count."; exit 1; fi
+          base="https://github.com/$GH_REPO/releases/download/$TAG"
+          jq -s --arg v "$VERSION" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg base "$base" '{
+            version: $v,
+            notes: "See the assets below to download the installer for your platform.",
+            pub_date: $date,
+            platforms: (add | with_entries(.value = {signature: .value.signature, url: "\($base)/\(.value.file)"}))
+          }' dl/*/platforms-*.json > assets/latest.json
+          cat assets/latest.json | jq '.platforms | map_values(.url)'
+
+      - name: Publish the release
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            # A rerun: replace the files on the existing release.
+            gh release upload "$TAG" assets/* --clobber
+          else
+            gh release create "$TAG" assets/* --draft --verify-tag --title "Sush $TAG" \
+              --notes "See the assets below to download the installer for your platform."
+          fi
+          gh release edit "$TAG" --draft=false --latest

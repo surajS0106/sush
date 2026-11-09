@@ -51,15 +51,17 @@ export async function checkForUpdate(quiet = false) {
   }
 }
 
-/** GitHub's release downloads sometimes answer 5xx for a moment, so a failed check gets two more tries. */
+/**
+ * One plain check, as Yammer does. Only a feed that answered badly (GitHub's brief 5xx) gets a second
+ * quick try; a slow or unreachable feed fails at once rather than leaving "Checking…" up for a minute.
+ */
 async function checkWithRetry(): Promise<Update | null> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await check({ timeout: 20_000 });
-    } catch (e) {
-      if (attempt >= 2) throw e;
-      await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
-    }
+  try {
+    return await check({ timeout: 10_000 });
+  } catch (e) {
+    if (!/valid release JSON/i.test(e instanceof Error ? e.message : String(e))) throw e;
+    await new Promise((r) => setTimeout(r, 1000));
+    return await check({ timeout: 10_000 });
   }
 }
 

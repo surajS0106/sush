@@ -1,11 +1,15 @@
-// Customize → Connectors: the user's connectors ("Yours") and a catalog of
-// remote MCP servers to add in one click ("Discover"), plus editors for a
-// custom remote server (URL) and a local one (command).
+// The sidebar's Connectors page: one page with the user's connectors ("Connected"),
+// a Popular shortlist and the catalog of remote MCP servers by category, each
+// added in one click, filtered by All / Connected / Available; plus editors
+// for a custom remote server (URL) and a local one (command).
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  ArrowLeftIcon,
+  BadgeCheckIcon,
   CheckIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   ExternalLinkIcon,
   GlobeIcon,
   LogOutIcon,
@@ -20,8 +24,7 @@ import {
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { Editor, Empty, Field, SectionHeader, usePluginName } from "@/components/customize-sections";
-import { Segmented } from "@/components/settings-layout";
+import { Editor, Empty, Field, usePluginName } from "@/components/customize-sections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -93,7 +96,7 @@ function ConnectorLogo({
     >
       {src ? (
         <span
-          className="size-5 bg-current"
+          className="size-1/2 bg-current"
           style={{
             backgroundColor: color,
             mask: `url("${src}") center / contain no-repeat`,
@@ -493,7 +496,7 @@ function LocalEditor({ edit, onChange, onDone }: { edit: LocalEdit; onChange: (e
   );
 }
 
-// --- yours -----------------------------------------------------------------------------
+// --- connected ---------------------------------------------------------------------------
 
 function statusLine(c: Connector, s: ConnectorStatus | undefined): React.ReactNode {
   if (!c.enabled) return "Off";
@@ -537,10 +540,10 @@ function ConnectorRow({ c, status, onEdit }: { c: Connector; status?: ConnectorS
   const remote = c.server.type === "http";
   const { src, color } = logoFor(c);
   return (
-    <div className="flex items-center gap-3 px-6 py-3">
-      <ConnectorLogo brand={brandLogo(c)} src={src} color={color} name={c.name} className="size-9" />
+    <div className="flex min-w-0 items-center gap-3 py-2">
+      <ConnectorLogo brand={brandLogo(c)} src={src} color={color} name={c.name} className="size-8" />
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <span className="truncate text-sm font-medium">{c.name}</span>
           {pluginName && (
             <Badge variant="secondary" className="shrink-0">
@@ -553,7 +556,7 @@ function ConnectorRow({ c, status, onEdit }: { c: Connector; status?: ConnectorS
             </Badge>
           )}
         </div>
-        <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{statusLine(c, status)}</div>
+        <div className="truncate text-xs text-muted-foreground">{statusLine(c, status)}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {c.enabled && status?.state === "needs-auth" && (
@@ -608,28 +611,50 @@ function ConnectorRow({ c, status, onEdit }: { c: Connector; status?: ConnectorS
   );
 }
 
-// --- discover --------------------------------------------------------------------------
+// --- catalog -----------------------------------------------------------------------------
 
-function CatalogCard({ entry, added, onAdd }: { entry: CatalogEntry; added: boolean; onAdd: () => void }) {
+/** Shown first under All, in this order; the rest stay in their categories. */
+const POPULAR = ["notion", "linear", "github", "atlassian", "sentry", "canva", "stripe", "zapier"];
+/** Rows a section shows before folding the rest into "… and N more". */
+const FOLD = 6;
+
+const GRID = "grid grid-cols-1 gap-x-8 lg:grid-cols-2";
+
+function CatalogRow({
+  entry,
+  added,
+  onAdd,
+  onOpen,
+}: {
+  entry: CatalogEntry;
+  added: boolean;
+  onAdd: () => void;
+  onOpen: () => void;
+}) {
   return (
-    <div className="flex items-start gap-3 rounded-xl border bg-card p-3">
-      <ConnectorLogo brand={brandLogo(entry)} src={connectorIcon(entry)} color={entry.color} name={entry.name} />
+    <div className="flex min-w-0 items-center gap-3 py-2">
+      <ConnectorLogo
+        brand={brandLogo(entry)}
+        src={connectorIcon(entry)}
+        color={entry.color}
+        name={entry.name}
+        className="size-8"
+      />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium">{entry.name}</p>
-        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{entry.description}</p>
-        <p className="mt-1 text-xs text-muted-foreground/80">
-          by {entry.publisher}
-          {entry.auth === "none" && " · No sign-in"}
+        <div className="flex items-center gap-1">
+          <span className="truncate text-sm font-medium">{entry.name}</span>
+          <span title={`By ${entry.publisher}${entry.auth === "none" ? " · No sign-in" : ""}`} className="shrink-0">
+            <BadgeCheckIcon className="size-3.5 text-muted-foreground/60" aria-label={`By ${entry.publisher}`} />
+          </span>
+        </div>
+        <p className="truncate text-xs text-muted-foreground" title={entry.description}>
+          {entry.description}
         </p>
       </div>
       {added ? (
-        <span
-          className="flex size-7 shrink-0 items-center justify-center rounded-md bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-          title="Added"
-        >
-          <CheckIcon className="size-4" />
-          <span className="sr-only">Added</span>
-        </span>
+        <Button size="icon-sm" aria-label={`${entry.name} is connected`} title="Connected" onClick={onOpen}>
+          <CheckIcon />
+        </Button>
       ) : (
         <Button size="icon-sm" variant="outline" aria-label={`Add ${entry.name}`} onClick={onAdd}>
           <PlusIcon />
@@ -639,68 +664,141 @@ function CatalogCard({ entry, added, onAdd }: { entry: CatalogEntry; added: bool
   );
 }
 
-function Discover({ query, onAdd }: { query: string; onAdd: (e: CatalogEntry) => void }) {
-  const connectors = useConnectors();
-  const q = query.trim().toLowerCase();
-  const matches = CATALOG.filter((e) => !q || `${e.name} ${e.description} ${e.publisher}`.toLowerCase().includes(q));
-  if (matches.length === 0) {
-    return (
-      <Empty>
-        No connectors match “{query.trim()}”. You can add any MCP server by its URL with Add → Custom connector.
-      </Empty>
-    );
-  }
+/** "Stripe, Zapier and 2 more" with the first few logos stacked; unfolds the section. */
+function MoreRow({ entries, onClick }: { entries: CatalogEntry[]; onClick: () => void }) {
+  const named = entries.slice(0, 2).map((e) => e.name);
+  const rest = entries.length - named.length;
+  const label = rest > 0 ? `${named.join(", ")} and ${rest} more` : named.join(" and ");
   return (
-    <div className="space-y-6 px-6 pt-2 pb-6">
-      {CATEGORIES.map((category) => {
-        const entries = matches.filter((e) => e.category === category);
-        if (!entries.length) return null;
-        return (
-          <section key={category}>
-            <h3 className="flex items-center gap-2 pb-2 text-sm font-medium">
-              {category}
-              <span className="rounded-md bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
-                {entries.length}
-              </span>
-            </h3>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {entries.map((e) => (
-                <CatalogCard
-                  key={e.id}
-                  entry={e}
-                  // One per server and workspace, so a `setup` entry can be added again.
-                  added={!e.setup && connectors.some((c) => c.catalogId === e.id)}
-                  onAdd={() => onAdd(e)}
-                />
-              ))}
-            </div>
-          </section>
-        );
-      })}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className="group mt-1 flex items-center gap-2.5 rounded-lg py-1.5 pr-2 text-xs text-muted-foreground hover:text-foreground"
+    >
+      <span className="flex -space-x-1.5">
+        {entries.slice(0, 3).map((e) => (
+          <ConnectorLogo
+            key={e.id}
+            brand={brandLogo(e)}
+            src={connectorIcon(e)}
+            color={e.color}
+            name={e.name}
+            className="size-6 rounded-md ring-2 ring-background"
+          />
+        ))}
+      </span>
+      {label}
+      <ChevronRightIcon className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+    </button>
+  );
+}
+
+function Section({ title, count, children }: { title: string; count?: number; children: React.ReactNode }) {
+  return (
+    <section>
+      <h3 className="flex items-center gap-2 pb-2 text-sm font-medium">
+        {title}
+        {count !== undefined && (
+          <span className="text-xs font-normal text-muted-foreground tabular-nums">{count}</span>
+        )}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function CatalogSection({
+  title,
+  entries,
+  expanded,
+  isAdded,
+  onAdd,
+  onOpen,
+}: {
+  title: string;
+  entries: CatalogEntry[];
+  /** Show every entry, as while searching. */
+  expanded: boolean;
+  isAdded: (e: CatalogEntry) => boolean;
+  onAdd: (e: CatalogEntry) => void;
+  onOpen: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!entries.length) return null;
+  // Folding away a single entry would take as much room as showing it.
+  const all = expanded || open || entries.length <= FOLD + 1;
+  const shown = all ? entries : entries.slice(0, FOLD);
+  return (
+    <Section title={title}>
+      <div className={GRID}>
+        {shown.map((e) => (
+          <CatalogRow key={e.id} entry={e} added={isAdded(e)} onAdd={() => onAdd(e)} onOpen={onOpen} />
+        ))}
+      </div>
+      {!all && <MoreRow entries={entries.slice(FOLD)} onClick={() => setOpen(true)} />}
+    </Section>
   );
 }
 
 // --- section -----------------------------------------------------------------------------
 
-type Tab = "yours" | "discover";
+type Tab = "all" | "connected" | "available";
 
-export function ConnectorsSection() {
+const TABS: { value: Tab; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "connected", label: "Connected" },
+  { value: "available", label: "Available" },
+];
+
+/** The sidebar's Connectors page, laid out like Folders. */
+export function ConnectorsPage() {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto w-full max-w-5xl px-8 pt-8 pb-16">
+        <Connectors />
+      </div>
+    </div>
+  );
+}
+
+function Connectors() {
   const connectors = useConnectors();
   const status = useConnectorStatus();
-  const [tab, setTab] = useState<Tab>(() => (connectors.length ? "yours" : "discover"));
+  const [tab, setTab] = useState<Tab>("all");
   const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<Edit | null>(null);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return connectors.filter((c) => !q || c.name.toLowerCase().includes(q));
-  }, [connectors, query]);
+  const q = query.trim().toLowerCase();
+  const connected = useMemo(() => connectors.filter((c) => !q || c.name.toLowerCase().includes(q)), [connectors, q]);
+  // One per server and workspace, so a `setup` entry can always be added again.
+  const isAdded = (e: CatalogEntry) => !e.setup && connectors.some((c) => c.catalogId === e.id);
+  const catalog = CATALOG.filter(
+    (e) =>
+      (!q || `${e.name} ${e.description} ${e.publisher}`.toLowerCase().includes(q)) &&
+      (tab !== "available" || !isAdded(e)),
+  );
 
-  if (editing?.kind === "remote")
-    return <RemoteEditor edit={editing} onChange={setEditing} onDone={() => setEditing(null)} />;
-  if (editing?.kind === "local")
-    return <LocalEditor edit={editing} onChange={setEditing} onDone={() => setEditing(null)} />;
+  if (editing) {
+    const done = () => setEditing(null);
+    return (
+      <div className="mx-auto max-w-2xl">
+        <button
+          type="button"
+          onClick={done}
+          className="mb-4 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeftIcon className="size-3.5" /> Connectors
+        </button>
+        <div className="rounded-xl border">
+          {editing.kind === "remote" ? (
+            <RemoteEditor edit={editing} onChange={setEditing} onDone={done} />
+          ) : (
+            <LocalEditor edit={editing} onChange={setEditing} onDone={done} />
+          )}
+        </div>
+      </div>
+    );
+  }
 
   const add = (entry: CatalogEntry) => {
     if (entry.setup) {
@@ -730,16 +828,62 @@ export function ConnectorsSection() {
     }
   };
 
+  const showConnected = tab !== "available";
+  const showCatalog = tab !== "connected";
+  // Popular gets a section of its own only while browsing everything, unfiltered.
+  const popular =
+    tab === "all" && !q
+      ? POPULAR.map((id) => catalog.find((e) => e.id === id)).filter((e): e is CatalogEntry => !!e)
+      : [];
+  const rest = catalog.filter((e) => !popular.includes(e));
+  const nothing = (!showConnected || connected.length === 0) && (!showCatalog || catalog.length === 0);
+  const toConnected = () => setTab("connected");
+
   return (
     <>
-      <SectionHeader
-        title="Connectors"
-        description="Give Sush tools from the apps and services you use. Sush asks before each tool call unless you choose “Always allow”."
-        action={
+      <header>
+        <h1 className="text-3xl font-semibold tracking-tight">Connectors</h1>
+        <p className="mt-2 text-muted-foreground">
+          Give Sush tools from the apps and services you use. Sush asks before each tool call unless you choose
+          “Always allow”.
+        </p>
+      </header>
+      <div className="mt-10 flex flex-wrap items-center gap-3">
+        <div role="tablist" aria-label="Show" className="flex items-center gap-1">
+          {TABS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="tab"
+              aria-selected={tab === value}
+              onClick={() => setTab(value)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm transition-colors",
+                tab === value ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              {label}
+              {value === "connected" && connectors.length > 0 && (
+                <span className="text-xs text-muted-foreground tabular-nums">{connectors.length}</span>
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <div className="relative w-52">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search connectors"
+              aria-label="Search connectors"
+              className="h-8 pl-8"
+            />
+          </div>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm">
-                <PlusIcon /> Add <ChevronDownIcon />
+                <PlusIcon /> Add
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-64">
@@ -759,49 +903,58 @@ export function ConnectorsSection() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        }
-      />
-      <div className="flex items-center gap-3 px-6 py-3">
-        <Segmented<Tab>
-          label="Show"
-          value={tab}
-          onChange={setTab}
-          options={[
-            {
-              value: "yours",
-              label: connectors.length ? `Yours · ${connectors.length}` : "Yours",
-            },
-            { value: "discover", label: "Discover" },
-          ]}
-        />
-        <div className="relative ml-auto w-56">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={tab === "discover" ? "Search connectors" : "Filter yours"}
-            aria-label="Search connectors"
-            className="h-8 pl-8"
-          />
         </div>
       </div>
-      {tab === "discover" ? (
-        <Discover query={query} onAdd={add} />
-      ) : connectors.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 px-6 py-12 text-center">
-          <p className="text-sm text-muted-foreground">No connectors yet.</p>
-          <Button size="sm" variant="outline" onClick={() => setTab("discover")}>
-            Browse connectors
-          </Button>
-        </div>
-      ) : (
-        <div className="divide-y border-t">
-          {visible.map((c) => (
-            <ConnectorRow key={c.id} c={c} status={status[c.id]} onEdit={() => setEditing(toEdit(c))} />
-          ))}
-          {visible.length === 0 && <Empty>No connectors match “{query.trim()}”.</Empty>}
-        </div>
-      )}
+
+      <div className="mt-6 space-y-10">
+        {tab === "connected" && connectors.length === 0 ? (
+          <div className="flex flex-col items-center gap-3 py-12 text-center">
+            <p className="text-sm text-muted-foreground">No connectors yet.</p>
+            <Button size="sm" variant="outline" onClick={() => setTab("available")}>
+              Browse connectors
+            </Button>
+          </div>
+        ) : nothing ? (
+          <Empty>
+            No connectors match “{query.trim()}”. You can add any MCP server by its URL with Add → Custom connector.
+          </Empty>
+        ) : (
+          <>
+            {showConnected && connected.length > 0 && (
+              <Section title="Connected" count={tab === "all" ? connected.length : undefined}>
+                <div className={GRID}>
+                  {connected.map((c) => (
+                    <ConnectorRow key={c.id} c={c} status={status[c.id]} onEdit={() => setEditing(toEdit(c))} />
+                  ))}
+                </div>
+              </Section>
+            )}
+            {showCatalog && (
+              <>
+                <CatalogSection
+                  title="Popular"
+                  entries={popular}
+                  expanded={false}
+                  isAdded={isAdded}
+                  onAdd={add}
+                  onOpen={toConnected}
+                />
+                {CATEGORIES.map((category) => (
+                  <CatalogSection
+                    key={category}
+                    title={category}
+                    entries={rest.filter((e) => e.category === category)}
+                    expanded={!!q}
+                    isAdded={isAdded}
+                    onAdd={add}
+                    onOpen={toConnected}
+                  />
+                ))}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </>
   );
 }

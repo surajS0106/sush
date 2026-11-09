@@ -5,12 +5,15 @@
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' data: blob: sushblob: http://sushblob.localhost https://avatars.githubusercontent.com https://github.com https://*.githubusercontent.com https://www.gstatic.com https://media-assets.swiggy.com https://instamart-media-assets.swiggy.com https://upload.wikimedia.org https://thumb.wikimedia.org; style-src 'self' 'unsafe-inline'; font-src 'self' data:; frame-src 'self' https://www.google.com sushwidget: http://sushwidget.localhost; connect-src 'self' ipc: http://ipc.localhost http://localhost:47321"
     }
   },
+  "build": {
+    "beforeBuildCommand": "bunx vite build"
+  },
   "bundle": {
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/sush-auth"],
     "resources": { "../../viewer/dist/": "viewer/" },
-    "linux": {
-      "rpm": { "compression": { "type": "gzip", "level": 6 } }
+    "windows": {
+      "nsis": { "compression": "zlib" }
     }
   }
 }
