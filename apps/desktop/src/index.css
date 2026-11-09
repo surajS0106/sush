@@ -280,13 +280,15 @@ html[data-resizing] * {
 }
 
 /* Sushi packed into a takeout box while a chat compacts (components/compact-sushi.tsx).
-   Transforms on SVG parts are in sprite pixels. With reduced motion it rests packed. */
-.sushi-pack [data-pack] { transform-box: fill-box; animation: 3s ease-in-out infinite both; }
-.sushi-pack [data-pack="hop"] { animation-name: pack-hop; transform-origin: 50% 100%; }
-.sushi-pack [data-pack="sushi"] { animation-name: pack-sushi; transform-origin: 50% 100%; }
-.sushi-pack [data-pack="lid"] { animation-name: pack-lid; }
-.sushi-pack [data-pack="band"] { animation-name: pack-band; transform-origin: 50% 0; }
-.sushi-pack [data-pack="star"] { animation-name: pack-star; transform-origin: 50% 50%; }
+   Transforms on SVG parts are in sprite pixels. With reduced motion it rests packed.
+   Each part names its keyframes inside the full shorthand: a name-less
+   `animation: 3s …` shorthand gets minified to `animation: none` in the build. */
+.sushi-pack [data-pack] { transform-box: fill-box; }
+.sushi-pack [data-pack="hop"] { animation: pack-hop 3s ease-in-out infinite both; transform-origin: 50% 100%; }
+.sushi-pack [data-pack="sushi"] { animation: pack-sushi 3s ease-in-out infinite both; transform-origin: 50% 100%; }
+.sushi-pack [data-pack="lid"] { animation: pack-lid 3s ease-in-out infinite both; }
+.sushi-pack [data-pack="band"] { animation: pack-band 3s ease-in-out infinite both; transform-origin: 50% 0; }
+.sushi-pack [data-pack="star"] { animation: pack-star 3s ease-in-out infinite both; transform-origin: 50% 50%; }
 
 @keyframes pack-sushi {
   0% { transform: translateY(-14px); opacity: 0; }
@@ -321,7 +323,7 @@ html[data-resizing] * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sushi-pack [data-pack] { animation: none; }
+  .sushi-pack [data-pack] { animation: none !important; }
 }
 
 /* AskUserCard (components/ask-user-card.tsx) entrances. */
