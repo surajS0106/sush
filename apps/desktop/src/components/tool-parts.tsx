@@ -37,6 +37,8 @@ import {
 import { useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { CrmToolPart } from "@/components/crm-tool-part";
+import { WorkflowToolPart } from "@/components/workflow-tool-part";
 import { Image } from "@/components/ai-elements/image";
 
 import { AskUserCard, AskUserSummary } from "@/components/ask-user-card";
@@ -108,7 +110,7 @@ interface ToolPartProps {
 export type ToolAnswer = NonNullable<SushMetadata["sushAnswers"]>[string];
 
 /** Calls that wait for whoever runs the session (an approval, an answer). */
-const ASKS = new Set(["ask-user", "skill-save", "automation-save", "location", "workspace", "browser", "connector"]);
+const ASKS = new Set(["ask-user", "skill-save", "automation-save", "location", "workspace", "browser", "connector", "crm", "workflow"]);
 
 const ANSWERED = { approve: "Approved", deny: "Denied", answer: "Answered" } as const;
 
@@ -175,6 +177,10 @@ function ToolCard(props: ToolPartProps) {
       return <TodoPart part={props.part} />;
     case "notebook":
       return <NotebookToolPart part={props.part} />;
+    case "crm":
+      return <CrmToolPart part={props.part} canAnswer={props.canAnswer} onResult={props.onResult} running={running} />;
+    case "workflow":
+      return <WorkflowToolPart part={props.part} canAnswer={props.canAnswer} onResult={props.onResult} running={running} />;
     case "agent":
       // Shown with the rest of its step's sub-agents (`components/subagents.tsx`).
       return null;

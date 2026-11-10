@@ -232,6 +232,13 @@ html[data-resizing] * {
 }
 
 /* Sub-agent graph (components/subagents.tsx): work flowing along a connector. */
+/* A workflow connection carrying a run (`workflow-canvas.tsx`). */
+@keyframes wf-dash {
+  to {
+    stroke-dashoffset: -12;
+  }
+}
+
 @keyframes flow-down {
   to { background-position: 0 8px; }
 }

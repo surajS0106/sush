@@ -95,11 +95,20 @@ const versions = createStore<Readonly<Record<string, number>>>("sush.workspace-v
 
 export function notifyFilesChanged(threadId: string, workspaceId: string) {
   versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1, [threadId]: (v[threadId] ?? 0) + 1 }));
+  fileListeners.forEach((l) => l(workspaceId));
+}
+
+const fileListeners = new Set<(workspaceId: string) => void>();
+/** Hear that files in a workspace may have changed (workflow triggers). */
+export function onFilesChanged(listener: (workspaceId: string) => void): () => void {
+  fileListeners.add(listener);
+  return () => fileListeners.delete(listener);
 }
 
 /** After the user changed a file themselves (saving in the viewer). */
 export function notifyWorkspaceChanged(workspaceId: string) {
   versions.set((v) => ({ ...v, [workspaceId]: (v[workspaceId] ?? 0) + 1 }));
+  fileListeners.forEach((l) => l(workspaceId));
 }
 
 /** Changes whenever files in this workspace (or touched by this thread) may have changed. */

@@ -28,7 +28,8 @@ export function PermissionModePicker() {
       )}
     >
       {auto ? <ZapIcon className="size-3.5 fill-current" /> : <HandIcon className="size-3.5" />}
-      {auto ? "Auto" : "Manual"}
+      {/* In a narrow composer the icon and switch say it; the word comes back when there's room. */}
+      <span className="hidden @md:inline">{auto ? "Auto" : "Manual"}</span>
       <span
         aria-hidden
         className={cn(

@@ -1,5 +1,6 @@
 import {
   BookOpenIcon,
+  ContactIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CircleHelpIcon,
@@ -28,6 +29,7 @@ import {
   SlidersHorizontalIcon,
   SunIcon,
   TimerIcon,
+  WorkflowIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -82,7 +84,9 @@ import { automationForThread, useAutomations } from "@/lib/automations";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
 import { useProjects, type Project } from "@/lib/projects";
+import { useCrmThreads } from "@/lib/crm";
 import { useNotebookThreads } from "@/lib/notebooks";
+import { useStepThreadIds } from "@/lib/workflows";
 import { useReportThreads } from "@/lib/reports";
 import { errorMessage } from "@/lib/tauri";
 import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
@@ -99,8 +103,10 @@ const NAV = [
   { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
   { id: "folders", label: "Folders", icon: FolderIcon },
   { id: "board", label: "Board", icon: KanbanIcon },
+  { id: "crm", label: "CRM", icon: ContactIcon },
   { id: "connectors", label: "Connectors", icon: PlugIcon },
   { id: "automations", label: "Automations", icon: TimerIcon },
+  { id: "workflows", label: "Workflows", icon: WorkflowIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
   { id: "wiki", label: "Wiki", icon: BookOpenIcon },
@@ -121,7 +127,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "shared";
+export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "crm" | "workflows" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -194,8 +200,13 @@ export function AppSidebar({
   // Reviews and wikis run on threads of their own, shown on their pages.
   const reportThreads = useReportThreads();
   const notebookThreads = useNotebookThreads();
+  // The CRM page's chats live in its Ask panel.
+  const crmThreads = useCrmThreads();
+  // Workflow steps' threads are opened from their run.
+  const stepThreads = useStepThreadIds();
   const started = conversations.filter(
-    (c) => c.messages.length > 0 && !c.incognito && !reportThreads.has(c.id) && !notebookThreads.has(c.id),
+    (c) =>
+      c.messages.length > 0 && !c.incognito && !reportThreads.has(c.id) && !notebookThreads.has(c.id) && !crmThreads.has(c.id) && !stepThreads.has(c.id),
   );
   const matches = searching ? started.filter((c) => c.title.toLowerCase().includes(query.trim().toLowerCase())) : started;
   const projects = useProjects();

@@ -277,7 +277,7 @@ export function Composer({
               )}
             </div>
           </PromptInputBody>
-          <PromptInputFooter className="px-2.5 pt-1 pb-2.5">
+          <PromptInputFooter className="@container gap-2 px-2.5 pt-1 pb-2.5">
             {notebook ? (
               <NotebookComposerMenu notebook={notebook} onOpenSettings={onOpenSettings} />
             ) : (
@@ -289,10 +289,11 @@ export function Composer({
                 onSend={(text) => submit({ text, files: [] })}
               />
             )}
-            <div className="flex items-center gap-1.5">
+            {/* Shrinks in a narrow panel: the model name truncates first, the send button never does. */}
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 [&>*]:shrink-0">
               {/* A notebook's source tools never ask, so there's no approval mode to pick. */}
               {!notebook && <PermissionModePicker />}
-              <div className="composer-pill [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
+              <div className="composer-pill min-w-24 shrink! [&_button]:max-w-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
                 <ModelPicker catalog={catalog} value={target} onChange={onPickModel} />
               </div>
               <ReasoningPicker catalog={catalog} target={target} />

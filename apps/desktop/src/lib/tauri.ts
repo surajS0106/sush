@@ -482,6 +482,117 @@ export type ThreadOp =
   | { type: "set-part"; index: number; part: unknown }
   | { type: "set-metadata"; metadata: Record<string, unknown> };
 
+// --- CRM (`crm.rs`, `sush_core::crm`) --------------------------------------------------
+
+export type CrmKind = "company" | "contact" | "deal";
+
+/** A company, contact or deal (`sush_core::crm::Record`). Which fields mean something depends on `kind`. */
+export interface CrmRecord {
+  /** Empty on a new record; saving gives it one. */
+  id: string;
+  kind: CrmKind;
+  name: string;
+  companyId?: string;
+  /** A company's or deal's main contact. */
+  contactId?: string;
+  domain?: string;
+  category?: string;
+  email?: string;
+  phone?: string;
+  title?: string;
+  owner?: string;
+  /** A stage id from the settings (companies' or deals' list). */
+  stage?: string;
+  value?: number;
+  /** `YYYY-MM-DD`. */
+  closeDate?: string;
+  /** `YYYY-MM-DD`; a deal with one is listed under Renewals. */
+  renewalDate?: string;
+  probability?: number;
+  notes?: string;
+  /** Imported columns with no field of their own. */
+  fields?: Record<string, string>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type CrmTone = "open" | "won" | "lost";
+export interface CrmStage {
+  id: string;
+  name: string;
+  tone: CrmTone;
+}
+
+export interface CrmSettings {
+  companyStages: CrmStage[];
+  dealStages: CrmStage[];
+  currency: string;
+}
+
+export type CrmTab = "companies" | "contacts" | "deals" | "renewals";
+export type CrmFilterOp = "is" | "is-not" | "contains" | "gt" | "lt" | "empty" | "not-empty";
+export interface CrmFilter {
+  field: string;
+  op: CrmFilterOp;
+  value: string;
+}
+
+/** A saved view (`sush_core::crm::View`); the UI applies it. */
+export interface CrmView {
+  id: string;
+  tab: CrmTab;
+  name: string;
+  query: string;
+  filters: CrmFilter[];
+  sort: { field: string; desc: boolean } | null;
+  hidden: string[];
+  layout: "table" | "board";
+  createdAt: number;
+}
+
+export type CrmActivityKind = "note" | "email" | "meeting" | "call" | "ai" | "change";
+export interface CrmActivity {
+  id: string;
+  recordId: string;
+  kind: CrmActivityKind;
+  body: string;
+  at: number;
+  threadId?: string;
+}
+
+/** What a save or delete did (`sush_core::crm::CrmEvent`), for workflow triggers. */
+export type CrmEvent =
+  | { type: "created"; record: CrmRecord }
+  | { type: "updated"; record: CrmRecord; changed: string[] }
+  | { type: "stage-changed"; record: CrmRecord; from: string | null; to: string | null; changed: string[] }
+  | { type: "deleted"; record: CrmRecord };
+
+/** A deleted record, to undo with `crmRestore`. */
+export interface CrmRemoved {
+  record: CrmRecord;
+  activities: CrmActivity[];
+  unlinked: string[];
+}
+
+export type CrmImportField =
+  | "name" | "company" | "domain" | "category" | "email" | "phone" | "title" | "owner" | "stage" | "value"
+  | "closeDate" | "renewalDate" | "probability" | "notes" | "custom" | "skip";
+
+/** A picked CSV, with a guessed field per column for each kind. */
+export interface CrmCsvFile {
+  name: string;
+  headers: string[];
+  rows: string[][];
+  guesses: Record<CrmKind, CrmImportField[]>;
+}
+
+export interface CrmImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  companiesCreated: number;
+}
+
 // --- notebooks (`notebooks.rs`, `sush_core::notebooks`) --------------------------------
 
 export type SourceKind = "pdf" | "web" | "paper" | "text" | "youtube" | "audio" | "chat" | "file";
@@ -611,6 +722,12 @@ export type RunFrame =
   | { type: "report"; report: Report }
   | { type: "notebook"; notebook: Notebook }
   | { type: "notebook-gone"; id: string }
+  | { type: "crm-records"; records: CrmRecord[] }
+  | { type: "crm-gone"; ids: string[] }
+  | { type: "crm-activities"; recordId: string; activities: CrmActivity[] }
+  | { type: "crm-views"; views: CrmView[] }
+  | { type: "crm-settings"; settings: CrmSettings }
+  | { type: "crm-event"; event: CrmEvent }
   | { type: "share"; share: ShareView }
   | { type: "share-gone"; threadId: string }
   /** Build the config for a run someone in a shared session starts; answer with `shareConfigResult`. */
@@ -1266,6 +1383,27 @@ export const api = {
   reportAskThread: (id: string, threadId: string | null) => invoke<Report>("report_ask_thread", { id, threadId }),
   reportDelete: (id: string) => invoke<void>("report_delete", { id }),
 
+  crmLoad: () => invoke<{ records: CrmRecord[]; views: CrmView[]; settings: CrmSettings }>("crm_load"),
+  crmSave: (record: CrmRecord) => invoke<CrmRecord>("crm_save", { record }),
+  /** A bulk edit; all or none. */
+  crmSaveMany: (records: CrmRecord[]) => invoke<CrmRecord[]>("crm_save_many", { records }),
+  crmDelete: (ids: string[]) => invoke<CrmRemoved[]>("crm_delete", { ids }),
+  crmRestore: (removed: CrmRemoved[]) => invoke<void>("crm_restore", { removed }),
+  crmActivities: (recordId: string) => invoke<CrmActivity[]>("crm_activities", { recordId }),
+  crmActivityAdd: (recordId: string, kind: CrmActivityKind, body: string) =>
+    invoke<CrmActivity>("crm_activity_add", { recordId, kind, body }),
+  crmActivityDelete: (id: string) => invoke<void>("crm_activity_delete", { id }),
+  crmViewSave: (view: CrmView) => invoke<CrmView>("crm_view_save", { view }),
+  crmViewDelete: (id: string) => invoke<void>("crm_view_delete", { id }),
+  crmSettingsSave: (settings: CrmSettings) => invoke<CrmSettings>("crm_settings_save", { settings }),
+  /** Ask for a CSV and read it; `null` if cancelled. */
+  crmImportPick: () => invoke<CrmCsvFile | null>("crm_import_pick"),
+  crmImport: (request: { kind: CrmKind; headers: string[]; mapping: CrmImportField[]; rows: string[][] }) =>
+    invoke<CrmImportResult>("crm_import", { request }),
+  /** Made-up records to try an empty CRM with. */
+  crmSample: () => invoke<void>("crm_sample"),
+  /** Record ids matching `query` best first, over fields and activities (full-text). */
+  crmSearch: (query: string, kind: CrmKind | null, limit?: number) => invoke<string[]>("crm_search", { query, kind, limit: limit ?? null }),
   notebooksList: () => invoke<Notebook[]>("notebooks_list"),
   notebookCreate: (title: string) => invoke<Notebook>("notebook_create", { title }),
   notebookRename: (id: string, title: string) => invoke<Notebook>("notebook_rename", { id, title }),
@@ -1352,6 +1490,8 @@ export const api = {
   connectorConnect: (id: string, server: ServerSpec) => invoke<ConnectOutcome>("connector_connect", { id, server }),
   /** `callId` lets `connectorCancelCall` stop it. */
   connectorDisconnect: (id: string) => invoke<void>("connector_disconnect", { id }),
+  /** Call a tool its server marks read-only; anything else is refused (workflow triggers). */
+  connectorRead: (id: string, tool: string, args: unknown) => invoke<string>("connector_read", { id, tool, arguments: args ?? {} }),
   /** Disconnect and delete the connector's stored credentials. */
   connectorForget: (id: string) => invoke<void>("connector_forget", { id }),
   /** Sign in through the browser; resolves when the browser comes back. Servers

@@ -29,6 +29,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from "react";
 import { toast } from "sonner";
 
+import { CurrencySelect } from "@/components/currency-select";
 import { ChangelogSection } from "@/components/changelog";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { FlightsSection } from "@/components/flights-section";
@@ -55,6 +56,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { HoverHighlight, MotionHighlight } from "@/components/ui/motion-highlight";
 import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
+import { loadCrm, saveSettings, useCrm } from "@/lib/crm";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
 import { changePassword, connectedApps, deleteAccount, disconnectApp, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
@@ -325,10 +327,22 @@ function GeneralSection() {
 
 function TemperatureGroup() {
   const unit = useTemperatureUnit();
+  const crm = useCrm();
+  useEffect(() => {
+    void loadCrm();
+  }, []);
   return (
     <Group title="Units">
       <Setting title="Temperature" description="Used on weather and flight cards.">
         <Segmented label="Temperature" value={unit} onChange={setTemperatureUnit} options={TEMPERATURE_UNITS} />
+      </Setting>
+      <Setting title="Currency" description="Amounts in your CRM and workflows are in this currency. Changing it relabels them; it doesn't convert them.">
+        <CurrencySelect
+          value={crm.loaded ? crm.settings.currency : undefined}
+          onChange={(currency) => {
+            if (currency !== crm.settings.currency) void saveSettings({ ...crm.settings, currency });
+          }}
+        />
       </Setting>
     </Group>
   );

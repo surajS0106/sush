@@ -20,6 +20,8 @@
 //   topic_lookup    runs immediately: the chat shows photos and articles about a subject (topic.ts)
 //   todo_write      runs immediately: the chat shows the plan as a checklist (todos.ts)
 //   location_get    reads the device's position, after the user agrees in its card (location.ts)
+//   crm_*           the user's CRM: reads run at once, writes ask with a card (crm-tools.ts)
+//   workflow_*      list workflows at once; start one after the user approves (workflow-tools.ts)
 //   spawn_agent     offered and run by Rust: a sub-agent on a thread of its own (components/subagents.tsx)
 //   <connector>__*  sent to an MCP connector, after the user approves
 
@@ -29,6 +31,21 @@ import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts"
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
 import { placesOrder } from "@/lib/connector-catalog";
+import {
+  CRM_LOG,
+  CRM_READ,
+  CRM_SEARCH,
+  CRM_SECTION,
+  CRM_TOOL_NAMES,
+  CRM_WRITE,
+  CRM_WRITES,
+  crmLogTool,
+  crmReadTool,
+  crmSearchTool,
+  crmViewTool,
+  crmWriteTool,
+  runCrmTool,
+} from "@/lib/crm-tools";
 import { ORDER_TOOL, swiggyService } from "@/lib/swiggy";
 import { FLIGHTS_SEARCH, flightsTool, runFlightsSearch } from "@/lib/flights";
 import { IMAGE_GENERATE, imagesEnabled, IMAGES_OFF, imageTool, runImageGenerate } from "@/lib/images";
@@ -53,6 +70,7 @@ import { createStore } from "@/lib/store";
 import type { McpTool, RunTool, ToolSpec } from "@/lib/tauri";
 import { runTodoWrite, TODO_SECTION, TODO_WRITE, todoTool } from "@/lib/todos";
 import { runTopicLookup, TOPIC_LOOKUP, topicTool } from "@/lib/topic";
+import { runWorkflowTool, WORKFLOW_LIST, WORKFLOW_RUN, WORKFLOW_TOOL_NAMES, workflowListTool, workflowRunTool } from "@/lib/workflow-tools";
 import { RESEARCH_SECTION, runWebFetch, runWebSearch, WEB_FETCH, WEB_SEARCH, WEB_SECTION, webFetchTool, webSearchTool } from "@/lib/web";
 import { runWeatherShow, WEATHER_SHOW, weatherTool } from "@/lib/weather";
 
@@ -229,6 +247,7 @@ export function buildContext({
   research,
   incognito = false,
   project,
+  crm = false,
 }: {
   askUser: boolean;
   research: boolean;
@@ -236,6 +255,8 @@ export function buildContext({
   incognito?: boolean;
   /** The project the chat is filed under, for its instructions. */
   project?: { name: string; instructions: string };
+  /** A chat on the CRM page: told about the CRM, and offered views. */
+  crm?: boolean;
 }): RequestContext {
   const prefs = library.prefs();
   const memory = prefs.memory && !incognito;
@@ -245,7 +266,7 @@ export function buildContext({
   if (project?.instructions.trim()) {
     sections.push(
       `This chat is part of the user's "${project.name}" project. Follow the project's instructions:\n\n` +
-        `<project_instructions>\n${project.instructions.trim()}\n</project_instructions>`,
+      `<project_instructions>\n${project.instructions.trim()}\n</project_instructions>`,
     );
   }
 
@@ -256,23 +277,23 @@ export function buildContext({
   if (design) {
     sections.push(
       `When you produce UI, front-end code, or visual designs, follow the "${design.name}" design system:\n\n` +
-        `<design_system>\n${design.guidelines}\n</design_system>`,
+      `<design_system>\n${design.guidelines}\n</design_system>`,
     );
   }
 
   if (memory) {
     sections.push(
       "You have a long-term memory about this user, shared across conversations and stored on their device. " +
-        "Use it to personalise answers without mentioning it unless it's relevant. Keep it current with " +
-        "memory_write and memory_delete as you learn things worth remembering; don't save one-off details.\n\n" +
-        `${ORGANISATION}\n\n${prefs.memorySensitive ? SENSITIVE_ON : SENSITIVE_OFF}\n\n${renderMemory()}`,
+      "Use it to personalise answers without mentioning it unless it's relevant. Keep it current with " +
+      "memory_write and memory_delete as you learn things worth remembering; don't save one-off details.\n\n" +
+      `${ORGANISATION}\n\n${prefs.memorySensitive ? SENSITIVE_ON : SENSITIVE_OFF}\n\n${renderMemory()}`,
     );
   }
 
   if (referenceChats) {
     sections.push(
       "You can look up the user's past chats with chats_search and chat_read. Do so when they refer to an " +
-        "earlier conversation or when past context would clearly help; don't search on every message.",
+      "earlier conversation or when past context would clearly help; don't search on every message.",
     );
   }
 
@@ -285,12 +306,14 @@ export function buildContext({
 
   sections.push(TODO_SECTION);
 
+  if (crm) sections.push(CRM_SECTION);
+
   const connectors = connectorTools();
   if (connectors.length > 0) {
     sections.push(
       "Pull requests and commits returned by connector tools are shown to the user as cards right under " +
-        "the tool call, with their title, message, author, sha, branches and diff stats. Don't repeat those " +
-        "details in tables or lists; answer the question or add what the card doesn't show.",
+      "the tool call, with their title, message, author, sha, branches and diff stats. Don't repeat those " +
+      "details in tables or lists; answer the question or add what the card doesn't show.",
     );
   }
 
@@ -309,6 +332,13 @@ export function buildContext({
     topicTool,
     ...(web ? [webSearchTool, webFetchTool] : []),
     locationTool,
+    crmSearchTool,
+    crmReadTool,
+    crmWriteTool,
+    crmLogTool,
+    ...(crm ? [crmViewTool] : []),
+    workflowListTool,
+    workflowRunTool,
     ...(memory ? memoryTools : []),
     ...(referenceChats ? chatTools : []),
     ...connectors.map((t) => t.spec),
@@ -343,6 +373,8 @@ export type ToolKind =
   | "connector"
   | "tools-load"
   | "notebook"
+  | "crm"
+  | "workflow"
   | "unknown";
 
 /** A notebook chat's source tools. Rust offers and runs them (`sush_core::notebooks`). */
@@ -377,7 +409,10 @@ export const TOOLS_LOAD = "tools_load";
  * prompt lists them by name and first sentence. Connector tools are deferred too, unless the
  * user @-mentioned the connector in the conversation.
  */
-const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, IMAGE_GENERATE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET]);
+const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, IMAGE_GENERATE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN]);
+
+/** The CRM tools, offered from the start where the CRM is the subject (its page, an @crm message). */
+export const CRM_UNDEFERRED: ReadonlySet<string> = new Set([CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG]);
 
 /** Starts a sub-agent. Rust offers and runs it (`sush_core::agent::subagents`). */
 export const SPAWN_AGENT = "spawn_agent";
@@ -406,6 +441,8 @@ export function toolKind(name: string): ToolKind {
   if (name === LOCATION_GET) return "location";
   if (name === TODO_WRITE) return "todos";
   if (name === SOURCE_SEARCH || name === SOURCE_READ) return "notebook";
+  if (CRM_TOOL_NAMES.has(name)) return "crm";
+  if (WORKFLOW_TOOL_NAMES.has(name)) return "workflow";
   if (findConnectorTool(name)) return "connector";
   return "unknown";
 }
@@ -429,6 +466,10 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
   if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
+  // Changes to the CRM show what they'll do and ask, unless the user picked Auto.
+  if (kind === "crm") return !CRM_WRITES.has(name) || library.prefs().permissionMode === "auto";
+  // Starting a workflow can change things; it asks, unless the user picked Auto.
+  if (kind === "workflow") return name === WORKFLOW_LIST || library.prefs().permissionMode === "auto";
   if (kind !== "connector") return false;
   const t = findConnectorTool(name)!;
   // An old "Always allow" never covers spending money.
@@ -456,11 +497,11 @@ export function setToolRunning(callId: string, running: boolean) {
  * Tool specs with where each runs and whether it needs the user's approval, for a run's config.
  * With `defer`, the specialised tools and the connectors not in `defer.mentioned` load on demand.
  */
-export function runTools(specs: ToolSpec[], defer?: { mentioned: ReadonlySet<string> }): RunTool[] {
+export function runTools(specs: ToolSpec[], defer?: { mentioned: ReadonlySet<string>; offered?: ReadonlySet<string> }): RunTool[] {
   return specs.map((spec) => {
     const approval = runsWithoutApproval(spec.name) ? "auto" : "ask";
     const t = toolKind(spec.name) === "connector" ? findConnectorTool(spec.name) : undefined;
-    const deferred = !!defer && (t ? !defer.mentioned.has(t.connector.id) : DEFERRED.has(spec.name));
+    const deferred = !!defer && (t ? !defer.mentioned.has(t.connector.id) : DEFERRED.has(spec.name) && !defer.offered?.has(spec.name));
     return { ...spec, approval, deferred, exec: t ? { type: "connector", connectorId: t.connector.id, tool: t.tool } : { type: "client" } };
   });
 }
@@ -517,6 +558,8 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
     if (name === WEB_SEARCH) return runWebSearch(args);
     if (name === WEB_FETCH) return runWebFetch(args);
     if (name === TODO_WRITE) return runTodoWrite(args);
+    if (CRM_TOOL_NAMES.has(name)) return runCrmTool(name, args);
+    if (WORKFLOW_TOOL_NAMES.has(name)) return runWorkflowTool(name, args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };
   } catch (e) {
     return { errorText: e instanceof Error ? e.message : String(e) };

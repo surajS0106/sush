@@ -24,9 +24,13 @@ import type { FileUIPart } from "ai";
 import { useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
-import { buildContext, notebookContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
+import { buildContext, CRM_UNDEFERRED, notebookContext, runTool, runTools, setToolRunning, type ToolResult } from "@/lib/agent";
 import { budgetBlock } from "@/lib/budget";
-import { library } from "@/lib/library";
+import { applyCrmActivities, applyCrmEvent, applyCrmGone, applyCrmRecords, applyCrmSettings, applyCrmViews, isCrmThread } from "@/lib/crm";
+import { CRM_MENTION_NOTE, mentionsCrm } from "@/lib/crm-tools";
+import { noteModelProblem, noteModelWorked } from "@/lib/model-names";
+import { providerTrouble, stepThread } from "@/lib/workflows";
+import { activeConnectors, library } from "@/lib/library";
 import { expandMentions, mentionSegments } from "@/lib/mentions";
 import { recordModelUse } from "@/lib/model-usage";
 import { getProject } from "@/lib/projects";
@@ -175,9 +179,16 @@ function onFrame(frame: RunFrame) {
       setView(frame.threadId, (v) => ({ ...v, messages: applyOp(v.messages, frame.op) }));
       dequeue(frame.threadId, frame.op);
       break;
-    case "status":
+    case "status": {
       setView(frame.threadId, (v) => ({ ...v, status: frame.status, error: frame.error ?? undefined }));
+      // The model picker flags a model whose account turned a request down, until one works again.
+      const t = stepThread(frame.threadId)?.target ?? sessionTarget(frame.threadId);
+      if (t && frame.status === "error") {
+        const trouble = providerTrouble(frame.error ?? undefined);
+        if (trouble && (trouble.action === "credits" || trouble.action === "key")) noteModelProblem(t, trouble.text);
+      } else if (t && frame.status === "streaming") noteModelWorked(t);
       break;
+    }
     case "tool-running":
       setToolRunning(frame.callId, frame.running);
       break;
@@ -200,6 +211,24 @@ function onFrame(frame: RunFrame) {
       break;
     case "notebook-gone":
       applyNotebookGone(frame.id);
+      break;
+    case "crm-records":
+      applyCrmRecords(frame.records);
+      break;
+    case "crm-gone":
+      applyCrmGone(frame.ids);
+      break;
+    case "crm-activities":
+      applyCrmActivities(frame.recordId, frame.activities);
+      break;
+    case "crm-views":
+      applyCrmViews(frame.views);
+      break;
+    case "crm-settings":
+      applyCrmSettings(frame.settings);
+      break;
+    case "crm-event":
+      applyCrmEvent(frame.event);
       break;
     case "share":
     case "share-gone":
@@ -315,7 +344,8 @@ export function setProviderFormats(providers: { id: string; format: WireFormat }
 
 /** Everything a request needs besides the messages; built fresh for every action. */
 function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
-  const target = sessionTarget(id);
+  // A workflow step runs on the model its workflow picked, from whichever window answers it.
+  const target = stepThread(id)?.target ?? sessionTarget(id);
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
   // Worked out here, not at render: a retry can switch model and send in one go.
   const prefs = library.prefs();
@@ -332,13 +362,36 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   if (isNotebookThread(id)) {
     return { providerId: target.providerId, model: target.model, system: notebookContext(), tools: [], research: false, ...reasoning, expansions: {} };
   }
+  // A workflow step: the step's instructions, and for a tool step only its tool.
+  const step = stepThread(id);
+  if (step) {
+    const ctx = buildContext({ askUser: false, research: false });
+    const only = step.only ? new Set(step.only) : null;
+    const tools = runTools(only ? ctx.tools.filter((t) => only.has(t.name)) : ctx.tools, {
+      mentioned: only ? new Set(activeConnectors().map((c) => c.id)) : new Set(mailAndCalendar()),
+      offered: only ?? CRM_UNDEFERRED,
+    });
+    return {
+      providerId: target.providerId,
+      model: target.model,
+      system: `${ctx.system ?? ""}\n\n---\n\n${step.system}`,
+      tools,
+      research: false,
+      ...reasoning,
+      expansions: {},
+    };
+  }
   const convo = getConversations().find((c) => c.id === id);
+  // A chat on the CRM page works on the CRM from the start.
+  const crm = isCrmThread(id);
   const ctx = buildContext({
     askUser: getAskUser(),
     research: research.get(id) ?? false,
     incognito: !!convo?.incognito,
     project: getProject(convo?.projectId),
+    crm,
   });
+  let crmMentioned = crm;
   // `/skill args` reaches the model as the skill's instructions plus the arguments,
   // and `@connector` with a note to use that connector.
   const expansions: Record<string, string> = {};
@@ -346,7 +399,12 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
     const text = m.role === "user" ? m.parts.find((p) => p.type === "text")?.text : undefined;
     // A card button's message: the short label it shows, then exactly what to do.
     const instruction = m.role === "user" ? m.metadata?.instruction?.text : undefined;
-    const expanded = text === undefined ? undefined : instruction ? `${text}\n\n${instruction}` : expandMentions(expandSlash(text), text);
+    let expanded = text === undefined ? undefined : instruction ? `${text}\n\n${instruction}` : expandMentions(expandSlash(text), text);
+    // `@crm` isn't a connector: it offers the CRM tools and says so.
+    if (expanded !== undefined && text !== undefined && !crm && mentionsCrm(text)) {
+      expanded = `${expanded}\n\n${CRM_MENTION_NOTE}`;
+      crmMentioned = true;
+    }
     if (expanded !== undefined && expanded !== text) expansions[m.id] = expanded;
   }
   return {
@@ -354,13 +412,23 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
     model: target.model,
     system: ctx.system ?? null,
     // A connector the user @-mentioned is offered from the start; the rest load on demand.
-    tools: runTools(ctx.tools, { mentioned: mentionedConnectors(messages) }),
+    tools: runTools(ctx.tools, {
+      mentioned: crm ? new Set([...mentionedConnectors(messages), ...mailAndCalendar()]) : mentionedConnectors(messages),
+      offered: crmMentioned ? CRM_UNDEFERRED : undefined,
+    }),
     research: ctx.research,
     ...reasoning,
     expansions,
     // What the button behind the latest message approved by being pressed.
     approved: messages.findLast((m) => m.role === "user")?.metadata?.instruction?.approves ?? [],
   };
+}
+
+/** Mail and calendar connectors, which the CRM page's chats get from the start (catching up on a contact). */
+function mailAndCalendar(): string[] {
+  return activeConnectors()
+    .filter((c) => /gmail|outlook|mail|calendar/i.test(`${c.id} ${c.name}`))
+    .map((c) => c.id);
 }
 
 /** Connectors @-mentioned in the conversation's user messages. */
@@ -635,6 +703,20 @@ function subscribe(listener: () => void) {
     a();
     b();
   };
+}
+
+/** Call `listener` with a thread's view now and on every change, until the returned function is called. */
+export function watchThread(id: string, listener: (view: ThreadView) => void): () => void {
+  let last: ThreadView | undefined;
+  const fire = () => {
+    const v = views.get().get(id) ?? saved(id);
+    if (v !== last) {
+      last = v;
+      listener(v);
+    }
+  };
+  fire();
+  return views.subscribe(fire);
 }
 
 /** A conversation's messages and run status, live while a run streams. */

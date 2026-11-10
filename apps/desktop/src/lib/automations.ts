@@ -28,6 +28,8 @@ export interface Automation {
   schedule: Schedule;
   /** Runs as a Cowork session in this folder; otherwise as a chat. */
   workspaceId?: string;
+  /** Starts this workflow (with the prompt as its input) instead of a session. */
+  workflowId?: string;
   enabled: boolean;
   createdAt: number;
   /** When the schedule last changed or was resumed; runs due before it don't count as missed. */
@@ -39,7 +41,7 @@ export interface Automation {
   unseen?: boolean;
 }
 
-export type AutomationDraft = Pick<Automation, "name" | "prompt" | "schedule" | "workspaceId" | "enabled">;
+export type AutomationDraft = Pick<Automation, "name" | "prompt" | "schedule" | "workspaceId" | "workflowId" | "enabled">;
 
 /** Runs kept per automation; older sessions stay in the sidebar. */
 const RUNS_KEPT = 20;
@@ -98,6 +100,15 @@ export function runAutomation(id: string): string | null {
     automations.set((all) => all.map((x) => (x.id === id ? { ...x, lastRunAt: Date.now() } : x)));
     return null;
   };
+  if (a.workflowId) {
+    // A workflow runs on its own, recorded on the Workflows page rather than as a session.
+    void import("@/lib/workflow-engine").then(({ runByName }) => {
+      const r = runByName(a.workflowId!, a.prompt, "automation");
+      if (!r.ok) fail(r.error);
+      else automations.set((all) => all.map((x) => (x.id === id ? { ...x, lastRunAt: Date.now() } : x)));
+    });
+    return null;
+  }
   if (a.workspaceId && !getWorkspaces().some((w) => w.id === a.workspaceId)) {
     return fail("Its folder was removed. Pick another one in the automation.");
   }

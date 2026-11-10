@@ -113,6 +113,60 @@ pub(crate) async fn call(state: &AppState, id: String, tool: String, arguments: 
     }
 }
 
+/// Call a connector tool its server marks read-only (`readOnlyHint`), for the
+/// workflow triggers that watch mail and calendars (`lib/workflow-engine.ts`).
+/// Any other tool is refused: the webview can look through a connector, never act through one.
+#[tauri::command]
+pub async fn connector_read(state: State<'_, AppState>, id: String, tool: String, arguments: Value) -> AppResult<String> {
+    let client = state
+        .connectors
+        .lock()
+        .await
+        .get(&id)
+        .map(|(_, c)| c.clone())
+        .ok_or_else(|| AppError::NotFound("connector isn't running; reconnect it in Customize → Connectors".into()))?;
+    if !read_only(&client.tools, &tool) {
+        return Err(AppError::Invalid(format!("“{tool}” isn't marked read-only by its server, so a trigger can't call it. Pick a search or list tool.")));
+    }
+    let out = call(&state, id, tool, arguments, None).await?;
+    if out.is_error {
+        return Err(AppError::Invalid(out.text));
+    }
+    Ok(out.text)
+}
+
+fn read_only(tools: &[sush_core::mcp::McpTool], name: &str) -> bool {
+    tools
+        .iter()
+        .find(|t| t.name == name)
+        .and_then(|t| t.annotations.as_ref())
+        .and_then(|a| a.get("readOnlyHint"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+#[cfg(test)]
+mod read_only_tests {
+    use super::*;
+
+    fn tool(name: &str, annotations: Option<Value>) -> sush_core::mcp::McpTool {
+        sush_core::mcp::McpTool { name: name.into(), description: None, input_schema: serde_json::json!({}), annotations, meta: None }
+    }
+
+    #[test]
+    fn only_tools_marked_read_only_pass() {
+        let tools = vec![
+            tool("search", Some(serde_json::json!({ "readOnlyHint": true }))),
+            tool("send", Some(serde_json::json!({ "readOnlyHint": false }))),
+            tool("list", None),
+        ];
+        assert!(read_only(&tools, "search"));
+        assert!(!read_only(&tools, "send"));
+        assert!(!read_only(&tools, "list"));
+        assert!(!read_only(&tools, "missing"));
+    }
+}
+
 /// What Swiggy itself says an order would be, for the card that confirms it.
 #[derive(Serialize)]
 pub struct SwiggyOrderPreview {

@@ -45,6 +45,15 @@ export function useCurrencyOptions() {
   return { common: rates ? COMMON_CURRENCIES.filter((code) => code in rates) : COMMON_CURRENCIES, others };
 }
 
+/** A currency's symbol, told apart from its namesakes: "$" (US), "CA$", "A$", "₹", "€". */
+export function currencySign(code: string) {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency: code }).formatToParts(0).find((p) => p.type === "currency")?.value ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export function currencyName(code: string) {
   try {
     return new Intl.DisplayNames(undefined, { type: "currency" }).of(code) ?? code;

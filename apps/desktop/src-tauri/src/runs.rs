@@ -79,6 +79,18 @@ pub enum RunFrame {
     Notebook { notebook: Notebook },
     /// A notebook was deleted.
     NotebookGone { id: String },
+    /// CRM records were added or changed (`crm.rs`).
+    CrmRecords { records: Vec<sush_core::crm::Record> },
+    /// CRM records were deleted.
+    CrmGone { ids: Vec<String> },
+    /// A CRM record's activities, as they now are.
+    CrmActivities { record_id: String, activities: Vec<sush_core::crm::Activity> },
+    /// The CRM's saved views, as they now are.
+    CrmViews { views: Vec<sush_core::crm::View> },
+    /// The CRM's stages and currency changed.
+    CrmSettings { settings: sush_core::crm::CrmSettings },
+    /// A CRM record was added, changed or deleted by hand or by Sush (not by an import), for workflow triggers.
+    CrmEvent { event: sush_core::crm::CrmEvent },
     /// A share hosted or joined here changed: who's in it, its connection, its end (`share.rs`).
     Share { share: crate::share::ShareView },
     /// A share is gone from this app: ended here, or left.

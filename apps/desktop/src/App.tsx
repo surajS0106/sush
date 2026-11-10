@@ -6,6 +6,8 @@ import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { AppSidebar, type Page, type SessionMode } from "@/components/app-sidebar";
 import { AutomationsPage } from "@/components/automations-page";
 import { BoardPage } from "@/components/board-page";
+import { CrmPage } from "@/components/crm-page";
+import { WorkflowsPage } from "@/components/workflows-page";
 import { ConnectorsPage } from "@/components/connectors-section";
 import { FoldersPage } from "@/components/folders-page";
 import { ChatView } from "@/components/chat-view";
@@ -31,6 +33,7 @@ import { useProviders } from "@/hooks/use-providers";
 import { useAppearance } from "@/lib/appearance";
 import { linkSession, taskPrompt, type Task } from "@/lib/board";
 import { automationForThread, getAutomations, markSeen, startScheduler, useOpenRunRequest } from "@/lib/automations";
+import { startWorkflowTriggers } from "@/lib/workflow-engine";
 import { watchBudget } from "@/lib/budget";
 import { useLayout } from "@/lib/layout";
 import { openSettings, syncConnectors, useChatRequest, usePageRequest, type ChatRequest } from "@/lib/library";
@@ -197,6 +200,8 @@ export default function App() {
     void syncConnectors();
     whenLeader(startScheduler);
     whenLeader(startPriceAlerts);
+    // Workflows triggered by CRM changes and the like (the leader acts on them).
+    startWorkflowTriggers();
     // After an update, the notes for what changed (once, in one window).
     whenLeader(() => void checkWhatsNew());
   }, []);
@@ -268,6 +273,15 @@ export default function App() {
                 />
               )}
               {page === "board" && <BoardPage onStartTask={startTask} onOpenSession={tabs.openInNewTab} />}
+              {page === "workflows" && <WorkflowsPage onOpenSession={tabs.openInNewTab} catalog={catalog} hasProviders={providers ? providers.length > 0 : null} onOpenSettings={() => openSettings({ section: "providers" })} />}
+              {page === "crm" && (
+                <CrmPage
+                  catalog={catalog}
+                  hasProviders={providers ? providers.length > 0 : null}
+                  onOpenSettings={() => openSettings({ section: "providers" })}
+                  onOpenSession={tabs.openInNewTab}
+                />
+              )}
               {page === "connectors" && <ConnectorsPage />}
               {page === "automations" && <AutomationsPage onOpenSession={setActiveId} />}
               {(page === "security" || page === "review") && <ReportsPage key={page} kind={page} onOpenSession={tabs.openInNewTab} />}

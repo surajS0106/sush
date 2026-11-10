@@ -152,7 +152,7 @@ const MIGRATIONS: &[&str] = &[r#"
     CREATE INDEX share_events_share ON share_events (share_id, seq);
 "#, r#"
     ALTER TABLE workspaces ADD COLUMN commands TEXT NOT NULL DEFAULT 'sandbox';
-"#, crate::notebooks::MIGRATION, crate::notebooks::MIGRATION_EXTRAS, crate::notebooks::MIGRATION_NOTES];
+"#, crate::notebooks::MIGRATION, crate::notebooks::MIGRATION_EXTRAS, crate::notebooks::MIGRATION_NOTES, crate::crm::MIGRATION];
 
 pub struct Store {
     pub(crate) conn: Mutex<Connection>,

@@ -4,6 +4,7 @@ mod browser;
 mod commands;
 mod connector_auth;
 mod connectors;
+mod crm;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
@@ -183,6 +184,22 @@ pub fn run() {
             notebooks::notebook_source_delete,
             notebooks::notebook_source_retry,
             notebooks::notebook_source_text,
+            crm::crm_load,
+            crm::crm_save,
+            crm::crm_save_many,
+            crm::crm_delete,
+            crm::crm_restore,
+            crm::crm_activities,
+            crm::crm_activity_add,
+            crm::crm_activity_delete,
+            crm::crm_view_save,
+            crm::crm_view_delete,
+            crm::crm_settings_save,
+            crm::crm_import_pick,
+            crm::crm_import,
+            crm::crm_sample,
+            crm::crm_search,
+            connectors::connector_read,
             browser::browser_subscribe,
             browser::browser_open,
             browser::browser_go,

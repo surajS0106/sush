@@ -22,6 +22,7 @@ import {
   SunriseIcon,
   Trash2Icon,
   XIcon,
+  WorkflowIcon,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -66,6 +67,7 @@ import {
 } from "@/lib/automations";
 import { useConversations } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { useWorkflows } from "@/lib/workflows";
 import { useWorkspaces } from "@/lib/workspaces";
 
 type Sort = "created" | "name" | "next";
@@ -90,6 +92,9 @@ const fromTemplate = (t: AutomationTemplate): AutomationDraft => ({
   schedule: { ...t.schedule },
   enabled: true,
 });
+
+/** "Start a session" in the What-it-does picker. */
+const SESSION = "__session";
 
 export function AutomationsPage({ onOpenSession }: { onOpenSession: (id: string) => void }) {
   const automations = useAutomations();
@@ -345,15 +350,17 @@ function AutomationDialog({
   const existing = "automation" in editing ? editing.automation : null;
   const [draft, setDraft] = useState<AutomationDraft>(() => {
     if (!existing) return (editing as { draft: AutomationDraft }).draft;
-    const { name, prompt, schedule, workspaceId, enabled } = existing;
-    return { name, prompt, schedule, workspaceId, enabled };
+    const { name, prompt, schedule, workspaceId, workflowId, enabled } = existing;
+    return { name, prompt, schedule, workspaceId, workflowId, enabled };
   });
   const workspaces = useWorkspaces();
   const conversations = useConversations();
   const runs = existing ? liveRuns(existing).slice(0, 5) : [];
   const set = (patch: Partial<AutomationDraft>) => setDraft((d) => ({ ...d, ...patch }));
   const setSchedule = (patch: Partial<AutomationDraft["schedule"]>) => set({ schedule: { ...draft.schedule, ...patch } });
-  const valid = draft.name.trim() !== "" && draft.prompt.trim() !== "";
+  const workflows = useWorkflows();
+  // A workflow's input can be empty; a session's prompt can't.
+  const valid = draft.name.trim() !== "" && (!!draft.workflowId || draft.prompt.trim() !== "");
   const { frequency } = draft.schedule;
 
   const save = () => {
@@ -385,13 +392,37 @@ function AutomationDialog({
               <Label htmlFor="automation-name">Name</Label>
               <Input id="automation-name" value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Daily briefing" />
             </div>
+            {workflows.length > 0 && (
+              <div className="grid gap-2">
+                <Label>Each time</Label>
+                <Select value={draft.workflowId ?? SESSION} onValueChange={(v) => set({ workflowId: v === SESSION ? undefined : v })}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={SESSION}>
+                      <MessagesSquareIcon /> Start a session with the prompt
+                    </SelectItem>
+                    {workflows.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        <WorkflowIcon /> Run “{w.name}”
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
-              <Label htmlFor="automation-prompt">Prompt</Label>
+              <Label htmlFor="automation-prompt">{draft.workflowId ? "Input (optional)" : "Prompt"}</Label>
               <Textarea
                 id="automation-prompt"
                 value={draft.prompt}
                 onChange={(e) => set({ prompt: e.target.value })}
-                placeholder="What should Sush do each time? Include every detail; each run starts fresh."
+                placeholder={
+                  draft.workflowId
+                    ? "What the workflow works on, as {{trigger.input}}"
+                    : "What should Sush do each time? Include every detail; each run starts fresh."
+                }
                 className="min-h-32"
               />
             </div>
@@ -453,7 +484,7 @@ function AutomationDialog({
                   </div>
                 </div>
               )}
-              <div className="grid gap-2">
+              <div className={cn("grid gap-2", draft.workflowId && "hidden")}>
                 <Label>Runs in</Label>
                 <Select value={draft.workspaceId ?? CHAT} onValueChange={(v) => set({ workspaceId: v === CHAT ? undefined : v })}>
                   <SelectTrigger className="w-full">

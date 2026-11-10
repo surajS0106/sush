@@ -5,6 +5,7 @@
 pub mod agent;
 pub mod browser;
 pub mod clis;
+pub mod crm;
 pub mod error;
 pub mod flights;
 pub mod imagegen;
