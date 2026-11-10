@@ -17,7 +17,6 @@ import {
   applyCrmWrite,
   changeLabel,
   changeValue,
-  CRM_LOG,
   CRM_READ,
   CRM_SEARCH,
   CRM_VIEW,

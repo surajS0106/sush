@@ -240,7 +240,7 @@ export function FieldEditor({
   return (
     <TextEditor
       value={value}
-      type={field.type === "date" ? "date" : field.type === "text" || field.type === "link" ? "text" : "number"}
+      type={field.type === "date" ? "date" : field.type === "text" ? "text" : "number"}
       label={field.label}
       error={error}
       onChange={(v) => {

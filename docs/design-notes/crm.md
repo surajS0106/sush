@@ -4,6 +4,9 @@ Last updated: 2026-11-10
 
 ## What changed
 
+### 2026-11-10 (import fix)
+- CSV import stores a stage it adds before saving the row that uses it. Before this, `save_in` checked each record's stage against the stored settings, which `crm_import` wrote only once every row was done. So any row with a stage name the CRM didn't have yet was counted as skipped, even though the stage itself was still added. The test `import_links_companies_adds_stages_and_updates` caught this (`crm_import` in `crates/sush-core/src/crm.rs`).
+
 ### 2026-11-10 (later)
 - The CRM's currency moved from the Pipeline dialog to Settings → Units → Currency: a searchable dropdown listing each currency with its symbol on a tile, its code and its name. It still lives in the CRM settings, so the table, the AI tools and workflows read one value. Changing it relabels amounts; it doesn't convert them (`components/settings-dialog.tsx`, `CurrencySelect` with `value`/`onChange` in `components/currency-select.tsx`, `currencySign` in `lib/currency.ts`). Symbols use the standard form (US$, CA$, A$), so dollar currencies stay distinct, in the money field too.
 - Amounts are typed in a money field (`components/money-input.tsx`): the currency symbol in front, thousands separators in the reader's locale as you type with the cursor kept in place, and "250k" / "1.2m" filled out on Enter or leaving the field. Used for a new deal's value, the Value cell and drawer field, and the Value filter.
@@ -25,6 +28,8 @@ The reference CRM screen is a table over one `companies` list. Keeping one flat 
 Rust owns the data and broadcasts every change, the same way Notebooks do, so the UI never has to broadcast and a second window can't fall behind. Saving returns a `CrmEvent`, so stage moves are logged as activities in one place and workflows trigger on the same events.
 
 The AI features go through ordinary chat runs instead of one-shot calls. That way they stream, use the user's connectors and web search, can be followed up, and every write passes the same approval card. The only exception is Auto permission mode, which the user chose. Proposed changes are planned against the loaded CRM before the card shows, so the card shows real before/after values and refuses unknown stages or ambiguous names.
+
+The import fix keeps the stage check in `save_in`, so every save path refuses unknown stages, and makes the import keep its promise to add new stages. The settings are written inside the import's transaction only when a row adds a stage, so an import that fails part-way rolls back the new stages too.
 
 Deal health is a heuristic rather than a model call: it is free, instant, and its reasons can be checked. A model score would cost a request per deal on every change.
 

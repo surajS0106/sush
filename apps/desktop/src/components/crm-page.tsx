@@ -646,7 +646,7 @@ function FilterMenu({
                   ) : (
                     <Input
                       type={type === "date" ? "date" : "text"}
-                      inputMode={type === "money" || type === "percent" || type === "number" ? "decimal" : undefined}
+                      inputMode={type === "percent" || type === "number" ? "decimal" : undefined}
                       value={f.value}
                       onChange={(e) => set(i, { value: e.target.value })}
                       placeholder="Value"

@@ -1000,6 +1000,7 @@ impl Store {
             let cell = |i: usize| row.get(i).map(|s| s.trim()).unwrap_or("");
             let mut draft = Record::new(kind, "");
             let mut company_name = None;
+            let stages_before = settings.stages(kind).len();
             for (i, field) in mapping.iter().enumerate() {
                 let v = cell(i);
                 if v.is_empty() {
@@ -1039,6 +1040,11 @@ impl Store {
             if draft.name.trim().is_empty() {
                 result.skipped += 1;
                 continue;
+            }
+            // `save_in` checks the stage against the stored settings, so a
+            // stage this row added has to be stored before the record is.
+            if settings.stages(kind).len() != stages_before {
+                write_settings(&tx, &settings)?;
             }
             if let (Some(name), true) = (&company_name, kind != Kind::Company) {
                 let lower = name.to_lowercase();

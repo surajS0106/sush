@@ -11,7 +11,7 @@ import type { ModelTarget } from "@/lib/transport";
 const UPPER = new Set(["gpt", "glm", "qwq", "llm", "oss", "vl"]);
 
 /** A model's name for people: its own display name, else its id tidied up. */
-export function friendlyName(id: string, displayName?: string): string {
+export function friendlyName(id: string, displayName?: string | null): string {
   if (displayName?.trim()) return displayName.trim();
   // Drop the provider path ("meta-llama/…"), the tag (":cloud", ":latest") and a release date.
   let s = id.split("/").pop() ?? id;
