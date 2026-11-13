@@ -28,7 +28,7 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "A task board, a Connectors page, and your favourite models first.";
+export const UNRELEASED_SUMMARY = "A CRM, Workflows, Notebooks, and Cowork on Claude Code or Codex.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
@@ -37,14 +37,21 @@ export const UNRELEASED: Change[] = [
   { kind: "new", title: "Notebooks", text: "Gather PDFs, web pages, papers and pasted text in a notebook and chat with them. Answers come from your sources and cite the passage behind each claim; click a citation to read it, the quoted words marked. Each notebook opens on an overview of its sources with questions to ask, each source has a short guide, and you can give a notebook a cover, an emoji and your own summary. Studio writes a briefing, study guide, FAQ or timeline from your sources, cited throughout, makes quizzes, flashcards and mind maps whose every item links to its passage, and audio overviews: two hosts talking your sources through, read by your computer's voices or voiced once by a provider (Settings → Speech); set a Studio output's focus, length and language, make one again, or save a note as Markdown; save any answer to your notes or write your own. Long notebook chats cost less: passages from earlier questions aren't sent again with every new one. Scanned PDFs are read by your model, page by page. Sources can also be YouTube videos (from their captions, with timestamps that open the video), audio recordings (transcribed), past Sush chats and files from your Cowork folders. Share a notebook's chat live: guests see its citations, sources and Studio outputs, and the cited passages too if you allow it." },
   { kind: "new", title: "Claude Code and Codex", text: "Run a Cowork session on Claude Code or Codex: if either is installed and signed in on your computer, it's in the model picker. Sush starts your own copy with your own login and plan (it never sees your credentials), shows its work as Sush's cards, and asks you to approve what it would ask about, so you can still watch, steer and share the session live." },
   { kind: "new", title: "Plans", text: "On a task with several steps, Sush first writes a to-do list, then works through it item by item, ticking each one off as it goes, so you can see what it's doing and what's left. The plan sits above the composer while it works, showing the step in progress; open it for the whole checklist." },
-  { kind: "new", title: "Board", text: "Keep track of tasks on a Kanban board in the sidebar: drag cards between priority or status columns, switch to a list, and start a session on any task, in its folder, with one click." },
-  { kind: "improved", title: "Connectors", text: "Connectors have their own page in the sidebar: yours, a Popular shortlist and every category in one place, filtered by All, Connected or Available." },
-  { kind: "improved", title: "Most used models", text: "The model picker opens with the models you send the most messages to at the top, so switching back to a favourite is one click." },
-  { kind: "fixed", title: "Check for updates", text: "New versions show up minutes after release, and Check for updates answers in seconds instead of sitting on Checking…" },
 ];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.8.0",
+    date: "2026-11-09",
+    summary: "A task board, a Connectors page, and your favourite models first.",
+    changes: [
+      { kind: "new", title: "Board", text: "Keep track of tasks on a Kanban board in the sidebar: drag cards between priority or status columns, switch to a list, and start a session on any task, in its folder, with one click." },
+      { kind: "improved", title: "Connectors", text: "Connectors have their own page in the sidebar: yours, a Popular shortlist and every category in one place, filtered by All, Connected or Available." },
+      { kind: "improved", title: "Most used models", text: "The model picker opens with the models you send the most messages to at the top, so switching back to a favourite is one click." },
+      { kind: "fixed", title: "Check for updates", text: "New versions show up minutes after release, and Check for updates answers in seconds instead of sitting on Checking…" },
+    ],
+  },
   {
     version: "2.7.0",
     date: "2026-11-09",
