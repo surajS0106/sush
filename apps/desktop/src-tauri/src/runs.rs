@@ -41,6 +41,7 @@ use sush_core::agent::subagents;
 use sush_core::agent::ui::{self, ToolCall, STOPPED};
 use sush_core::agent::{self, Approval, Inbox, Op, RunAction, RunConfig, RunEvent, RunHost, RunStatus, RunTool, ToolExec};
 use sush_core::browser as browser_tools;
+use sush_core::engines;
 use sush_core::provider::EventStream;
 use sush_core::notebooks::{self, Notebook};
 use sush_core::reports::{self, Report, ReportStatus, Role};
@@ -578,6 +579,13 @@ impl RunHost for Host {
         Some(Value::String(subagents::background_result()))
     }
 
+    fn files_changed(&self) {
+        let Some(cowork) = &self.live.cowork else { return };
+        let workspace_id = cowork.workspace.lock().unwrap().id.clone();
+        let owner = self.live.checkpoint_to.as_ref().map_or_else(|| self.thread_id.clone(), |(thread, _)| thread.clone());
+        self.app.state::<AppState>().runs.send(RunFrame::FilesChanged { thread_id: owner, workspace_id });
+    }
+
     fn emit(&self, event: RunEvent) {
         let state = self.app.state::<AppState>();
         let channels = state.runs.channels.lock().unwrap();
@@ -862,7 +870,12 @@ async fn start(
     let runs = &state.runs;
     let mut starting = runs.starting.lock().await;
     let ui_config = config.clone();
-    let (config, cowork, report, studio) = prepare(&state, &thread, config).await?;
+    // Claude Code or Codex instead of Sush's own loop (`sush_core::engines`).
+    let engine = engines::Kind::from_provider(&config.provider_id);
+    let (config, cowork, report, studio) = match engine {
+        Some(kind) => prepare_engine(&state, &thread, config, kind).await?,
+        None => prepare(&state, &thread, config).await?,
+    };
     loop {
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
         let Some(live) = existing else { break };
@@ -931,7 +944,15 @@ async fn start(
     let host = Host { app: app.clone(), thread_id: thread.id.clone(), live: live.clone() };
     tauri::async_runtime::spawn(async move {
         let cancel = host.live.cancel.clone();
-        agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
+        let engine = engine.zip(host.live.cowork.as_ref()).map(|(kind, cowork)| (kind, engines::Context::new(&cowork.workspace.lock().unwrap())));
+        match engine {
+            Some((kind, ctx)) => {
+                engines::run(&host, kind, messages, action, config, ctx, &mut inbox_rx, &cancel).await;
+            }
+            None => {
+                agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
+            }
+        }
         // A Studio output's run: what it ended on is the document.
         if let Some(note_id) = &studio {
             let (text, error) = {
@@ -1056,6 +1077,44 @@ async fn prepare(
         browser_tools::specs().into_iter().map(|spec| RunTool { spec, exec: ToolExec::Browser, approval: Approval::Ask, deferred: false }),
     );
     add_subagents(&mut config, thread, false);
+    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None, None))
+}
+
+/// The config for a session an outside engine runs (`sush_core::engines`). It
+/// needs a Cowork folder, and brings its own tools and instructions, so the
+/// UI's are dropped; reports and notebooks stay on Sush's own loop.
+async fn prepare_engine(
+    state: &AppState,
+    thread: &ThreadMeta,
+    mut config: RunConfig,
+    kind: engines::Kind,
+) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>, Option<String>)> {
+    let name = kind.name();
+    if thread.incognito {
+        return Err(AppError::Invalid(format!("{name} can't run an incognito chat. Pick another model for it.")));
+    }
+    let store = state.store.clone();
+    let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
+    let (workspace, special) = blocking(move || {
+        let workspace_id = store.thread_workspace(&id)?.or(claimed);
+        let workspace = match workspace_id {
+            Some(w) => store.workspace(&w)?,
+            None => None,
+        };
+        let special = store.report_for_thread(&id)?.is_some() || store.notebook_for_thread(&id)?.is_some() || store.studio_for_thread(&id)?.is_some();
+        Ok((workspace, special))
+    })
+    .await?;
+    if special {
+        return Err(AppError::Invalid(format!("Reports and notebooks run on Sush's own agent, not {name}. Pick another model for this.")));
+    }
+    let workspace = workspace.ok_or_else(|| {
+        AppError::Invalid(format!("{name} works in a folder. Switch this session to Cowork and pick a folder, or choose another model."))
+    })?;
+    let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
+    let sandbox = state.sandbox.status().await;
+    config.tools.clear();
+    config.system = None;
     Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None, None))
 }
 

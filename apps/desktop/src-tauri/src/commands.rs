@@ -84,6 +84,16 @@ pub fn delete_provider(state: State<'_, AppState>, id: String) -> AppResult<()> 
     secrets::delete(&id)
 }
 
+/// The outside engines (Claude Code, Codex) as installed here, for the model
+/// picker: whether each is installed and signed in, and its models. The CLIs
+/// are asked; their credentials are never read.
+#[tauri::command]
+pub async fn engines_list() -> Vec<sush_core::engines::EngineView> {
+    use sush_core::engines::{status, Kind};
+    let (claude, codex) = tokio::join!(status(Kind::ClaudeCode), status(Kind::Codex));
+    vec![claude, codex]
+}
+
 /// Pinned models first, then whatever the endpoint reports. If listing fails
 /// but the user pinned models (typical for Azure deployments), those are enough.
 #[tauri::command]

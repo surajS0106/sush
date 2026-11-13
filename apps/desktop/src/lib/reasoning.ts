@@ -1,7 +1,7 @@
 // Which thinking and effort options each model accepts, so the composer only offers
 // what the API takes. How a choice reaches the wire is in sush-core's `providers/`.
 
-import type { Effort, WireFormat } from "@/lib/tauri";
+import { isEngine, type EngineView, type Effort, type WireFormat } from "@/lib/tauri";
 
 export const EFFORTS: { id: Effort; label: string }[] = [
   { id: "low", label: "Low" },
@@ -128,6 +128,28 @@ function openaiCaps(model: string): ReasoningCaps {
 export function reasoningCaps(format: WireFormat | undefined, model: string | undefined): ReasoningCaps {
   if (!format || !model) return NO_CONTROLS;
   return format === "anthropic-messages" ? claudeCaps(model) : openaiCaps(model);
+}
+
+// Claude Code and Codex say which effort levels each of their models takes
+// (`EngineView.models`), so their caps come from the CLI, not from the id.
+const engineCaps = new Map<string, ReasoningCaps>();
+const engineKey = (providerId: string, model: string) => `${providerId}\n${model}`;
+
+export function setEngineCaps(engine: EngineView) {
+  for (const m of engine.models) {
+    engineCaps.set(
+      engineKey(engine.id, m.id),
+      m.efforts.length
+        ? { thinking: "always", thinkingDefault: true, efforts: m.efforts, defaultEffort: null, note: `${engine.name} decides when to think. Effort sets how much.` }
+        : { ...NO_CONTROLS, note: `${engine.name} sets this model's thinking itself.` },
+    );
+  }
+}
+
+/** The caps for a pick: an engine's from what its CLI listed, any other model's from its id. */
+export function capsFor(providerId: string | undefined, format: WireFormat | undefined, model: string | undefined): ReasoningCaps {
+  if (isEngine(providerId)) return (model && engineCaps.get(engineKey(providerId!, model))) || NO_CONTROLS;
+  return reasoningCaps(format, model);
 }
 
 export interface ReasoningPrefs {

@@ -26,6 +26,25 @@ export interface ModelInfo {
   displayName?: string | null;
 }
 
+/** The ids a run's `providerId` uses for the outside engines (`sush_core::engines::Kind`). */
+export const ENGINE_IDS = { claudeCode: "engine:claude-code", codex: "engine:codex" } as const;
+
+export const isEngine = (providerId: string | undefined | null) => !!providerId?.startsWith("engine:");
+
+/** Claude Code or Codex as installed here (`sush_core::engines::EngineView`). */
+export interface EngineView {
+  id: string;
+  name: string;
+  installed: boolean;
+  version: string | null;
+  /** null when the CLI couldn't say. */
+  signedIn: boolean | null;
+  /** What to do before it can be used, if anything. */
+  detail: string | null;
+  /** As the CLI lists them: its own default first, versions in the names, the effort levels each takes. */
+  models: { id: string; displayName: string; description?: string; efforts: Effort[] }[];
+}
+
 export type CorePart =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string; item?: unknown }
@@ -1255,6 +1274,7 @@ export const api = {
     invoke<ProviderView>("save_provider", { config, apiKey: apiKey || null }),
   deleteProvider: (id: string) => invoke<void>("delete_provider", { id }),
   listModels: (providerId: string) => invoke<ModelInfo[]>("list_models", { providerId }),
+  enginesList: () => invoke<EngineView[]>("engines_list"),
   chatStream: (streamId: string, providerId: string, request: ChatRequest, onEvent: Channel<StreamFrame>) =>
     invoke<void>("chat_stream", { streamId, providerId, request, onEvent }),
   cancelStream: (streamId: string) => invoke<void>("cancel_stream", { streamId }),

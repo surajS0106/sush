@@ -93,6 +93,7 @@ pub fn run() {
             commands::save_provider,
             commands::delete_provider,
             commands::list_models,
+            commands::engines_list,
             commands::chat_stream,
             commands::cancel_stream,
             runs::runs_subscribe,

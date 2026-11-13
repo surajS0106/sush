@@ -34,7 +34,7 @@ import { activeConnectors, library } from "@/lib/library";
 import { expandMentions, mentionSegments } from "@/lib/mentions";
 import { recordModelUse } from "@/lib/model-usage";
 import { getProject } from "@/lib/projects";
-import { reasoningCaps, reasoningRequest } from "@/lib/reasoning";
+import { capsFor, reasoningRequest } from "@/lib/reasoning";
 import { applyNotebook, applyNotebookGone, isNotebookThread } from "@/lib/notebooks";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
@@ -349,7 +349,7 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
   // Worked out here, not at render: a retry can switch model and send in one go.
   const prefs = library.prefs();
-  const reasoning = reasoningRequest(reasoningCaps(formats.get(target.providerId), target.model), {
+  const reasoning = reasoningRequest(capsFor(target.providerId, formats.get(target.providerId), target.model), {
     thinking: prefs.thinking,
     effort: prefs.reasoningEffort,
   });

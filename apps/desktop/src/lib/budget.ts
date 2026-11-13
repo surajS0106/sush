@@ -9,7 +9,7 @@ import { toast } from "sonner";
 import { openSettings } from "@/lib/library";
 import { formatUsd, isLocalUrl } from "@/lib/pricing";
 import { createStore, getConversations, subscribeConversations } from "@/lib/store";
-import type { ProviderView } from "@/lib/tauri";
+import { isEngine, type ProviderView } from "@/lib/tauri";
 import { formatTokens, summarizeUsage, totalTokens, type UsageSummary } from "@/lib/usage";
 
 export type BudgetPeriod = "day" | "week" | "month";
@@ -147,7 +147,7 @@ let localProviders = new Set<string>();
 export function budgetBlock(providerId: string): string | null {
   const b = getBudget();
   if (!b.enabled || !b.pauseAtLimit) return null;
-  if (b.unit === "usd" && localProviders.has(providerId)) return null;
+  if (b.unit === "usd" && (localProviders.has(providerId) || isEngine(providerId))) return null;
   const s = budgetStatus(b, localProviders);
   if (s.fraction < 1) return null;
   return `You've used ${formatAmount(s.used, b.unit)} of your ${formatAmount(b.limit, b.unit)} budget ${PERIOD_NOUN[b.period]}. Raise it in Settings → Usage, or wait for it to reset.`;

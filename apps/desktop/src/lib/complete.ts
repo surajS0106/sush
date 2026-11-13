@@ -3,10 +3,12 @@
 
 import { Channel } from "@tauri-apps/api/core";
 
-import { api, type ChatRequest, type StreamFrame } from "@/lib/tauri";
+import { api, isEngine, type ChatRequest, type StreamFrame } from "@/lib/tauri";
 import type { ModelTarget } from "@/lib/transport";
 
 export async function complete(target: ModelTarget, system: string, user: string): Promise<string> {
+  // Claude Code and Codex only run sessions, through the user's own CLI.
+  if (isEngine(target.providerId)) throw new Error("Claude Code and Codex only run Cowork sessions. Pick a model from your providers for this.");
   const request: ChatRequest = {
     model: target.model,
     system,

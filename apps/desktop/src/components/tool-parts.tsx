@@ -976,6 +976,12 @@ function BrowserPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
 
 export const DENIED = "The user denied this tool call.";
 
+/** Tool name prefixes of the outside engines' own tools (`Kind::tool_prefix`), and the engine's name. */
+const ENGINE_TOOLS: [string, string][] = [
+  ["claude-code__", "Claude Code"],
+  ["codex__", "Codex"],
+];
+
 function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) {
   // A guest answering for the host: they don't have the connector, and "Always allow" stays the host's.
   const watching = useContext(WatchingHost);
@@ -986,10 +992,14 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
   if (part.state !== "output-available" && part.state !== "output-error") sawItRun.current = true;
   const found = findConnectorTool(part.toolName);
   const instamart = swiggyService(part.toolName) === "instamart";
+  // A Claude Code or Codex tool with no card of its own (`sush_core::engines`); the CLI runs it.
+  const engine = ENGINE_TOOLS.find(([prefix]) => part.toolName.startsWith(prefix));
   // Saved chats can reference connectors that are gone; fall back to the raw name.
   const [connectorName, toolName] = found
     ? [found.connector.name, found.tool]
-    : [part.toolName.split("__")[0], part.toolName.split("__").slice(1).join("__") || part.toolName];
+    : engine
+      ? [engine[1], part.toolName.slice(engine[0].length)]
+      : [part.toolName.split("__")[0], part.toolName.split("__").slice(1).join("__") || part.toolName];
   const icon = found ? connectorIcon(found.connector) : connectorIcon({ id: part.toolName.split("__")[0] });
   const brand = brandLogo(found ? found.connector : { id: part.toolName.split("__")[0] });
   const label = (
@@ -1056,7 +1066,7 @@ function ConnectorPart({ part, canAnswer, onResult, onApprove }: ToolPartProps) 
       if (running || inFlight) {
         return instamart ? <InstamartWorking tool={toolName} input={part.input} /> : <LoadingState label={`Running ${toolName}`} />;
       }
-      if (!canAnswer || (!found && !watching)) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
+      if (!canAnswer || (!found && !watching && !engine)) return <p className="text-sm text-muted-foreground italic">{toolName} didn't run</p>;
       if (found && !watching && isSwiggyOrder(part.toolName)) {
         return (
           <SwiggyOrderApproval

@@ -104,7 +104,7 @@ import { saveReplyToNote } from "@/lib/notebook-studio";
 import { forkConversation, setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { InstamartThread, instamartThread } from "@/lib/instamart-cart";
 import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
-import { errorMessage, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
+import { errorMessage, isEngine, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { formatTokens, formatTokensExact } from "@/lib/usage";
 import { cn } from "@/lib/utils";
@@ -470,7 +470,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               key={message.id}
               message={message}
               streaming={busy && message.id === messages.at(-1)?.id}
-              local={localProviders.has(message.metadata?.providerId ?? "")}
+              local={localProviders.has(message.metadata?.providerId ?? "") || isEngine(message.metadata?.providerId)}
               logo={messageLogo(message, catalog)}
               canRegenerate={!watching && !busy && message.id === lastAssistantId}
               onRegenerate={(options) => regenerate(id, message.id, options)}

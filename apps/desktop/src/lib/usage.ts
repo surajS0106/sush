@@ -4,6 +4,8 @@
 
 import { costUsd, formatUsd } from "@/lib/pricing";
 import type { Conversation } from "@/lib/store";
+// Replies from Claude Code or Codex run on the user's own plan: no per-token cost here.
+import { isEngine } from "@/lib/tauri";
 
 export type UsageRange = "7d" | "30d" | "all";
 
@@ -90,7 +92,7 @@ export function summarizeUsage(conversations: Conversation[], localProviders: Se
       if ((meta.createdAt ?? c.updatedAt) < since) continue;
       const input = meta.inputTokens ?? 0;
       const output = meta.outputTokens;
-      const local = localProviders.has(meta.providerId ?? "");
+      const local = localProviders.has(meta.providerId ?? "") || isEngine(meta.providerId);
       const usd = costUsd(meta.model, input, output, local, meta.cachedInputTokens);
       add(total, input, output, usd);
       add(kind, input, output, usd);
@@ -179,7 +181,7 @@ export function activity(conversations: Conversation[], localProviders: Set<stri
       const input = meta.inputTokens ?? 0;
       const name = meta.model ?? "Unknown model";
       day.tokens.set(name, (day.tokens.get(name) ?? 0) + input + meta.outputTokens);
-      day.usd += costUsd(meta.model, input, meta.outputTokens, localProviders.has(meta.providerId ?? ""), meta.cachedInputTokens) ?? 0;
+      day.usd += costUsd(meta.model, input, meta.outputTokens, localProviders.has(meta.providerId ?? "") || isEngine(meta.providerId), meta.cachedInputTokens) ?? 0;
     }
   }
   return { days, messages, hours };

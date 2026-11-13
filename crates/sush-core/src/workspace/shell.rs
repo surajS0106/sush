@@ -103,7 +103,7 @@ pub(crate) fn scrubbed_env() -> Vec<(OsString, OsString)> {
 }
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(windows)]
 fn command_for(command: &str, _cwd: &Path, _sandbox: Option<&Policy>) -> Result<Command, String> {
@@ -136,7 +136,7 @@ pub fn shell_name() -> &'static str {
 }
 
 #[cfg(windows)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     use std::os::windows::process::CommandExt;
     let _ = std::process::Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
@@ -147,7 +147,7 @@ fn kill_tree(pid: u32) {
 }
 
 #[cfg(unix)]
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     // The child leads its own process group (`process_group(0)`).
     unsafe {
         libc::kill(-(pid as i32), libc::SIGKILL);

@@ -222,6 +222,9 @@ pub trait RunHost: Send + Sync {
     fn detach(&self, _call: &ToolCall) -> Option<Value> {
         None
     }
+    /// An outside engine (`crate::engines`) changed files in the folder, so
+    /// views of it should read it again. Sush's own tools are seen in `execute`.
+    fn files_changed(&self) {}
 }
 
 /// Run `action` on a thread's `messages` and return them as they end up.
