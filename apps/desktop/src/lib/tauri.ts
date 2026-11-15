@@ -684,8 +684,19 @@ export interface Notebook {
   overview?: NotebookOverview;
   /** The user named it, so overviews don't suggest a title. */
   named?: boolean;
+  /** How its chats answer; missing is the default style. */
+  chat?: ChatStyle;
   /** Notes and Studio outputs, newest first. */
   notes: NotebookNote[];
+}
+
+/** How a notebook's chats answer (`sush_core::notebooks::ChatStyle`). */
+export type ChatRole = "default" | "guide" | "critic" | "simple";
+export type ChatLength = "default" | "shorter" | "longer";
+export interface ChatStyle {
+  role: ChatRole;
+  goal?: string;
+  length: ChatLength;
 }
 
 export type NoteKind = "note" | "briefing" | "study-guide" | "faq" | "timeline" | "quiz" | "flashcards" | "mind-map" | "audio-overview";
@@ -693,7 +704,18 @@ export type NoteKind = "note" | "briefing" | "study-guide" | "faq" | "timeline" 
 /** A passage id (`sushsrc:…`) an item came from. */
 type From = { source?: string | null };
 export type QuizData = { questions: ({ question: string; options: string[]; answer: number; explanation: string } & From)[] };
-export type FlashcardsData = { cards: ({ front: string; back: string } & From)[] };
+/** A card's spaced-repetition state (`sush_core::notebooks::CardReview`); `interval` in days, times in ms. */
+export interface CardReview {
+  reps: number;
+  lapses: number;
+  ease: number;
+  interval: number;
+  due: number;
+  last: number;
+}
+export type Grade = "again" | "hard" | "good" | "easy";
+export type Flashcard = { front: string; back: string; review?: CardReview | null } & From;
+export type FlashcardsData = { cards: Flashcard[] };
 export type MindMapNode = { label: string; note?: string | null; children: MindMapNode[] } & From;
 export type MindMapData = { root: MindMapNode };
 /** An audio overview's script; `audio` is each turn's clip once voiced, `voices` what voiced them. */
@@ -1438,6 +1460,11 @@ export const api = {
   ) => invoke<Notebook>("notebook_customize", { id, title, emoji, customSummary, cover, coverPosition }),
   notebookSetOverview: (id: string, overview: NotebookOverview, title: string | null, emoji: string | null) =>
     invoke<Notebook>("notebook_set_overview", { id, overview, title, emoji }),
+  notebookSetChat: (id: string, chat: ChatStyle) => invoke<Notebook>("notebook_set_chat", { id, chat }),
+  /** Grade recalling one card of a deck; the note comes back with its next review scheduled. */
+  notebookCardReview: (noteId: string, card: number, grade: Grade) => invoke<NotebookNote>("notebook_card_review", { noteId, card, grade }),
+  /** The best-matching passages of a notebook's checked sources. */
+  notebookSearch: (id: string, query: string, limit?: number) => invoke<Passage[]>("notebook_search", { id, query, limit: limit ?? null }),
   /** Ask for a cover image and store it; the notebook only gets it from `notebookCustomize`. `null` if cancelled. */
   notebookPickCover: () => invoke<string | null>("notebook_pick_cover"),
   notebookSourceSetGuide: (sourceId: string, guide: SourceGuide) => invoke<NotebookSource>("notebook_source_set_guide", { sourceId, guide }),

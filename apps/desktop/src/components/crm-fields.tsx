@@ -30,22 +30,44 @@ export function RecordMark({ record, className }: { record: Pick<CrmRecord, "nam
 }
 
 /**
- * Open stages are neutral, won ones the accent, lost ones coral, each with a
- * dot in its colour. No check mark: menus use that for "selected".
+ * Open stages, in pipeline order, walk the logo's scale from warm towards its
+ * teal (the scale the thinking picker uses): orange, lime, green, deep teal,
+ * repeating if there are more. Won is the logo teal and lost the logo coral,
+ * whatever the accent, so they never blur into it or into each other. Each has
+ * a dot in its colour. No check mark: menus use that for "selected".
  */
+const OPEN_TONES = [
+  { pill: "bg-effort-xhigh/12", dot: "bg-effort-xhigh" },
+  { pill: "bg-effort-high/14", dot: "bg-effort-high" },
+  { pill: "bg-effort-medium/12", dot: "bg-effort-medium" },
+  { pill: "bg-sush-deep/12", dot: "bg-sush-deep" },
+];
+
+/** Where `stage` falls among its list's open stages; the first for a stage not in a list. */
+function openIndex(settings: CrmSettings, stage: CrmStage): number {
+  for (const list of [settings.companyStages, settings.dealStages]) {
+    const open = list.filter((s) => s.tone === "open");
+    const i = open.findIndex((s) => s.id === stage.id);
+    if (i >= 0) return i;
+  }
+  return 0;
+}
+
 export function StagePill({ stage, className }: { stage: CrmStage | undefined; className?: string }) {
+  const { settings } = useCrm();
   if (!stage) return <span className={cn("text-muted-foreground", className)}>—</span>;
+  const open = stage.tone === "open" ? OPEN_TONES[openIndex(settings, stage) % OPEN_TONES.length] : null;
   return (
     <span
       className={cn(
         "inline-flex max-w-full items-center gap-1 truncate rounded-full px-2 py-0.5 text-xs font-medium",
-        stage.tone === "won" && "bg-brand/12 text-brand",
+        stage.tone === "won" && "bg-sush/12 text-sush",
         stage.tone === "lost" && "bg-coral/12 text-coral",
-        stage.tone === "open" && "bg-muted text-foreground/80",
+        open && cn(open.pill, "text-foreground/80"),
         className,
       )}
     >
-      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", stage.tone === "open" ? "bg-muted-foreground/60" : "bg-current")} />
+      <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", open ? open.dot : "bg-current")} />
       <span className="truncate">{stage.name}</span>
     </span>
   );

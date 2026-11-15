@@ -67,6 +67,7 @@ import {
   type WfRun,
   type Workflow,
 } from "@/lib/workflows";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -457,6 +458,7 @@ function RunPanel({
           runs.length === 0 ? (
             <p className="p-4 text-sm text-muted-foreground">No runs yet.</p>
           ) : (
+            <HoverHighlight highlightClassName="bg-muted/50">
             <ul className="divide-y">
               {runs.map((r) => (
                 <li key={r.id}>
@@ -466,7 +468,8 @@ function RunPanel({
                       onPickRun(r.id);
                       setTab("steps");
                     }}
-                    className={cn("flex w-full items-center gap-3 px-4 py-2 text-left text-sm hover:bg-muted/50", r.id === run?.id && "bg-muted/50")}
+                    data-hover-item
+                    className={cn("relative flex w-full items-center gap-3 px-4 py-2 text-left text-sm", r.id === run?.id && "bg-muted/50")}
                   >
                     <span className="min-w-0 flex-1 truncate">{r.reason}</span>
                     {r.test && <span className="rounded bg-muted px-1 text-xs text-muted-foreground">Test</span>}
@@ -475,6 +478,7 @@ function RunPanel({
                 </li>
               ))}
             </ul>
+            </HoverHighlight>
           )
         ) : !run ? (
           <p className="p-4 text-sm text-muted-foreground">Press Test run to try it with a sample. Each step’s result shows here.</p>

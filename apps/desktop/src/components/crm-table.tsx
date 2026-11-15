@@ -11,17 +11,17 @@ import type { CrmRecord, CrmSettings, CrmView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const WIDTHS: Record<string, string> = {
-  name: "minmax(220px, 1.6fr)",
-  stage: "150px",
-  value: "130px",
-  probability: "110px",
-  health: "130px",
-  closeDate: "120px",
-  renewalDate: "120px",
-  updatedAt: "110px",
-  owner: "130px",
+  name: "minmax(180px, 1.6fr)",
+  stage: "130px",
+  value: "120px",
+  probability: "100px",
+  health: "120px",
+  closeDate: "110px",
+  renewalDate: "110px",
+  updatedAt: "100px",
+  owner: "120px",
 };
-const widthOf = (f: FieldDef) => WIDTHS[f.id] ?? "minmax(140px, 1fr)";
+const widthOf = (f: FieldDef) => WIDTHS[f.id] ?? "minmax(120px, 1fr)";
 
 export function CrmTable({
   rows,
@@ -63,8 +63,12 @@ export function CrmTable({
   };
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto px-6 pb-6">
-      <div role="table" aria-rowcount={rows.length} className="min-w-fit rounded-xl border bg-card">
+    // The padding sits on an inner box at least as wide as the table, so a
+    // table wider than the window scrolls with its margins (and its left
+    // border) intact instead of clipping them at the scroll edge.
+    <div className="min-h-0 flex-1 overflow-auto">
+      <div className="min-w-min px-6 pb-6">
+      <div role="table" aria-rowcount={rows.length} className="min-w-min rounded-xl border bg-card">
         <div
           role="row"
           style={{ gridTemplateColumns: template }}
@@ -198,6 +202,7 @@ export function CrmTable({
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

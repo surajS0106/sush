@@ -93,6 +93,60 @@ pub struct NotebookExtras {
     /// Set once the user names the notebook, so an overview no longer suggests a title.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub named: bool,
+    /// How its chats answer (`chat_section`); Studio outputs don't follow it.
+    #[serde(default, skip_serializing_if = "ChatStyle::is_default")]
+    pub chat: ChatStyle,
+}
+
+/// How a notebook's chats answer: a role, the user's own goal, and a length.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatStyle {
+    #[serde(default)]
+    pub role: ChatRole,
+    /// What the user is using the notebook for, or how to answer, in their words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(default)]
+    pub length: ChatLength,
+}
+
+impl ChatStyle {
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Within limits: a goal trimmed and capped, an empty one dropped.
+    pub fn tidied(mut self) -> Self {
+        self.goal = self.goal.map(|g| g.trim().chars().take(MAX_GOAL_CHARS).collect::<String>()).filter(|g| !g.is_empty());
+        self
+    }
+}
+
+/// Longest goal a notebook's chat keeps.
+pub const MAX_GOAL_CHARS: usize = 1000;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChatRole {
+    /// A research assistant answering from the sources.
+    #[default]
+    Default,
+    /// A tutor: helps the user learn the material rather than handing over answers.
+    Guide,
+    /// A critical reader: weighs the sources' evidence and where they disagree.
+    Critic,
+    /// Plain words for someone new to the topic.
+    Simple,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChatLength {
+    #[default]
+    Default,
+    Shorter,
+    Longer,
 }
 
 /// A cover's framing: the point kept in view (percent across and down) and how far it's zoomed in.
@@ -1172,6 +1226,45 @@ pub fn system_section(notebook: &Notebook, native_citations: bool) -> String {
     out
 }
 
+/// How the user set this notebook's chats to answer, added after `system_section`
+/// in chats only. `None` for the default style. Stable for a notebook, so it
+/// doesn't disturb prompt caching.
+pub fn chat_section(style: &ChatStyle) -> Option<String> {
+    if style.is_default() {
+        return None;
+    }
+    let mut out = String::from("How to answer in this notebook, as the user set it:");
+    match style.role {
+        ChatRole::Default => {}
+        ChatRole::Guide => out.push_str(
+            "\n- Be a tutor helping the user learn this material, not a search box. Before explaining something, find out \
+             what they already think: ask one short question at a time, and build on their answer. Give hints and point to \
+             the passage before giving the answer outright; give it when they ask or are stuck. Check understanding with a \
+             quick question now and then, and say plainly when they've got it right. Everything still comes from the sources, cited.",
+        ),
+        ChatRole::Critic => out.push_str(
+            "\n- Read the sources critically. Separate what they show from what they claim; weigh the evidence behind each \
+             claim (sample, method, who says it); point out where sources disagree, what's missing, and the strongest \
+             objection. Stay fair: say when the evidence is good.",
+        ),
+        ChatRole::Simple => out.push_str(
+            "\n- Explain for someone new to the topic: plain words, short sentences, an everyday example or analogy where \
+             it helps, and every technical term explained the first time it appears.",
+        ),
+    }
+    match style.length {
+        ChatLength::Default => {}
+        ChatLength::Shorter => out.push_str("\n- Keep answers short: a few sentences or a brief list; the user will ask for more."),
+        ChatLength::Longer => out.push_str("\n- Give full, detailed answers that cover the topic thoroughly, with structure where it helps."),
+    }
+    if let Some(goal) = &style.goal {
+        out.push_str(&format!(
+            "\n- The user's goal for this notebook, in their words (it shapes how you answer, never what counts as a source):\n<goal>\n{goal}\n</goal>"
+        ));
+    }
+    Some(out)
+}
+
 // --- notes and Studio ---------------------------------------------------------------
 
 /// What a note is: the user's own (written, or a reply saved), or a Studio output.
@@ -1313,6 +1406,21 @@ go rather than many narrow searches; a search never repeats a passage already sh
 thing. Stop reading once you have what you need.\n\nThe user's message may set a focus, a length or a language: follow \
 them. A focus narrows what you cover; \"shorter\" means about half the usual length and \"longer\" about half as long again.";
 
+/// How an audio overview follows a `Format:` line in the user's message
+/// (`studioRequest` in `lib/notebook-studio.ts`). Without one it's a deep dive.
+/// A length the user also set scales the format's own length.
+const AUDIO_FORMATS: &str = "\n\nThe user's message may name a format; follow it, its length and shape taking the \
+place of the ones above:\n\
+- deep-dive (the default): as above.\n\
+- brief: one host, a, alone with no second voice: a single chapter of 250 to 450 words, about two minutes, giving \
+the core ideas and the takeaway, split into 6 to 10 turns (a paragraph each). Every turn is host a.\n\
+- critique: an expert review of the sources, for their author or someone deciding whether to rely on them. The hosts \
+weigh the strengths, the weak points (evidence, method, gaps, what's unclear) and give concrete suggestions; fair and \
+specific, crediting what's good. 900 to 1,400 words.\n\
+- debate: the hosts take opposite sides of the main question the sources raise, host a for and host b against \
+(name the question in the first turn). Each argues from the sources and answers the other's points; they concede \
+what the evidence forces them to, and end by saying where the evidence leaves the question. 1,200 to 1,800 words.";
+
 /// A Studio output's instructions, added to the notebook's own (`system_section`).
 pub fn studio_section(kind: NoteKind) -> String {
     if kind == NoteKind::AudioOverview {
@@ -1327,7 +1435,7 @@ pub fn studio_section(kind: NoteKind) -> String {
              matters, end with the takeaway. Every claim comes from the sources; say where something comes from when \
              it helps (\"the 2019 study found…\"). No stage directions, sound effects, music cues or names for the \
              hosts; numbers and symbols written as they're said. Give each turn's `source` as the passage id it rests \
-             on, when it rests on one.\n\nAfterwards reply with one short sentence. Don't ask the user anything.{READING_PLAN}"
+             on, when it rests on one.{AUDIO_FORMATS}\n\nAfterwards reply with one short sentence. Don't ask the user anything.{READING_PLAN}"
         );
     }
     if kind.interactive() {
@@ -1550,6 +1658,89 @@ pub fn save_studio(note: &mut Note, input: &Value) -> Result<String, String> {
     Ok(format!("Saved the {}. Now reply with one short sentence.", note.kind.label().to_lowercase()))
 }
 
+// --- reviewing flashcards ---------------------------------------------------------------
+
+/// How the user rated recalling a card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Grade {
+    Again,
+    Hard,
+    Good,
+    Easy,
+}
+
+/// A card's spaced-repetition state, kept on the card (`data.cards[i].review`).
+/// A simplified SM-2: each successful review multiplies the interval by the
+/// card's ease, which falls when it's hard to recall and rises when it's easy.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CardReview {
+    /// Successful reviews in a row; a lapse sets it back to 0.
+    pub reps: u32,
+    /// Times it was forgotten after being learned.
+    pub lapses: u32,
+    pub ease: f64,
+    /// Days until it's due again, as last scheduled.
+    pub interval: f64,
+    /// When it's next due (ms).
+    pub due: i64,
+    /// When it was last reviewed (ms).
+    pub last: i64,
+}
+
+const DAY_MS: f64 = 86_400_000.0;
+const START_EASE: f64 = 2.5;
+const MIN_EASE: f64 = 1.3;
+const MAX_EASE: f64 = 3.5;
+const MAX_INTERVAL_DAYS: f64 = 365.0;
+/// A forgotten card comes back this soon, so it's seen again in the same sitting.
+const RELEARN_MS: i64 = 10 * 60 * 1000;
+
+/// The next state of a card (`None`: never reviewed) after a review at `now`.
+pub fn schedule(prev: Option<CardReview>, grade: Grade, now: i64) -> CardReview {
+    let prev = prev.unwrap_or(CardReview { reps: 0, lapses: 0, ease: START_EASE, interval: 0.0, due: now, last: now });
+    let mut next = CardReview { last: now, ..prev };
+    if grade == Grade::Again {
+        if prev.reps > 0 {
+            next.lapses += 1;
+        }
+        next.reps = 0;
+        next.ease = (prev.ease - 0.2).max(MIN_EASE);
+        next.interval = 0.0;
+        next.due = now + RELEARN_MS;
+        return next;
+    }
+    let (ease, days) = match (grade, prev.reps) {
+        (Grade::Hard, 0) => (prev.ease - 0.15, 1.0),
+        (Grade::Hard, _) => (prev.ease - 0.15, (prev.interval * 1.2).max(prev.interval + 1.0)),
+        (Grade::Good, 0) => (prev.ease, 1.0),
+        (Grade::Good, 1) => (prev.ease, 3.0),
+        (Grade::Good, _) => (prev.ease, (prev.interval * prev.ease).max(prev.interval + 1.0)),
+        (Grade::Easy, 0) => (prev.ease + 0.15, 4.0),
+        (Grade::Easy, _) => (prev.ease + 0.15, (prev.interval * prev.ease * 1.3).max(prev.interval + 2.0)),
+        (Grade::Again, _) => unreachable!("handled above"),
+    };
+    next.reps = prev.reps + 1;
+    next.ease = ease.clamp(MIN_EASE, MAX_EASE);
+    next.interval = days.min(MAX_INTERVAL_DAYS).round();
+    next.due = now + (next.interval * DAY_MS) as i64;
+    next
+}
+
+/// Record a review of flashcard `card` in a deck, returning its new state.
+pub fn review_card(note: &mut Note, card: usize, grade: Grade, now: i64) -> Result<CardReview, String> {
+    if note.kind != NoteKind::Flashcards {
+        return Err("Only flashcards are reviewed.".into());
+    }
+    let cards = note.data.as_mut().and_then(|d| d["cards"].as_array_mut()).ok_or("This deck has no cards yet.")?;
+    let entry = cards.get_mut(card).ok_or("That card isn't in this deck.")?;
+    let prev = serde_json::from_value::<CardReview>(entry["review"].clone()).ok();
+    let next = schedule(prev, grade, now);
+    entry["review"] = serde_json::to_value(next).map_err(|e| e.to_string())?;
+    Ok(next)
+}
+
 // --- what a shared chat's guests may see ----------------------------------------------
 
 /// A notebook as guests of one of its shared chats see it (`share::Intent::GetNotebook`):
@@ -1572,6 +1763,8 @@ pub fn guest_view(notebook: &Notebook) -> Value {
             if let Some(d) = data.as_mut() {
                 drop_key(d, "audio");
                 drop_key(d, "voices");
+                // How well the owner knows each card is theirs.
+                drop_key(d, "review");
             }
             json!({ "id": n.id, "kind": n.kind, "title": n.title, "body": n.body, "data": data, "updatedAt": n.updated_at })
         })
@@ -1997,5 +2190,103 @@ mod tests {
         assert_eq!(match_query("the").as_deref(), Some("\"the\""));
         assert_eq!(match_query("  ?! "), None);
         assert_eq!(match_query("AND OR \"x\"").as_deref(), Some("\"x\""));
+    }
+
+    #[test]
+    fn audio_overviews_know_every_format_the_ui_offers() {
+        let section = studio_section(NoteKind::AudioOverview);
+        for format in ["deep-dive", "brief", "critique", "debate"] {
+            assert!(section.contains(&format!("- {format}")), "{format} is described");
+        }
+        assert!(!studio_section(NoteKind::Briefing).contains("debate"), "only audio overviews take a format");
+    }
+
+    #[test]
+    fn chat_style_is_left_out_by_default_and_kept_with_the_notebook() {
+        assert_eq!(chat_section(&ChatStyle::default()), None);
+        let style = ChatStyle { role: ChatRole::Guide, goal: Some("  Pass my exam  ".into()), length: ChatLength::Shorter }.tidied();
+        let section = chat_section(&style).unwrap();
+        assert!(section.contains("tutor") && section.contains("short") && section.contains("<goal>\nPass my exam\n</goal>"));
+        assert_eq!(ChatStyle { goal: Some("   ".into()), ..Default::default() }.tidied(), ChatStyle::default());
+
+        let (_dir, store) = store();
+        store.create_notebook("n1", "Habits", 1).unwrap();
+        store
+            .update_notebook_extras("n1", |x, _| {
+                x.chat = style.clone();
+                Ok(None)
+            })
+            .unwrap();
+        assert_eq!(store.notebook("n1").unwrap().unwrap().extras.chat, style);
+        let json = serde_json::to_value(store.notebook("n1").unwrap().unwrap()).unwrap();
+        assert_eq!(json["chat"]["role"], "guide");
+    }
+
+    #[test]
+    fn reviews_space_out_what_is_remembered_and_bring_back_what_is_not() {
+        let day = DAY_MS as i64;
+        let first = schedule(None, Grade::Good, 0);
+        assert_eq!((first.reps, first.interval, first.due), (1, 1.0, day));
+        let second = schedule(Some(first), Grade::Good, day);
+        assert_eq!(second.interval, 3.0);
+        let third = schedule(Some(second), Grade::Good, 4 * day);
+        assert_eq!(third.interval, 8.0, "3 days × ease 2.5, rounded");
+        assert!(schedule(Some(second), Grade::Easy, 4 * day).interval > third.interval);
+        assert!(schedule(Some(second), Grade::Hard, 4 * day).interval < third.interval);
+
+        let forgot = schedule(Some(third), Grade::Again, 12 * day);
+        assert_eq!((forgot.reps, forgot.lapses, forgot.due), (0, 1, 12 * day + RELEARN_MS));
+        assert!((forgot.ease - 2.3).abs() < 1e-9);
+        // A new card forgotten isn't a lapse, and ease never drops below the floor.
+        let mut card = schedule(None, Grade::Again, 0);
+        assert_eq!(card.lapses, 0);
+        for _ in 0..20 {
+            card = schedule(Some(card), Grade::Again, 0);
+        }
+        assert_eq!(card.ease, MIN_EASE);
+        let mut long = schedule(None, Grade::Easy, 0);
+        for _ in 0..20 {
+            long = schedule(Some(long), Grade::Easy, long.due);
+        }
+        assert_eq!(long.interval, MAX_INTERVAL_DAYS);
+    }
+
+    #[test]
+    fn a_review_is_kept_on_its_card_and_hidden_from_guests() {
+        let mut note = Note {
+            id: "f".into(),
+            notebook_id: "n".into(),
+            kind: NoteKind::Flashcards,
+            title: "Deck".into(),
+            body: String::new(),
+            status: NoteStatus::Ready,
+            error: None,
+            thread_id: None,
+            data: None,
+            created_at: 1,
+            updated_at: 1,
+        };
+        assert!(review_card(&mut note, 0, Grade::Good, 5).is_err(), "no cards yet");
+        let cards: Vec<Value> = (0..3).map(|i| json!({ "front": format!("F{i}"), "back": "B" })).collect();
+        save_studio(&mut note, &json!({ "title": "Deck", "cards": cards })).unwrap();
+        let next = review_card(&mut note, 1, Grade::Good, 5).unwrap();
+        assert_eq!(serde_json::from_value::<CardReview>(note.data.as_ref().unwrap()["cards"][1]["review"].clone()).unwrap(), next);
+        assert!(review_card(&mut note, 3, Grade::Good, 5).is_err());
+
+        let notebook = Notebook {
+            id: "n".into(),
+            title: "N".into(),
+            created_at: 1,
+            updated_at: 1,
+            sources: vec![],
+            thread_ids: vec![],
+            notes: vec![note.clone()],
+            extras: NotebookExtras::default(),
+        };
+        let view = guest_view(&notebook);
+        assert!(view["outputs"][0]["data"]["cards"][1].get("review").is_none());
+
+        note.kind = NoteKind::Quiz;
+        assert!(review_card(&mut note, 0, Grade::Good, 5).is_err(), "only flashcards");
     }
 }

@@ -12,7 +12,7 @@ import { stripCitations } from "@/lib/citations";
 import { addText, notebookForThread } from "@/lib/notebooks";
 import { sendMessage } from "@/lib/sessions";
 import { createConversation, createStore, deleteConversation, getConversations, getTarget } from "@/lib/store";
-import { api, errorMessage, type Notebook, type NotebookNote, type NoteKind } from "@/lib/tauri";
+import { api, errorMessage, type CardReview, type Flashcard, type FlashcardsData, type Grade, type Notebook, type NotebookNote, type NoteKind } from "@/lib/tauri";
 
 export const STUDIO_KINDS: { kind: Exclude<NoteKind, "note">; label: string; hint: string }[] = [
   { kind: "briefing", label: "Briefing", hint: "Key points, themes and quotes" },
@@ -22,7 +22,7 @@ export const STUDIO_KINDS: { kind: Exclude<NoteKind, "note">; label: string; hin
   { kind: "quiz", label: "Quiz", hint: "Test yourself, with explanations" },
   { kind: "flashcards", label: "Flashcards", hint: "Terms and answers to drill" },
   { kind: "mind-map", label: "Mind map", hint: "The topics and how they connect" },
-  { kind: "audio-overview", label: "Audio overview", hint: "Two hosts talk it through" },
+  { kind: "audio-overview", label: "Audio overview", hint: "Two hosts talk it through, or a brief, critique or debate" },
 ];
 
 /** Outputs that are played (a quiz, a deck, a map), not read. */
@@ -38,7 +38,18 @@ export interface StudioOptions {
   length?: "shorter" | "default" | "longer";
   /** The language to write it in; empty keeps the sources' own. */
   language?: string;
+  /** An audio overview's shape (`AUDIO_FORMATS` in `sush_core::notebooks`). */
+  format?: AudioFormat;
 }
+
+export type AudioFormat = "deep-dive" | "brief" | "critique" | "debate";
+
+export const AUDIO_FORMATS: { format: AudioFormat; label: string; hint: string }[] = [
+  { format: "deep-dive", label: "Deep dive", hint: "Two hosts talk it through, about ten minutes" },
+  { format: "brief", label: "Brief", hint: "One voice, the core ideas in two minutes" },
+  { format: "critique", label: "Critique", hint: "An expert review: strengths, weak points, suggestions" },
+  { format: "debate", label: "Debate", hint: "The hosts argue opposite sides from the sources" },
+];
 
 /** A Studio run's first message: what to make, and the options picked. `studio_section` in Rust says how to follow them. */
 export function studioRequest(kind: Exclude<NoteKind, "note">, options: StudioOptions = {}): string {
@@ -48,6 +59,7 @@ export function studioRequest(kind: Exclude<NoteKind, "note">, options: StudioOp
   if (options.length && options.length !== "default") lines.push(`Length: ${options.length}`);
   const language = options.language?.trim();
   if (language) lines.push(`Language: write it in ${language}.`);
+  if (kind === "audio-overview" && options.format && options.format !== "deep-dive") lines.push(`Format: ${options.format}`);
   return lines.join("\n");
 }
 
@@ -143,6 +155,49 @@ export async function exportNote(note: NotebookNote) {
 export async function noteToSource(note: NotebookNote) {
   const added = await addText(note.notebookId, note.title, stripCitations(note.body));
   if (added) toast.success(`“${note.title}” is now a source`);
+}
+
+// --- reviewing flashcards ------------------------------------------------------------
+// Rust schedules each card (`notebooks::schedule`, a simplified SM-2) and keeps
+// its state on the card; these read it.
+
+/** Cards to study now: those due, soonest first, then the ones never reviewed. */
+export function studyQueue(cards: Flashcard[], now = Date.now()): number[] {
+  const due = cards.flatMap((c, i) => (c.review && c.review.due <= now ? [i] : [])).sort((a, b) => cards[a].review!.due - cards[b].review!.due);
+  const fresh = cards.flatMap((c, i) => (c.review ? [] : [i]));
+  return [...due, ...fresh];
+}
+
+/** A deck's state: cards due now, never reviewed, and when the next one comes due. */
+export function deckStatus(data: FlashcardsData, now = Date.now()) {
+  const reviewed = data.cards.filter((c) => c.review);
+  const due = reviewed.filter((c) => c.review!.due <= now).length;
+  const later = reviewed.map((c) => c.review!.due).filter((d) => d > now);
+  return { due, fresh: data.cards.length - reviewed.length, next: later.length ? Math.min(...later) : null, studied: reviewed.length > 0 };
+}
+
+/** "in 10 minutes", "tomorrow", "in 3 days". */
+export function fromNow(at: number, now = Date.now()): string {
+  const minutes = Math.max(1, Math.round((at - now) / 60_000));
+  if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 20) return `in ${hours} hour${hours === 1 ? "" : "s"}`;
+  const days = Math.round(hours / 24);
+  if (days <= 1) return "tomorrow";
+  if (days < 60) return `in ${days} days`;
+  const months = Math.round(days / 30);
+  return `in ${months} months`;
+}
+
+/** Grade one card; Rust schedules its next review and tells every window. */
+export async function reviewCard(note: Pick<NotebookNote, "id">, card: number, grade: Grade): Promise<CardReview | null> {
+  try {
+    const saved = await api.notebookCardReview(note.id, card, grade);
+    return (saved.data as FlashcardsData | undefined)?.cards[card]?.review ?? null;
+  } catch (e) {
+    toast.error("Couldn’t save that review", { description: errorMessage(e) });
+    return null;
+  }
 }
 
 // --- which note is open --------------------------------------------------------------

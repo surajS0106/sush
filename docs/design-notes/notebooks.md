@@ -1,8 +1,29 @@
 # Notebooks — Design Notes
 
-Last updated: 2026-11-10
+Last updated: 2026-11-16
 
 ## What changed
+
+### 2026-11-16 (chat style, spaced repetition, joining an audio overview, audio formats)
+- **Audio overview formats** (`AUDIO_FORMATS` in `notebooks.rs` and `lib/notebook-studio.ts`):
+  - The four formats are deep dive (the default), brief (one host, about two minutes, still 6 to 10 turns so `save_studio`'s minimum holds), critique and debate (host a for, host b against).
+  - The format is picked in the audio overview's options dialog and sent as a `Format:` line in the run's first message, like focus and length. So "Make again" keeps it.
+  - A test checks that every format the UI offers is described in the prompt.
+- **Chat style per notebook** (`ChatStyle` in `NotebookExtras`, `crates/sush-core/src/notebooks.rs`): a role (research assistant, learning guide, critic, explain simply), the user's goal in their words (trimmed, capped at 1,000 characters by `ChatStyle::tidied`) and an answer length.
+  - `chat_section` turns it into instructions. `notebook_config` in `runs.rs` adds them after the notebook's own section for chats only, not Studio runs. The default style adds nothing.
+  - Set with `notebook_set_chat` from "Configure chat…" in the notebook menu (`components/notebook-chat-style.tsx`). A header chip shows a style that isn't the default and opens the dialog.
+- **Spaced-repetition flashcards** (`schedule`, `review_card`):
+  - A simplified SM-2. Each card's state (`CardReview`: reps, lapses, ease, interval, due) is kept on the card in `Note::data`.
+  - Again brings a card back in 10 minutes and lowers its ease. Hard, Good and Easy grow the interval (1 then 3 days, then interval × ease). Ease stays between 1.3 and 3.5, and intervals are capped at a year.
+  - `notebook_card_review` records a grade and tells every window.
+  - `FlashcardsView` (`components/notebook-play.tsx`) opens on Review: the cards due now, then new ones (`studyQueue` in `lib/notebook-studio.ts`), graded with buttons or keys 1 to 4. A card graded Again goes to the back of the sitting.
+  - "Practice all" is the previous unscheduled drill. Guests only get Practice, and `guest_view` drops `review`.
+  - Studio rows show "N due", "N new" or when the next card comes back (`DeckMeta`).
+- **Joining an audio overview** (`components/audio-overview.tsx`, `lib/audio-join.ts`):
+  - Join pauses the player and asks for a question.
+  - `notebook_search` returns the six best passages from the checked sources, and a one-shot `complete` call writes 2 to 4 host turns as JSON. Each turn's `source` must be one of those passage ids.
+  - Provider voices voice the turns before they play.
+  - The turns are spliced in before the interrupted line, which then plays again in full. They're marked in the transcript under "You asked", and aren't saved. Guests don't get Join.
 
 ### 2026-11-10 (test pass, fewer tokens, Studio options)
 - Fixed two things that stopped CI: a test still building `ChatEvent::Citation` without `quote` (`providers/openai_responses.rs`), and an unused import in `components/notebook-studio.tsx`.
@@ -192,6 +213,8 @@ Sharing reuses the session share rather than inventing a notebook share: the cha
 
 Pinned sources sent whole (as `document` blocks with a one-hour cache) were in the plan for phase 1. They are deferred: `source_read` already reaches any page or stretch of a source in order, and pinning adds a second path into the request for little gain at this stage.
 
+Formats go through the first message rather than a new field on the note, so they need no schema change and "Make again" repeats them with no extra code. Chat style, flashcard review and Join close gaps against NotebookLM (chat goals, its Learning Guide, interactive audio). Spaced repetition is something it doesn't offer. The chat style goes in the system prompt for chats only: a briefing written in the learning guide's style would answer with questions. It's stable for a notebook, so prompt caching still holds. Scheduling lives in sush-core so it's tested and works the same in any future CLI. The UI shows each review's result instead of predicting intervals, so there's one copy of the algorithm. SM-2 rather than FSRS: it's a dozen lines with no fitted parameters, and decks of 15 to 40 cards don't need more precision. Join answers with a one-shot call over BM25 passages rather than an agent run, because the listener is waiting. The answer is replayed only for this listening: saving it would rewrite a script the user may want to keep as it is.
+
 ## What makes it stand out
 
 - Citations point at one passage, not a whole document. The chip opens the passage in the viewer, scrolled into view, with the cited words marked when the provider supplies them.
@@ -200,4 +223,6 @@ Pinned sources sent whole (as `document` blocks with a one-hour cache) were in t
 - Chunks never cross a PDF page, so every passage citation has a single page number. Headings travel with their chunks and are weighted in ranking.
 - Finding sources and adding them happen in one step: web results are ticked and added in place, with ones already added marked.
 - Reading a source is stoppable and recoverable. A source that was being read when the app closed is marked failed with a "Read again" action, instead of showing "reading" forever.
-- Tests cover chunking and offsets, arXiv and DOI recognition, quote encoding, search over checked sources only, cascade deletes, and the Anthropic round trip (`notebooks.rs`, `anthropic.rs`, `agent/ui.rs`).
+- Flashcard review state is per card and lives in sush.db with the deck. Grading syncs across windows, and guests of a shared chat never see how well the owner knows the cards.
+- The hosts' live answers cite only passages that were actually retrieved: ids the model invents are dropped (`answerOnAir`). After the answer, the interrupted line plays again from the start rather than skipping its end.
+- Tests cover chunking and offsets, arXiv and DOI recognition, quote encoding, search over checked sources only, cascade deletes, the review schedule (intervals, lapses, ease floor, year cap), chat style storage, and the Anthropic round trip (`notebooks.rs`, `anthropic.rs`, `agent/ui.rs`).

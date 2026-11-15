@@ -21,6 +21,7 @@ import {
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
+  SlidersHorizontalIcon,
   Trash2Icon,
   UploadIcon,
   UsersIcon,
@@ -31,6 +32,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { PromptInputProvider } from "@/components/ai-elements/prompt-input";
 import { ChatView } from "@/components/chat-view";
 import { openShare } from "@/components/session-actions";
+import { ChatStyleDialog, hasChatStyle, roleLabel } from "@/components/notebook-chat-style";
 import { CoverImage, CustomizeDialog, NotebookOverview, SourceGuideCard } from "@/components/notebook-overview";
 import { AddSourcesDialog, describe, KindIcon, sourceCount, useSourceDrop } from "@/components/notebook-sources";
 import { NoteReader, StudioPanel } from "@/components/notebook-studio";
@@ -74,6 +76,7 @@ import {
 import { sendMessage } from "@/lib/sessions";
 import { useConversations, type Conversation } from "@/lib/store";
 import { api, errorMessage, type Notebook, type NotebookSource, type Passage } from "@/lib/tauri";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 
 interface NotebooksPageProps {
@@ -265,6 +268,7 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
   useEffect(() => closeNote, [notebook.id]);
 
   const [customizing, setCustomizing] = useState(false);
+  const [configuring, setConfiguring] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   // Rewrite the overview once the sources settle (none still being read).
@@ -295,6 +299,18 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
           {notebook.emoji && <span aria-hidden>{notebook.emoji}</span>}
           <span className="truncate">{notebook.title}</span>
         </h1>
+        {hasChatStyle(notebook) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            title="How this notebook’s chats answer"
+            onClick={() => setConfiguring(true)}
+          >
+            <SlidersHorizontalIcon />
+            <span className="hidden sm:inline">{notebook.chat!.role === "default" ? "Custom chat" : roleLabel(notebook.chat!.role)}</span>
+          </Button>
+        )}
         <ChatPicker chats={chats} current={chat} onPick={setChatId} onNew={() => void startChat()} />
         {narrowSide && (
           <Button variant="ghost" size="icon-sm" aria-label="Studio and notes" aria-pressed={showSide} onClick={() => {
@@ -316,6 +332,9 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuItem onSelect={() => setTimeout(() => setCustomizing(true))}>
               <PencilIcon /> Customize…
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setTimeout(() => setConfiguring(true))}>
+              <SlidersHorizontalIcon /> Configure chat…
             </DropdownMenuItem>
             {chat && (
               <DropdownMenuItem onSelect={() => onOpenSession(chat.id)}>
@@ -393,6 +412,7 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
       </div>
 
       <CustomizeDialog notebook={notebook} open={customizing} onOpenChange={setCustomizing} />
+      <ChatStyleDialog notebook={notebook} open={configuring} onOpenChange={setConfiguring} />
       <DeleteNotebookDialog notebook={notebook} open={deleting} onOpenChange={setDeleting} onDeleted={onBack} />
       <AddSourcesDialog notebook={notebook} />
     </div>
@@ -474,13 +494,13 @@ function SourcesPanel({ notebook, activeId, onClose }: { notebook: Notebook; act
         </ul>
       )}
       {notebook.sources.length === 0 && jobs.length === 0 ? (
-        <div className="flex flex-col gap-1 px-2 py-2">
+        <HoverHighlight className="flex flex-col gap-1 px-2 py-2" highlightClassName="rounded-lg bg-muted/60">
           <p className="px-2 pb-2 text-sm text-muted-foreground">Nothing here yet. Sources you add are read once and searched for every answer.</p>
           <EmptyAction icon={<UploadIcon />} label="Upload files" hint="PDFs, text, Markdown" onClick={() => void addFiles(notebook.id)} />
           <EmptyAction icon={<LinkIcon />} label="Links and papers" hint="Web pages, arXiv, DOIs" onClick={() => openAddSources(notebook.id, "link")} />
           <EmptyAction icon={<ClipboardTypeIcon />} label="Paste text" hint="Notes, transcripts" onClick={() => openAddSources(notebook.id, "text")} />
           <EmptyAction icon={<GlobeIcon />} label="Find on the web" hint="Search for sources" onClick={() => openAddSources(notebook.id)} />
-        </div>
+        </HoverHighlight>
       ) : (
         <>
           <label className="flex items-center gap-3 border-y px-4 py-2 text-xs text-muted-foreground">
@@ -492,13 +512,18 @@ function SourcesPanel({ notebook, activeId, onClose }: { notebook: Notebook; act
             <span className="flex-1">Use every source</span>
             <span>{notebook.sources.filter((s) => s.checked).length}/{notebook.sources.length}</span>
           </label>
-          <ul className="min-h-0 flex-1 overflow-y-auto py-1">
-            {notebook.sources.map((s) => (
-              <li key={s.id}>
-                <SourceRow source={s} active={s.id === activeId} />
-              </li>
-            ))}
-          </ul>
+          {/* The highlight sits inside the scroller so it scrolls with the rows. */}
+          <div className="min-h-0 flex-1 overflow-y-auto py-1">
+            <HoverHighlight highlightClassName="bg-muted/60">
+              <ul>
+                {notebook.sources.map((s) => (
+                  <li key={s.id}>
+                    <SourceRow source={s} active={s.id === activeId} />
+                  </li>
+                ))}
+              </ul>
+            </HoverHighlight>
+          </div>
         </>
       )}
     </>
@@ -510,7 +535,8 @@ function EmptyAction({ icon, label, hint, onClick }: { icon: ReactNode; label: s
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-brand/40"
+      data-hover-item
+      className="relative flex items-center gap-3 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
     >
       <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-brand/10 text-brand [&_svg]:size-3.5">{icon}</span>
       <span className="min-w-0">
@@ -537,7 +563,7 @@ function SourceRow({ source, active }: { source: NotebookSource; active: boolean
       <span className="text-xs text-muted-foreground">{describe(source)}</span>
     );
   return (
-    <div className={cn("group flex items-start gap-3 px-4 py-2 hover:bg-muted/60", active && "bg-brand/5")}>
+    <div data-hover-item className={cn("group relative flex items-start gap-3 px-4 py-2", active && "bg-brand/5")}>
       <Checkbox
         className="mt-0.5"
         checked={source.checked}

@@ -52,6 +52,8 @@ import { formatWhen } from "@/lib/automations";
 import { citedSources, stripCitations } from "@/lib/citations";
 import { getNotebook } from "@/lib/notebooks";
 import {
+  AUDIO_FORMATS,
+  type AudioFormat,
   closeNote,
   createNote,
   deleteNote,
@@ -60,7 +62,10 @@ import {
   kindLabel,
   noteToSource,
   openNote,
+  deckStatus,
+  fromNow,
   remakeStudio,
+  reviewCard,
   startStudio,
   type StudioOptions,
   STUDIO_KINDS,
@@ -68,6 +73,7 @@ import {
 } from "@/lib/notebook-studio";
 import type { FlashcardsData, MindMapData, Notebook, NotebookNote, NoteKind, QuizData } from "@/lib/tauri";
 import type { SushUIMessage } from "@/lib/transport";
+import { cn } from "@/lib/utils";
 
 const KIND_ICON: Record<NoteKind, (props: { className?: string }) => ReactNode> = {
   note: (p) => <StickyNoteIcon aria-hidden {...p} />,
@@ -137,7 +143,7 @@ export function StudioPanel({ notebook, onClose }: { notebook: Notebook; onClose
                   size="icon-xs"
                   disabled={disabled}
                   aria-label={`${label} options`}
-                  title="Focus, length, language"
+                  title={kind === "audio-overview" ? "Format, focus, length, language" : "Focus, length, language"}
                   onClick={() => setCustomizing(kind)}
                   className="absolute top-2 right-2 text-muted-foreground opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 disabled:opacity-0"
                 >
@@ -228,6 +234,7 @@ function StudioOptionsDialog({
   const [focus, setFocus] = useState("");
   const [length, setLength] = useState<(typeof LENGTHS)[number]>("default");
   const [language, setLanguage] = useState("");
+  const [format, setFormat] = useState<AudioFormat>("deep-dive");
   const label = kindLabel(kind);
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
@@ -240,14 +247,37 @@ function StudioOptionsDialog({
           className="flex flex-col gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            onStart({ focus, length, language });
+            onStart({ focus, length, language, format: kind === "audio-overview" ? format : undefined });
           }}
         >
+          {kind === "audio-overview" && (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="mb-2 text-sm font-medium">Format</legend>
+              <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Format">
+                {AUDIO_FORMATS.map((f) => (
+                  <button
+                    key={f.format}
+                    type="button"
+                    role="radio"
+                    aria-checked={format === f.format}
+                    onClick={() => setFormat(f.format)}
+                    className={cn(
+                      "flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand/40",
+                      format === f.format ? "border-brand bg-brand/10" : "hover:border-brand/40 hover:bg-brand/5",
+                    )}
+                  >
+                    <span className="text-sm font-medium">{f.label}</span>
+                    <span className="text-xs text-muted-foreground">{f.hint}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
           <div className="flex flex-col gap-2">
             <Label htmlFor="studio-focus">What should it focus on?</Label>
             <Textarea
               id="studio-focus"
-              autoFocus
+              autoFocus={kind !== "audio-overview"}
               value={focus}
               maxLength={500}
               onChange={(e) => setFocus(e.target.value)}
@@ -300,6 +330,8 @@ function NoteRow({ note }: { note: NotebookNote }) {
       <span className="flex items-center gap-1 text-destructive">
         <CircleAlertIcon className="size-3" /> Didn’t finish
       </span>
+    ) : note.kind === "flashcards" && note.data ? (
+      <DeckMeta data={note.data as FlashcardsData} />
     ) : (
       `${note.kind === "note" ? "Note" : kindLabel(note.kind)} · ${formatWhen(new Date(note.updatedAt))}`
     );
@@ -315,6 +347,14 @@ function NoteRow({ note }: { note: NotebookNote }) {
       <NoteMenu note={note} className="mr-1 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100" />
     </div>
   );
+}
+
+/** A deck's review state in its row: what's due, or when the next card is. */
+function DeckMeta({ data }: { data: FlashcardsData }) {
+  const s = deckStatus(data);
+  if (!s.studied) return <>Flashcards · {data.cards.length} new</>;
+  if (s.due > 0) return <span className="font-medium text-brand">Flashcards · {s.due} due</span>;
+  return <>Flashcards · next {s.next ? fromNow(s.next) : "none due"}</>;
 }
 
 function NoteMenu({ note, className, onEdit }: { note: NotebookNote; className?: string; onEdit?: () => void }) {
@@ -425,9 +465,10 @@ export function NoteReader({ notebook, note, onAsk }: { notebook: Notebook; note
         ) : note.kind === "quiz" && note.data ? (
           <QuizView key={note.updatedAt} data={note.data as QuizData} />
         ) : note.kind === "flashcards" && note.data ? (
-          <FlashcardsView key={note.updatedAt} data={note.data as FlashcardsData} />
+          // Keyed by the deck, not its last change: each review changes it, and the sitting goes on.
+          <FlashcardsView key={note.id} data={note.data as FlashcardsData} onReview={(card, grade) => reviewCard(note, card, grade)} />
         ) : note.kind === "audio-overview" && note.data ? (
-          <AudioOverviewView note={note} />
+          <AudioOverviewView note={note} notebookId={notebook.id} />
         ) : note.kind === "mind-map" && note.data ? (
           <MindMapView key={note.updatedAt} data={note.data as MindMapData} onAsk={onAsk} title={note.title} />
         ) : (

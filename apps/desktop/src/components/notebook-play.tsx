@@ -5,9 +5,11 @@
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  CalendarClockIcon,
   CheckIcon,
   ChevronsDownUpIcon,
   ChevronsUpDownIcon,
+  LayersIcon,
   MaximizeIcon,
   MessageSquareTextIcon,
   MinusIcon,
@@ -17,12 +19,13 @@ import {
   TextQuoteIcon,
   XIcon,
 } from "lucide-react";
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { deckStatus, fromNow, studyQueue } from "@/lib/notebook-studio";
 import { openPassage, parsePassageUrl, sourceTitle } from "@/lib/notebooks";
-import type { FlashcardsData, MindMapData, MindMapNode, QuizData } from "@/lib/tauri";
+import type { CardReview, Flashcard, FlashcardsData, Grade, MindMapData, MindMapNode, QuizData } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 /** "From <source>": opens the passage an item came from. */
@@ -175,7 +178,150 @@ export function QuizView({ data }: { data: QuizData }) {
 
 // --- flashcards ----------------------------------------------------------------------
 
-export function FlashcardsView({ data }: { data: FlashcardsData }) {
+type ReviewFn = (card: number, grade: Grade) => Promise<CardReview | null>;
+
+/**
+ * A deck of flashcards. With `onReview` (the owner's own deck) it opens on
+ * spaced repetition: the cards due today, graded Again / Hard / Good / Easy,
+ * each scheduled by Rust. "Practice all" drills every card without
+ * scheduling, as guests always do.
+ */
+export function FlashcardsView({ data, onReview }: { data: FlashcardsData; onReview?: ReviewFn }) {
+  const [mode, setMode] = useState<"review" | "practice">(onReview ? "review" : "practice");
+  if (mode === "review" && onReview) return <FlashcardsReview data={data} onReview={onReview} onPractice={() => setMode("practice")} />;
+  return <FlashcardsPractice data={data} onReview={onReview ? () => setMode("review") : undefined} />;
+}
+
+/** One card, front and back, flipping in 3D. */
+function CardFace({ card, flipped, onFlip }: { card: Flashcard; flipped: boolean; onFlip: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onFlip}
+      aria-label={flipped ? `Answer: ${card.back}. Press to see the question.` : `${card.front}. Press to see the answer.`}
+      className="group relative aspect-[3/2] w-full outline-none [perspective:1200px] focus-visible:[&>div]:ring-2 focus-visible:[&>div]:ring-brand/50"
+    >
+      <div
+        className={cn(
+          "relative size-full rounded-2xl transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none",
+          flipped && "[transform:rotateY(180deg)]",
+        )}
+      >
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-2xl border bg-card p-5 text-center [backface-visibility:hidden]">
+          <span className="text-[17px] leading-snug font-medium text-balance">{card.front}</span>
+          <span className="absolute bottom-3 text-xs text-muted-foreground">Click or press Space to flip</span>
+        </div>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-2xl border border-brand/40 bg-brand/5 p-5 text-center [backface-visibility:hidden] [transform:rotateY(180deg)]">
+          <span className="text-sm leading-relaxed text-balance">{card.back}</span>
+          <SourceChip source={card.source} />
+        </div>
+      </div>
+    </button>
+  );
+}
+
+const GRADES: { grade: Grade; label: string; key: string }[] = [
+  { grade: "again", label: "Again", key: "1" },
+  { grade: "hard", label: "Hard", key: "2" },
+  { grade: "good", label: "Good", key: "3" },
+  { grade: "easy", label: "Easy", key: "4" },
+];
+
+function FlashcardsReview({ data, onReview, onPractice }: { data: FlashcardsData; onReview: ReviewFn; onPractice: () => void }) {
+  const cards = data.cards;
+  // This sitting's cards, fixed when it starts; a card graded Again goes to the back.
+  const [queue, setQueue] = useState(() => studyQueue(cards));
+  const [flipped, setFlipped] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(0);
+  const [last, setLast] = useState<string | null>(null);
+  const wrap = useRef<HTMLDivElement>(null);
+  const current = queue[0];
+  const card = current === undefined ? null : cards[current];
+
+  const grade = async (g: Grade) => {
+    if (current === undefined || saving) return;
+    setSaving(true);
+    const next = await onReview(current, g);
+    setSaving(false);
+    if (!next) return;
+    setFlipped(false);
+    // The grade buttons go as the card turns back; keep the keys working on the card.
+    wrap.current?.querySelector<HTMLButtonElement>("button[aria-label]")?.focus();
+    setLast(g === "again" ? "You’ll see it again shortly" : `Back ${fromNow(next.due)}`);
+    if (g === "again") setQueue((q) => [...q.slice(1), q[0]]);
+    else {
+      setQueue((q) => q.slice(1));
+      setDone((n) => n + 1);
+    }
+  };
+
+  const keys = (e: KeyboardEvent) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      setFlipped((f) => !f);
+      return;
+    }
+    const hit = flipped && GRADES.find((g) => g.key === e.key);
+    if (hit) void grade(hit.grade);
+  };
+
+  if (!card) {
+    const status = deckStatus(data);
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center" role="status">
+        <CheckIcon className="size-6 text-brand" aria-hidden />
+        <div>
+          <p className="font-medium">{done > 0 ? `Done for now: ${done} card${done === 1 ? "" : "s"} reviewed` : "Nothing due"}</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {status.next ? `The next card comes back ${fromNow(status.next)}.` : "Every card is learned."} Sush spaces out the ones you know and brings back the ones you don’t.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={onPractice}>
+          <LayersIcon /> Practice all {cards.length} anyway
+        </Button>
+      </div>
+    );
+  }
+
+  const fresh = queue.filter((i) => !cards[i].review).length;
+  return (
+    <div ref={wrap} className="flex flex-col gap-3" onKeyDown={keys}>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="flex-1" aria-live="polite">
+          {queue.length - fresh > 0 && `${queue.length - fresh} due`}
+          {queue.length - fresh > 0 && fresh > 0 && " · "}
+          {fresh > 0 && `${fresh} new`}
+          {last && <span className="text-foreground/70"> · {last}</span>}
+        </span>
+        <Button variant="ghost" size="xs" onClick={onPractice}>
+          <LayersIcon /> Practice all
+        </Button>
+      </div>
+      <CardFace card={card} flipped={flipped} onFlip={() => setFlipped((f) => !f)} />
+      {flipped ? (
+        <div className="grid grid-cols-4 gap-2" role="group" aria-label="How well did you know it?">
+          {GRADES.map((g) => (
+            <Button
+              key={g.grade}
+              variant={g.grade === "good" ? "default" : "outline"}
+              size="sm"
+              disabled={saving}
+              onClick={() => void grade(g.grade)}
+              className={cn(g.grade === "again" && "text-destructive hover:text-destructive")}
+            >
+              {g.label} <kbd className="ml-1 text-[10px] opacity-60">{g.key}</kbd>
+            </Button>
+          ))}
+        </div>
+      ) : (
+        <p className="py-1.5 text-center text-xs text-muted-foreground">Answer it in your head, then flip and say how well you knew it</p>
+      )}
+    </div>
+  );
+}
+
+function FlashcardsPractice({ data, onReview }: { data: FlashcardsData; onReview?: () => void }) {
   const cards = data.cards;
   const [order, setOrder] = useState(() => cards.map((_, i) => i));
   const [pos, setPos] = useState(0);
@@ -221,14 +367,23 @@ export function FlashcardsView({ data }: { data: FlashcardsData }) {
     else if (e.key === "2" && flipped) gotIt();
   };
 
+  const backToReview = onReview && (
+    <Button variant="ghost" size="xs" onClick={onReview}>
+      <CalendarClockIcon /> Review due
+    </Button>
+  );
+
   if (!card) {
     return (
       <div className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center">
         <CheckIcon className="size-6 text-brand" aria-hidden />
         <p className="font-medium">You know all {cards.length} cards</p>
-        <Button variant="outline" size="sm" onClick={restart}>
-          <RotateCcwIcon /> Start over
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={restart}>
+            <RotateCcwIcon /> Start over
+          </Button>
+          {backToReview}
+        </div>
       </div>
     );
   }
@@ -243,29 +398,9 @@ export function FlashcardsView({ data }: { data: FlashcardsData }) {
         <Button variant="ghost" size="xs" onClick={shuffle}>
           <ShuffleIcon /> Shuffle
         </Button>
+        {backToReview}
       </div>
-      <button
-        type="button"
-        onClick={() => setFlipped((f) => !f)}
-        aria-label={flipped ? `Answer: ${card.back}. Press to see the question.` : `${card.front}. Press to see the answer.`}
-        className="group relative aspect-[3/2] w-full outline-none [perspective:1200px] focus-visible:[&>div]:ring-2 focus-visible:[&>div]:ring-brand/50"
-      >
-        <div
-          className={cn(
-            "relative size-full rounded-2xl transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none",
-            flipped && "[transform:rotateY(180deg)]",
-          )}
-        >
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-2xl border bg-card p-5 text-center [backface-visibility:hidden]">
-            <span className="text-[17px] leading-snug font-medium text-balance">{card.front}</span>
-            <span className="absolute bottom-3 text-xs text-muted-foreground">Click or press Space to flip</span>
-          </div>
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 overflow-y-auto rounded-2xl border border-brand/40 bg-brand/5 p-5 text-center [backface-visibility:hidden] [transform:rotateY(180deg)]">
-            <span className="text-sm leading-relaxed text-balance">{card.back}</span>
-            <SourceChip source={card.source} />
-          </div>
-        </div>
-      </button>
+      <CardFace card={card} flipped={flipped} onFlip={() => setFlipped((f) => !f)} />
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon-sm" aria-label="Previous card" disabled={pos === 0} onClick={() => go(pos - 1)}>
           <ArrowLeftIcon />

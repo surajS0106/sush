@@ -1023,7 +1023,7 @@ async fn prepare(
     .await?;
     let (studio, notebook) = notebook;
     if let Some((notebook, note)) = studio {
-        let mut config = notebook_config(state, config, &notebook);
+        let mut config = notebook_config(state, config, &notebook, false);
         let section = notebooks::studio_section(note.kind);
         config.system = Some(format!("{}\n\n---\n\n{section}", config.system.unwrap_or_default()));
         if note.kind.interactive() {
@@ -1037,7 +1037,7 @@ async fn prepare(
         return Ok((config, None, None, Some(note.id)));
     }
     if let Some(notebook) = notebook {
-        return Ok((notebook_config(state, config, &notebook), None, None, None));
+        return Ok((notebook_config(state, config, &notebook, true), None, None, None));
     }
     if let Some(report) = report {
         let workspace = workspace.ok_or_else(|| AppError::Invalid("This report's folder was removed, so it can't run.".into()))?;
@@ -1159,7 +1159,9 @@ fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspa
 /// A notebook chat's config: the source tools and instructions in place of the
 /// UI's tools and system prompt, so answers come from the sources. Anthropic
 /// cites the passages itself; other models are told how to write citations.
-fn notebook_config(state: &AppState, mut config: RunConfig, notebook: &Notebook) -> RunConfig {
+/// `chat`: one of its chats, which answers in the style the user set for it
+/// (a Studio output doesn't: a briefing shouldn't quiz the user back).
+fn notebook_config(state: &AppState, mut config: RunConfig, notebook: &Notebook, chat: bool) -> RunConfig {
     let native = state.provider(&config.provider_id).is_some_and(|p| matches!(p.format, sush_core::WireFormat::AnthropicMessages));
     config.tools = notebooks::specs()
         .into_iter()
@@ -1168,7 +1170,10 @@ fn notebook_config(state: &AppState, mut config: RunConfig, notebook: &Notebook)
     config.research = false;
     // What the UI sends for a notebook chat is the user's own context (how to
     // answer, what Sush remembers about them); the notebook's rules come first.
-    let section = notebooks::system_section(notebook, native);
+    let mut section = notebooks::system_section(notebook, native);
+    if let Some(style) = notebooks::chat_section(&notebook.extras.chat).filter(|_| chat) {
+        section = format!("{section}\n\n{style}");
+    }
     config.system = Some(match config.system.take().filter(|s| !s.trim().is_empty()) {
         Some(own) => format!(
             "{section}\n\n---\n\nThe user's own preferences follow. They shape how you answer, never what counts as an answer: \

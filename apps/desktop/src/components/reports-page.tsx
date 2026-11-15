@@ -49,6 +49,7 @@ import {
 import { useConnectorStatus } from "@/lib/library";
 import { createStore } from "@/lib/store";
 import { errorMessage, type Finding, type Report, type ReportScope, type Severity, type Workspace } from "@/lib/tauri";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 import { addWorkspace, useGitInfo, useWorkspaces } from "@/lib/workspaces";
 
@@ -89,11 +90,13 @@ export function ReportsPage({ kind, onOpenSession }: { kind: Kind; onOpenSession
             {list.length === 0 ? (
               <p className="mt-3 text-sm text-muted-foreground">No reviews of {workspace.name} yet.</p>
             ) : (
-              <ul className="mt-2 divide-y rounded-xl border">
-                {list.map((r) => (
-                  <ReportRow key={r.id} report={r} onOpen={() => setOpenId(r.id)} />
-                ))}
-              </ul>
+              <HoverHighlight className="mt-2" highlightClassName="bg-muted/50">
+                <ul className="divide-y rounded-xl border">
+                  {list.map((r) => (
+                    <ReportRow key={r.id} report={r} onOpen={() => setOpenId(r.id)} />
+                  ))}
+                </ul>
+              </HoverHighlight>
             )}
           </section>
         </>
@@ -427,7 +430,7 @@ function ReportRow({ report, onOpen }: { report: Report; onOpen: () => void }) {
   const state = useReportState(report);
   return (
     <li>
-      <button type="button" onClick={onOpen} className="flex w-full items-center gap-4 px-4 py-3 text-left transition-colors hover:bg-muted/50">
+      <button type="button" onClick={onOpen} data-hover-item className="relative flex w-full items-center gap-4 px-4 py-3 text-left in-[li:first-child]:rounded-t-xl in-[li:last-child]:rounded-b-xl">
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{report.title}</span>
           <span className="mt-0.5 block text-xs text-muted-foreground">{formatWhen(new Date(report.createdAt))}</span>

@@ -66,6 +66,7 @@ import {
   type TemplateIcon,
 } from "@/lib/automations";
 import { useConversations } from "@/lib/store";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 import { useWorkflows } from "@/lib/workflows";
 import { useWorkspaces } from "@/lib/workspaces";
@@ -208,7 +209,8 @@ export function AutomationsPage({ onOpenSession }: { onOpenSession: (id: string)
           <h2 id="automation-templates" className="text-sm font-medium text-muted-foreground">
             {automations.length > 0 ? "Start from a template" : "No automations yet. Start from a template"}
           </h2>
-          <div className="mt-4 grid gap-x-8 gap-y-2 sm:grid-cols-2">
+          {/* One background glides between templates on hover, as in the sidebar. */}
+          <HoverHighlight className="mt-4 grid gap-x-8 gap-y-2 sm:grid-cols-2" highlightClassName="rounded-xl bg-muted/60">
             {TEMPLATES.map((t) => {
               const Icon = TEMPLATE_ICONS[t.icon];
               return (
@@ -216,7 +218,8 @@ export function AutomationsPage({ onOpenSession }: { onOpenSession: (id: string)
                   key={t.name}
                   type="button"
                   onClick={() => setEditing({ draft: fromTemplate(t) })}
-                  className="flex gap-4 rounded-xl p-3 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+                  data-hover-item
+                  className="relative flex gap-4 rounded-xl p-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-card">
                     <Icon className="size-4.5 text-muted-foreground" />
@@ -231,7 +234,7 @@ export function AutomationsPage({ onOpenSession }: { onOpenSession: (id: string)
                 </button>
               );
             })}
-          </div>
+          </HoverHighlight>
         </section>
 
         <p className="mt-12 text-xs text-muted-foreground">
@@ -523,17 +526,20 @@ function AutomationDialog({
                 Recent runs
               </h3>
               {runs.length === 0 && <p className="text-sm text-muted-foreground">No runs yet.</p>}
+              <HoverHighlight className="grid gap-1" highlightClassName="rounded-md bg-muted">
               {runs.map((r) => (
                 <button
                   key={r.threadId}
                   type="button"
                   onClick={() => onOpenSession(r.threadId)}
-                  className="-mx-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                  data-hover-item
+                  className="relative -mx-2 flex items-center gap-2 rounded-md px-2 py-1.5 text-left"
                 >
                   <span className="min-w-0 flex-1 truncate">{conversations.find((c) => c.id === r.threadId)?.title ?? existing.name}</span>
                   <span className="shrink-0 text-xs text-muted-foreground">{formatWhen(new Date(r.at))}</span>
                 </button>
               ))}
+              </HoverHighlight>
             </section>
           )}
         </div>

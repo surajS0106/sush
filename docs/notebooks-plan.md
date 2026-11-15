@@ -161,7 +161,9 @@ Status (2026-11-09):
 - **Phase 3:** written (quiz, flashcards, mind map). Not built yet.
 - **Phase 4:** written (YouTube, audio, past chats, Cowork files). Not built yet. The overview arrived earlier.
 - **Phase 6:** written (sharing a notebook's chat: titles, outputs, and cited passages if the owner allows). Not built yet; needs the two-instance hand test in the `multiplayer` skill.
-- **Phase 5:** written (audio overviews). Not built yet. Voices: the computer's own by default, or any OpenAI-style `/audio/speech` provider, which covers cloud and local servers. Interactive mode (talking back to the hosts) is still to come.
+- **Phase 5:** written (audio overviews). Not built yet. Voices: the computer's own by default, or any OpenAI-style `/audio/speech` provider, which covers cloud and local servers.
+- **Phase 7 (2026-11-16):** written: chat style per notebook, spaced-repetition flashcards, joining an audio overview (interactive mode), audio formats (deep dive, brief, critique, debate). Not built yet.
+- **Phases 8 to 14:** planned below, under "After phase 7".
 
 See `docs/design-notes/notebooks.md`.
 
@@ -178,6 +180,53 @@ See `docs/design-notes/notebooks.md`.
 4. **More source kinds:** YouTube, audio (Whisper), past chats, Cowork files, and the empty-notebook overview.
 5. **Audio overview:** script, then voices, then the player.
 6. **Sharing:** notebook intents and redaction.
+7. **Learning and listening:** chat style, spaced repetition, Join, audio formats.
+
+## After phase 7
+
+Gaps left against NotebookLM, and features it doesn't have. They're in the order to build them: each one either stands alone or depends only on an earlier one. Sizes are rough: S is a day or less, M a few days, L a week or more.
+
+### 8. Follow-ups to phase 7 (S each)
+- **Due cards outside Studio.** Show a badge on the notebook card and a count by Notebooks in the sidebar, using `deckStatus` across notebooks. At launch, the leader window shows one toast ("12 cards due in 3 notebooks") that opens the first deck due.
+- **Keep a Join answer.** Add "Keep in the overview" to the live turns. It writes them into the script with `notebook_note_set_data`, which already accepts any audio overview data whose clips are blobs. They stay marked `live` so the transcript can still show "You asked".
+- **Ask by voice.** A mic button in the Join form, through `useDictation` (Yammer pastes into the focused field, so it works today; Sush's own Whisper needs the button).
+- **Join with the computer's voices while a line is speaking.** Check that `speechSynthesis.cancel()` stops mid-word on macOS and Windows. If it doesn't, Join waits for the end of the line.
+
+### 9. Re-sync sources (M)
+- `notebook_source_refresh` reads a link, YouTube or Cowork-file source again, then compares a hash of the text it gets with the one stored on `Source`. If the text changed, the source is chunked and indexed again under the same source id.
+- The hard part is citations. Old answers point at chunk ids that will no longer exist. Plan: keep a source's old chunks in a `source_chunks_old` table, without an FTS entry, until no thread or note cites them. A citation into them opens with a note saying it's from an earlier version of the source.
+- UI: "Check for changes" on a source and on the whole notebook, and a "changed" dot on sources that were updated.
+
+### 10. Disagreements, a Studio output (M)
+- A new interactive `NoteKind::Disagreements`, saved through `studio_save` as `{ points: [{ topic, sides: [{ says, source }], assessment }] }`. Each side must cite a passage from a different source than the others; `save_studio` checks that.
+- The player shows each point as its sides next to each other, each passage opening in the viewer, with the assessment below. It's only offered when two or more sources are checked.
+- Why: NotebookLM has nothing like this, and it reuses the Studio run, the save tool and the source chips as they are.
+
+### 11. Research a topic (M)
+- Quick discovery already exists: the web search in Add sources, with results to tick.
+- The deeper version is a Studio-like run with `web_search` and `web_fetch` plus a `source_propose` tool. The model plans several searches, reads the candidates and proposes 5 to 15 sources, each with a reason. A card lists them to tick, and ticked ones go through `notebook_add_link`.
+- It's a run of its own like a Studio output, so it can be stopped and its cost shows in usage. Proposals are only added once the user ticks them.
+
+### 12. Slides and video overviews (L)
+- **Slides:** a Studio kind that writes a deck in the `slides_write` shape (`lib/slides.ts`, `validateSlides`), with each slide's sources in its notes. It opens in the existing deck panel, so presenting and the PowerPoint export come with it.
+- **Video overview:** the same deck plus an audio-overview-style script with a slide index on each turn. The player shows the slide while its turns play, using the same voices and the same Join.
+- Exporting a video file is left out for now: there's no ffmpeg in the app. A later option is recording a canvas with `MediaRecorder` in the webview.
+- An infographic (one tall designed page) can follow as an artifact if slides prove the pattern.
+
+### 13. Watched sources (M, after 9)
+- A "Watch" toggle on link and YouTube sources. Once a day, the leader window (`whenLeader`, like automations) re-syncs the watched sources of each notebook.
+- When one changes, a "What changed" note is written: a Studio-like run given the old and the new chunks, citing both.
+- Like automations, it only runs while the app is open, and the note says when it last checked.
+
+### 14. Code notebooks and studying together (L each, later)
+- **Code notebooks:** a Cowork folder added as one live source. Its text files are indexed through `WorkspaceFs`, skipping secrets, `.git` and what `.gitignore` ignores. Citations open the file at the line, and an answer's "Fix in Cowork" starts a session there.
+- Code notebooks overlap the Wiki report: decide whether a wiki becomes a notebook or links to one before building.
+- **Studying together:** in a shared notebook chat, guests take a quiz with the owner: a new `quiz-answer` intent, with scores the host keeps and shows to everyone. A guest's Join question goes through the owner's approval, like other guest actions.
+- Both need the `multiplayer` skill read first. Every new intent stays deny-by-default in `policy::authorize`.
+
+### Left out on purpose
+- **Public links anyone can open without signing in.** Shares are end-to-end encrypted and the relay can't read them. A public link would mean the relay keeps readable content, which goes against that model. Revisit only if users ask, and then as a static export the owner uploads on purpose.
+- **A mobile app.**
 
 ## Where the code goes
 
@@ -192,6 +241,10 @@ See `docs/design-notes/notebooks.md`.
   - Release notes: `UNRELEASED` in `lib/changelog.ts`.
 
 ## Open questions
+
+- Re-sync (phase 9): keep old chunks until nothing cites them, or keep only the cited ones?
+- Disagreements (phase 10): is it worth running when the sources mostly agree, or should Studio check first and say so?
+- Video overviews (phase 12): does narrating slides without a video export meet the need, or is the export what people want?
 
 - Which text-to-speech provider comes first for audio overviews.
 - Small local models stay grounded poorly. Should a notebook warn about this or suggest a stronger model?

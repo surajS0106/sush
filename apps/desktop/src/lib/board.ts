@@ -1,4 +1,4 @@
-// The Board: the user's own tasks as cards in columns (by priority or by status).
+// The Board: the user's own tasks as cards in columns (by status, or by priority).
 // Tasks live in localStorage like projects, so every window follows them through the
 // `storage` event. A task can be worked on in a session: Sush starts one (Cowork in the
 // task's folder, else a chat) prefilled with the task, and remembers it on the task.
@@ -64,7 +64,18 @@ export const columnOf = (task: Task, groupBy: GroupBy): ColumnId =>
   groupBy === "status" || task.status === "done" ? task.status : task.priority;
 
 const tasks = createStore<Task[]>("sush.board.tasks", []);
-const view = createStore<BoardView>("sush.board.view", { groupBy: "priority", layout: "board", filter: "all", sort: "manual" });
+const view = createStore<BoardView>("sush.board.view", { groupBy: "status", layout: "board", filter: "all", sort: "manual" });
+
+// The board used to open grouped by priority; move views saved then onto status
+// once, so a later switch back to priority sticks.
+try {
+  if (!localStorage.getItem("sush.board.status-default")) {
+    localStorage.setItem("sush.board.status-default", "1");
+    if (view.get().groupBy === "priority") view.set((v) => ({ ...v, groupBy: "status" }));
+  }
+} catch {
+  // Storage unavailable: the default above still applies.
+}
 
 export const useTasks = () => useSyncExternalStore(tasks.subscribe, tasks.get);
 export const getTask = (id: string) => tasks.get().find((t) => t.id === id);

@@ -12,7 +12,10 @@ use std::sync::{LazyLock, Mutex};
 
 use serde::Serialize;
 use sush_core::agent::ui::new_id;
-use sush_core::notebooks::{self, CoverPosition, Note, NoteKind, NoteStatus, Notebook, Overview, Page, Passage, Source, SourceGuide, SourceKind, SourceStatus};
+use sush_core::notebooks::{
+    self, ChatStyle, CoverPosition, Grade, Note, NoteKind, NoteStatus, Notebook, Overview, Page, Passage, Source, SourceGuide, SourceKind,
+    SourceStatus,
+};
 use sush_core::web::{self, Fetched};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -251,6 +254,46 @@ pub async fn notebook_note_delete(state: State<'_, AppState>, note_id: String) -
     blocking(move || Ok(store.delete_note(&note_id)?)).await?;
     changed(&state, &note.notebook_id).await?;
     Ok(note.thread_id)
+}
+
+/// How the notebook's chats answer: a role, a goal and a length (`notebooks::chat_section`).
+#[tauri::command]
+pub async fn notebook_set_chat(state: State<'_, AppState>, id: String, chat: ChatStyle) -> AppResult<Notebook> {
+    let (store, nid) = (state.store.clone(), id.clone());
+    blocking(move || {
+        Ok(store.update_notebook_extras(&nid, |x, _| {
+            x.chat = chat.tidied();
+            Ok(None)
+        })?)
+    })
+    .await?;
+    changed(&state, &id).await
+}
+
+/// Record how well the user recalled flashcard `card` of a deck, scheduling its next review.
+#[tauri::command]
+pub async fn notebook_card_review(state: State<'_, AppState>, note_id: String, card: usize, grade: Grade) -> AppResult<Note> {
+    let store = state.store.clone();
+    let now = now_ms();
+    let note = blocking(move || {
+        Ok(store.update_note(&note_id, now, |n| notebooks::review_card(n, card, grade, now).map(|_| ()))?)
+    })
+    .await?;
+    changed(&state, &note.notebook_id).await?;
+    Ok(note)
+}
+
+/// The passages of a notebook's checked sources that best match `query`, for a
+/// question asked outside a chat (joining an audio overview).
+#[tauri::command]
+pub async fn notebook_search(state: State<'_, AppState>, id: String, query: String, limit: Option<usize>) -> AppResult<Vec<Passage>> {
+    let store = state.store.clone();
+    blocking(move || {
+        let notebook = store.notebook(&id)?.ok_or_else(|| AppError::NotFound("That notebook no longer exists.".into()))?;
+        let ids: Vec<String> = notebooks::searchable(&notebook).iter().map(|s| s.id.clone()).collect();
+        Ok(store.search_passages(&query, &ids, limit.unwrap_or(6).clamp(1, 15))?)
+    })
+    .await
 }
 
 /// Start a Studio output: a note marked "writing", whose run on `thread_id`

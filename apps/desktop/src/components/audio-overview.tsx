@@ -3,14 +3,19 @@
 // the computer's voices (Settings → Speech → Audio overviews) it's read live;
 // with a provider's, each turn is voiced once (`tts_speak`), kept with the
 // note, and played back in order. The transcript follows along and jumps on
-// click; each line can open the passage it rests on.
+// click; each line can open the passage it rests on. The owner can "Join":
+// pause, ask the hosts a question, and hear them answer it from the sources
+// (`lib/audio-join.ts`) before the interrupted line plays again.
 
-import { PauseIcon, PlayIcon, SkipBackIcon, SkipForwardIcon, SquareIcon, Volume2Icon } from "lucide-react";
+import { HandIcon, PauseIcon, PlayIcon, SendIcon, SkipBackIcon, SkipForwardIcon, SquareIcon, Volume2Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { SourceChip } from "@/components/notebook-play";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import { answerOnAir } from "@/lib/audio-join";
 import { openSettings } from "@/lib/library";
 import { api, errorMessage, type AudioOverviewData, type AudioTurn, type NotebookNote } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
@@ -19,12 +24,16 @@ import { DELIVERY, systemVoiceFor, useVoiceSettings, voicesKey, type VoiceSettin
 const RATES = [0.75, 1, 1.25, 1.5, 2];
 const WORDS_PER_MINUTE = 155;
 
-type Line = { chapter: number; index: number; turn: AudioTurn };
+/** `live`: an answer to a listener's question, not part of the script (`asked` on the first of them). */
+type Line = { chapter: number; index: number; turn: AudioTurn; live?: boolean; asked?: string };
 
 const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 
-/** `guest`: someone watching a shared notebook chat; the clips are the host's, so their computer reads it aloud. */
-export function AudioOverviewView({ note, guest }: { note: Pick<NotebookNote, "id" | "data">; guest?: boolean }) {
+/**
+ * `guest`: someone watching a shared notebook chat; the clips are the host's, so their computer reads it aloud.
+ * `notebookId`: the owner's notebook, whose sources the hosts answer from when the listener joins in.
+ */
+export function AudioOverviewView({ note, guest, notebookId }: { note: Pick<NotebookNote, "id" | "data">; guest?: boolean; notebookId?: string }) {
   const data = note.data as AudioOverviewData;
   const own = useVoiceSettings();
   const settings: VoiceSettings = guest ? { ...own, engine: "system" } : own;
@@ -50,7 +59,13 @@ export function AudioOverviewView({ note, guest }: { note: Pick<NotebookNote, "i
           </Button>
         </div>
       ) : voiced ? (
-        <Player lines={lines} chapters={data.chapters.map((c) => c.title)} settings={settings} minutes={minutes} totalWords={totalWords} />
+        <Player
+          script={lines}
+          chapters={data.chapters.map((c) => c.title)}
+          settings={settings}
+          minutes={minutes}
+          notebookId={guest ? undefined : notebookId}
+        />
       ) : (
         <MakeAudio note={note} data={data} lines={lines} settings={settings} minutes={minutes} />
       )}
@@ -131,18 +146,22 @@ function MakeAudio({ note, data, lines, settings, minutes }: { note: Pick<Notebo
 }
 
 function Player({
-  lines,
+  script,
   chapters,
   settings,
   minutes,
-  totalWords,
+  notebookId,
 }: {
-  lines: Line[];
+  script: Line[];
   chapters: string[];
   settings: VoiceSettings;
   minutes: number;
-  totalWords: number;
+  notebookId?: string;
 }) {
+  // The script, plus any answers to the listener's questions spliced in while listening.
+  const [lines, setLines] = useState(script);
+  useEffect(() => setLines(script), [script]);
+  const totalWords = useMemo(() => lines.reduce((n, l) => n + words(l.turn.text), 0), [lines]);
   const [at, setAt] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
@@ -151,6 +170,45 @@ function Player({
   const token = useRef(0);
   const transcript = useRef<HTMLOListElement>(null);
   const provider = settings.engine === "provider";
+
+  // Joining in: the question being typed, and whether the hosts are working on it.
+  const [asking, setAsking] = useState(false);
+  const [question, setQuestion] = useState("");
+  const [thinking, setThinking] = useState(false);
+  const join = () => {
+    setPlaying(false);
+    setAsking(true);
+  };
+  const ask = async () => {
+    const q = question.trim();
+    if (!q || !notebookId || thinking) return;
+    // Where the listener cut in; the answer goes before that line, which then plays again in full.
+    const where = at;
+    setThinking(true);
+    try {
+      const line = (l: Line) => ({ chapter: chapters[l.chapter] ?? "", turn: l.turn });
+      let turns = await answerOnAir(notebookId, q, lines.slice(0, where).map(line), lines[where] && line(lines[where]));
+      if (provider) {
+        turns = await Promise.all(
+          turns.map(async (t) => ({
+            ...t,
+            audio: await api.ttsSpeak(settings.providerId!, settings.model.trim(), (t.host === "a" ? settings.voiceA : settings.voiceB).trim(), t.text, DELIVERY),
+          })),
+        );
+      }
+      const chapter = lines[where]?.chapter ?? lines[where - 1]?.chapter ?? 0;
+      const added: Line[] = turns.map((turn, i) => ({ chapter, index: -1, turn, live: true, asked: i === 0 ? q : undefined }));
+      setLines((ls) => [...ls.slice(0, where), ...added, ...ls.slice(where)]);
+      setAt(where);
+      setQuestion("");
+      setAsking(false);
+      setPlaying(true);
+    } catch (e) {
+      toast.error("The hosts couldn’t answer that", { description: errorMessage(e) });
+    } finally {
+      setThinking(false);
+    }
+  };
 
   const advance = (mine: number) => {
     if (mine !== token.current) return;
@@ -238,6 +296,11 @@ function Player({
               {elapsed} of about {minutes} min · {provider ? settings.model : "this computer’s voices"}
             </p>
           </div>
+          {notebookId && (
+            <Button variant="outline" size="sm" aria-pressed={asking} title="Interrupt the hosts with a question" onClick={join}>
+              <HandIcon /> Join
+            </Button>
+          )}
           <label className="sr-only" htmlFor="overview-rate">
             Speed
           </label>
@@ -282,6 +345,47 @@ function Player({
             return <span key={c} aria-hidden className="absolute top-0 h-full w-0.5 bg-background" style={{ left: `${(before / totalWords) * 100}%` }} />;
           })}
         </div>
+        {asking && (
+          <form
+            className="flex flex-col gap-2 rounded-lg border border-brand/30 bg-brand/5 p-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void ask();
+            }}
+          >
+            <label htmlFor="overview-question" className="text-xs font-medium">
+              Ask the hosts. They’ll answer from your sources, then carry on.
+            </label>
+            <div className="flex gap-2">
+              <Input
+                id="overview-question"
+                autoFocus
+                value={question}
+                maxLength={500}
+                disabled={thinking}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setAsking(false);
+                  }
+                }}
+                placeholder="e.g. Wait, how big was that study?"
+              />
+              <Button type="submit" size="sm" disabled={thinking || !question.trim()}>
+                {thinking ? <Spinner /> : <SendIcon />} Ask
+              </Button>
+              <Button type="button" variant="ghost" size="sm" disabled={thinking} onClick={() => setAsking(false)}>
+                Cancel
+              </Button>
+            </div>
+            {thinking && (
+              <p className="text-xs text-muted-foreground" role="status">
+                The hosts are looking through your sources…
+              </p>
+            )}
+          </form>
+        )}
         {chapters.length > 1 && (
           <ul className="flex flex-wrap gap-1.5" aria-label="Chapters">
             {chapters.map((title, c) => (
@@ -307,10 +411,20 @@ function Player({
         {lines.map((l, i) => (
           <li key={i} data-line={i} className="scroll-mt-4">
             {l.index === 0 && <p className="mt-3 mb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">{chapters[l.chapter]}</p>}
+            {l.asked && (
+              <p className="mt-2 mb-1 flex items-start gap-2 px-2 text-sm">
+                <HandIcon className="mt-0.5 size-3.5 shrink-0 text-brand" aria-hidden />
+                <span>
+                  <span className="text-muted-foreground">You asked: </span>
+                  {l.asked}
+                </span>
+              </p>
+            )}
             <div
               className={cn(
                 "group flex gap-3 rounded-lg px-2 py-1.5 transition-colors",
                 i === at ? "bg-brand/10" : "hover:bg-muted/60",
+                l.live && "border-l-2 border-brand/40",
               )}
             >
               <span

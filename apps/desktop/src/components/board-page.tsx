@@ -56,6 +56,7 @@ import {
   type TaskStatus,
 } from "@/lib/board";
 import { useConversations, type Conversation } from "@/lib/store";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 import { useWorkspaces } from "@/lib/workspaces";
 import type { Workspace } from "@/lib/tauri";
@@ -201,8 +202,8 @@ export function BoardPage({
           <DropdownMenuContent align="end" className="w-48">
             <DropdownMenuLabel className="text-xs text-muted-foreground">Group by</DropdownMenuLabel>
             <DropdownMenuRadioGroup value={view.groupBy} onValueChange={(v) => setBoardView({ groupBy: v as GroupBy })}>
-              <DropdownMenuRadioItem value="priority">Priority</DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="status">Status</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="priority">Priority</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuLabel className="text-xs text-muted-foreground">Sort by</DropdownMenuLabel>
@@ -597,6 +598,7 @@ function TaskList({
               <h2 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{col.label}</h2>
               <span className="text-[11px] text-muted-foreground tabular-nums">{tasks.length}</span>
             </div>
+            <HoverHighlight highlightClassName="rounded-md bg-muted/60">
             <ul>
               {tasks.map((t) => {
                 const folder = folderName(t.workspaceId);
@@ -606,7 +608,8 @@ function TaskList({
                     <button
                       type="button"
                       onClick={() => onOpen(t)}
-                      className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-muted/60"
+                      data-hover-item
+                      className="relative flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm"
                     >
                       {t.status === "done" ? (
                         <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -635,6 +638,7 @@ function TaskList({
                 );
               })}
             </ul>
+            </HoverHighlight>
           </section>
         );
       })}
@@ -873,13 +877,15 @@ function TaskDialog({
             {sessions.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label>Sessions</Label>
+                <HoverHighlight highlightClassName="rounded-md bg-muted">
                 <ul className="flex flex-col gap-0.5">
                   {sessions.map((c) => (
                     <li key={c.id}>
                       <button
                         type="button"
                         onClick={() => onOpenSession(c.id)}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted"
+                        data-hover-item
+                        className="relative flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm"
                       >
                         <MessagesSquareIcon className="size-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0 flex-1 truncate">{c.title}</span>
@@ -888,6 +894,7 @@ function TaskDialog({
                     </li>
                   ))}
                 </ul>
+                </HoverHighlight>
               </div>
             )}
           </form>

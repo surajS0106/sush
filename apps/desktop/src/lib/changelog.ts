@@ -31,7 +31,14 @@ export interface Release {
 export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "improved", title: "Board", text: "The board now opens with a column for each status (To do, In progress, Needs attention, Ready for review, Done). You can still group by priority from Sort." },
+  { kind: "improved", title: "CRM stages", text: "Each stage has its own colour from Sush's palette: open stages step from orange to teal along the pipeline, won stages are Sush teal and lost ones coral, whatever accent you pick." },
+  { kind: "new", title: "Join an audio overview", text: "Press Join while an audio overview plays and ask the hosts a question. They answer it from your sources, citing the passages, and then pick up where they left off." },
+  { kind: "new", title: "Flashcards that remember", text: "Flashcard decks now use spaced repetition. Rate each card Again, Hard, Good or Easy, and Sush brings it back just before you'd forget it. Studio shows how many cards are due, and Practice all still runs through the whole deck." },
+  { kind: "new", title: "Configure a notebook's chat", text: "Choose how a notebook's chats answer: as a research assistant, a learning guide that quizzes you and gives hints, a critic who weighs the evidence, or in plain words. You can also add your goal and set how long answers should be. Answers still come from your sources." },
+  { kind: "new", title: "Audio overview formats", text: "Besides the two-host deep dive, an audio overview can now be a two-minute brief in one voice, a critique that weighs the sources' strengths and weak points, or a debate where the hosts argue opposite sides. Pick one in the audio overview's options in Studio." },
+];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [

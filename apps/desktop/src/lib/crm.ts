@@ -224,6 +224,17 @@ export const BUILT_IN_TABS: { tab: CrmTab; label: string }[] = [
   { tab: "renewals", label: "Renewals" },
 ];
 
+/**
+ * Columns a built-in tab starts with hidden (all still one click away in
+ * Columns), so its table fits a laptop screen without scrolling sideways.
+ * Deals leave renewals to their own tab; renewals leave out what matters
+ * before a deal closes.
+ */
+const HIDDEN_BY_DEFAULT: Partial<Record<CrmTab, string[]>> = {
+  deals: ["renewalDate", "owner"],
+  renewals: ["closeDate", "probability", "owner"],
+};
+
 /** A built-in tab as an unsaved view. */
 export function baseView(tab: CrmTab): CrmView {
   return {
@@ -233,7 +244,7 @@ export function baseView(tab: CrmTab): CrmView {
     query: "",
     filters: [],
     sort: tab === "renewals" ? { field: "renewalDate", desc: false } : null,
-    hidden: [],
+    hidden: HIDDEN_BY_DEFAULT[tab] ?? [],
     layout: "table",
     createdAt: 0,
   };

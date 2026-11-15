@@ -46,6 +46,7 @@ import {
   useGitInfo,
   useWorkspaces,
 } from "@/lib/workspaces";
+import { HoverHighlight } from "@/components/ui/motion-highlight";
 import { cn } from "@/lib/utils";
 
 /** Grid or list, remembered per window. */
@@ -220,7 +221,11 @@ function Overview({ onNewSession, onOpenSession, onOpenFolder }: FoldersPageProp
         ) : folders.length === 0 ? (
           <p className="mt-6 text-sm text-muted-foreground">No folders match.</p>
         ) : (
-          <div className={cn("mt-4", view === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3" : "flex flex-col divide-y rounded-xl border")}>
+          // In the list, one background glides between rows on hover, as in the sidebar; grid cards keep their own.
+          <HoverHighlight
+            className={cn("mt-4", view === "grid" ? "grid grid-cols-[repeat(auto-fill,minmax(14rem,1fr))] gap-3" : "flex flex-col divide-y rounded-xl border")}
+            highlightClassName="bg-muted/50"
+          >
             {folders.map((w) => (
               <FolderCard
                 key={w.id}
@@ -232,7 +237,7 @@ function Overview({ onNewSession, onOpenSession, onOpenFolder }: FoldersPageProp
                 onNewSession={() => onNewSession(w.id)}
               />
             ))}
-          </div>
+          </HoverHighlight>
         )}
       </section>
 
@@ -293,9 +298,10 @@ function FolderCard({
   const readOnly = w.access === "read-only";
   return (
     <div
+      data-hover-item={list || undefined}
       className={cn(
-        "group relative flex items-center gap-3 transition-colors hover:bg-muted/50",
-        list ? "px-3 py-2.5 first:rounded-t-xl last:rounded-b-xl" : "rounded-xl border bg-card px-3.5 py-3 shadow-xs",
+        "group relative flex items-center gap-3",
+        list ? "px-3 py-2.5 first:rounded-t-xl last:rounded-b-xl" : "rounded-xl border bg-card px-3.5 py-3 shadow-xs transition-colors hover:bg-muted/40",
       )}
     >
       <button type="button" onClick={onOpen} className="absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Open ${w.name}`} />
