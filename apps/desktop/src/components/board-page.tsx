@@ -791,7 +791,7 @@ function TaskDialog({
 
   return (
     <Dialog open={!!editing} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{existing ? "Edit task" : "New task"}</DialogTitle>
           <DialogDescription>
@@ -829,53 +829,56 @@ function TaskDialog({
                 className="min-h-24"
               />
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="flex flex-col gap-1.5">
+            {/* Status gets the widest column: "Needs attention" is the longest fixed label. */}
+            <div className="grid grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_minmax(0,1fr)] gap-3">
+              <div className="flex min-w-0 flex-col gap-1.5">
                 <Label>Priority</Label>
                 <Select value={draft.priority} onValueChange={(v) => setDraft({ ...draft, priority: v as Priority })}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full *:data-[slot=select-value]:min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {PRIORITIES.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         <PriorityBars priority={p.id} />
-                        {p.label.replace(" priority", "")}
+                        <span className="truncate">{p.label.replace(" priority", "")}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex min-w-0 flex-col gap-1.5">
                 <Label>Status</Label>
                 <Select value={draft.status} onValueChange={(v) => setDraft({ ...draft, status: v as TaskStatus })}>
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full *:data-[slot=select-value]:min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     {STATUSES.map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         <StatusIcon status={s.id} />
-                        {s.label}
+                        <span className="truncate">{s.label}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex min-w-0 flex-col gap-1.5">
                 <Label>Folder</Label>
                 <Select
                   value={draft.workspaceId ?? NO_FOLDER}
                   onValueChange={(v) => setDraft({ ...draft, workspaceId: v === NO_FOLDER ? undefined : v })}
                 >
-                  <SelectTrigger className="w-full">
+                  <SelectTrigger className="w-full *:data-[slot=select-value]:min-w-0">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_FOLDER}>None (chat)</SelectItem>
+                    <SelectItem value={NO_FOLDER}>
+                      <span className="truncate">None (chat)</span>
+                    </SelectItem>
                     {workspaces.map((w) => (
                       <SelectItem key={w.id} value={w.id}>
-                        {w.name}
+                        <span className="truncate">{w.name}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
