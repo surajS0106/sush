@@ -372,6 +372,7 @@ function BoardColumns({
     dragged.current = false;
     const move = (ev: PointerEvent) => {
       if (!active && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 5) return;
+      if (!active) window.getSelection()?.removeAllRanges();
       active = true;
       dragged.current = true;
       setDrag({
@@ -401,12 +402,19 @@ function BoardColumns({
       window.removeEventListener("pointerup", end);
       window.removeEventListener("pointercancel", end);
       window.removeEventListener("keydown", key);
+      document.removeEventListener("selectstart", noSelect);
       document.body.style.removeProperty("user-select");
+      document.body.style.removeProperty("-webkit-user-select");
       cleanup.current = null;
     };
+    // WKWebView ignores the unprefixed user-select, so a drag would select the
+    // column titles it passes over; refuse selection outright while it lasts.
+    const noSelect = (ev: Event) => ev.preventDefault();
     cleanup.current?.();
     cleanup.current = stop;
+    document.addEventListener("selectstart", noSelect);
     document.body.style.userSelect = "none";
+    document.body.style.setProperty("-webkit-user-select", "none");
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
     window.addEventListener("pointercancel", end);
