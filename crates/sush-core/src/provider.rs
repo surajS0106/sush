@@ -157,6 +157,7 @@ pub fn presets() -> Vec<ProviderConfig> {
         ),
         p("openrouter", "OpenRouter", OpenaiChat, "https://openrouter.ai/api/v1", key()),
         p("groq", "Groq", OpenaiChat, "https://api.groq.com/openai/v1", key()),
+        p("xai", "xAI (Grok)", OpenaiChat, "https://api.x.ai/v1", key()),
         p("ollama", "Ollama (local)", OpenaiChat, "http://localhost:11434/v1", AuthKind::None),
         p("lmstudio", "LM Studio (local)", OpenaiChat, "http://localhost:1234/v1", AuthKind::None),
         p("custom-openai", "Custom (OpenAI-compatible)", OpenaiChat, "", key()),

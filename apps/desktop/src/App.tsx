@@ -23,6 +23,8 @@ import { lastActiveTab, SessionTabs, useTabs } from "@/components/session-tabs";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { WhatsNewDialog } from "@/components/changelog";
 import { checkWhatsNew } from "@/lib/changelog";
+import { Onboarding } from "@/components/onboarding";
+import { checkOnboarding } from "@/lib/onboarding";
 import { PanelToggles, WorkspaceChip } from "@/components/workspace-panel";
 import { Separator } from "@/components/ui/separator";
 import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
@@ -204,6 +206,8 @@ export default function App() {
     startWorkflowTriggers();
     // After an update, the notes for what changed (once, in one window).
     whenLeader(() => void checkWhatsNew());
+    // The welcome tour, the first time this install opens (or when turned back on in Settings).
+    whenLeader(checkOnboarding);
   }, []);
 
   // Alert as usage crosses the budget's thresholds.
@@ -325,6 +329,7 @@ export default function App() {
         <JoinSessionDialog onJoined={openShared} />
         <SettingsDialog providers={providers ?? []} onProvidersChanged={() => void refresh()} />
         <WhatsNewDialog />
+        <Onboarding hasProviders={providers ? providers.length > 0 : null} />
         <Toaster richColors position="bottom-right" />
       </TooltipProvider>
     </MotionConfig>

@@ -54,6 +54,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { HoverHighlight, MotionHighlight } from "@/components/ui/motion-highlight";
 import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
 import { loadCrm, saveSettings, useCrm } from "@/lib/crm";
@@ -61,6 +62,7 @@ import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, ty
 import { changePassword, connectedApps, deleteAccount, disconnectApp, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
+import { openOnboarding, setOnboardingAtLaunch, useOnboardingAtLaunch } from "@/lib/onboarding";
 import type { ProviderView } from "@/lib/tauri";
 import { cn, focusComposer } from "@/lib/utils";
 import { setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib/weather";
@@ -77,7 +79,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Settings",
     items: [
-      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width glass blur frosted composer motion animation units temperature celsius fahrenheit weather" },
+      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width glass blur frosted composer motion animation units temperature celsius fahrenheit weather onboarding welcome tour intro getting started" },
       { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out delete account" },
       { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
       { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
@@ -321,7 +323,31 @@ function GeneralSection() {
         </Setting>
       </Group>
       <TemperatureGroup />
+      <OnboardingGroup />
     </Page>
+  );
+}
+
+function OnboardingGroup() {
+  const atLaunch = useOnboardingAtLaunch();
+  return (
+    <Group title="Getting started">
+      <Setting title="Welcome tour" description="Show the tour of Sush the next time it opens. It turns itself off once you finish or skip it.">
+        <Switch checked={atLaunch} onCheckedChange={setOnboardingAtLaunch} aria-label="Welcome tour" />
+      </Setting>
+      <Setting title="Take the tour now" description="A quick walk through the look, Chat and Cowork, the sidebar and connecting a model.">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            closeSettings();
+            openOnboarding();
+          }}
+        >
+          Start tour
+        </Button>
+      </Setting>
+    </Group>
   );
 }
 
@@ -355,7 +381,7 @@ const THEMES = [
 ] as const;
 
 /** Theme choices as little window previews, like macOS's Appearance setting. */
-function ThemePicker({ value, onChange }: { value: string; onChange: (theme: string) => void }) {
+export function ThemePicker({ value, onChange }: { value: string; onChange: (theme: string) => void }) {
   return (
     <div role="radiogroup" aria-label="Theme" className="flex gap-4">
       {THEMES.map((t) => {
@@ -429,7 +455,7 @@ function ThemePreview({ mode }: { mode: "light" | "dark" }) {
   );
 }
 
-function AccentPicker({
+export function AccentPicker({
   value,
   onChange,
   custom,

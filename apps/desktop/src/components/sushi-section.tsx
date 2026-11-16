@@ -16,7 +16,7 @@ import { MASCOTS, setMascot, setMascotSounds, useMascot, useMascotSounds } from 
 import { cn } from "@/lib/utils";
 
 /** The tile color behind each character: the avatar's own, salmon pink for Sushi. */
-const tint = (key: string) => AVATARS.find((a) => a.key === key)?.background ?? "#ffe1d8";
+export const tint = (key: string) => AVATARS.find((a) => a.key === key)?.background ?? "#ffe1d8";
 
 export function SushiSection() {
   const current = useMascot();
@@ -81,7 +81,7 @@ function Stage({ kind, label }: { kind: string; label: string }) {
   );
 }
 
-function CharacterTile({
+export function CharacterTile({
   kind,
   label,
   selected,

@@ -28,10 +28,12 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Audio overviews you can join, flashcards that remember, Grok, and a welcome tour.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
+  { kind: "new", title: "xAI Grok", text: "Add xAI as a provider with your API key from console.x.ai to chat with Grok models." },
+  { kind: "new", title: "Welcome tour", text: "New to Sush? A short tour greets you the first time you open it: pick a theme, accent and buddy, see what Chat and Cowork do, find your way around the sidebar and connect a model. Take it again any time from Settings → General." },
   { kind: "improved", title: "Board", text: "The board now opens with a column for each status (To do, In progress, Needs attention, Ready for review, Done). You can still group by priority from Sort." },
   { kind: "improved", title: "CRM stages", text: "Each stage has its own colour from Sush's palette: open stages step from orange to teal along the pipeline, won stages are Sush teal and lost ones coral, whatever accent you pick." },
   { kind: "new", title: "Join an audio overview", text: "Press Join while an audio overview plays and ask the hosts a question. They answer it from your sources, citing the passages, and then pick up where they left off." },
