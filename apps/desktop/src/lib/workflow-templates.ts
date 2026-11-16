@@ -29,6 +29,37 @@ function build(steps: { key: string; type: NodeType; label: string; config: Node
 
 export const WORKFLOW_TEMPLATES: WorkflowTemplate[] = [
   {
+    name: "Follow up after a meeting",
+    description: "When a Yammer meeting's notes are written: pull out your action items and draft the follow-up email, put them on your Board, and tell you.",
+    steps: ["meeting", "agent", "board-task", "notify"],
+    graph: () =>
+      build([
+        { key: "trigger", type: "meeting", label: "Meeting finished", config: {} },
+        {
+          key: "followup",
+          type: "agent",
+          label: "Action items and follow-up",
+          after: "trigger",
+          config: {
+            prompt:
+              "These are the notes of my meeting “{{trigger.title}}” ({{trigger.link}}):\n\n{{trigger.notes}}\n\nThe notes I typed during it:\n" +
+              "{{trigger.yourNotes}}\n\nList the action items that are mine as a checklist, then draft a short follow-up email to " +
+              "the others: what was agreed and the next steps with owners. Don't invent commitments or dates. If someone in my CRM " +
+              "was in the meeting, log a short note of it on their record.",
+            output: "text",
+          },
+        },
+        {
+          key: "task",
+          type: "board-task",
+          label: "Follow-up task",
+          after: "followup",
+          config: { title: "Follow up: {{trigger.title}}", description: "{{followup}}\n\n{{trigger.link}}", priority: "medium" },
+        },
+        { key: "tell", type: "notify", label: "Tell me", after: "task", config: { title: "Follow-up ready: {{trigger.title}}", body: "{{followup}}" } },
+      ]),
+  },
+  {
     name: "Welcome a new customer",
     description: "When a deal is won: research the company, log onboarding notes on the deal, and add a kickoff task to your Board.",
     steps: ["crm-event", "agent", "crm-log", "board-task"],

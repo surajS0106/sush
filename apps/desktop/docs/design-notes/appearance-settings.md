@@ -1,8 +1,16 @@
 # Appearance Settings — Design Notes
 
-Last updated: 2026-10-11
+Last updated: 2026-11-16
 
 ## What changed
+
+### 2026-11-16 (OpenDyslexic chat font)
+- Added `@fontsource/opendyslexic` (`package.json`) and imported its 400, 400 italic, 700 and 700 italic faces in `src/index.css`.
+- New `opendyslexic` value for `ChatFont` (`src/lib/appearance.ts`), a `[data-chat-font="opendyslexic"]` rule setting `--transcript-font` (`src/index.css`), and an OpenDyslexic entry in `FONTS` (`src/components/settings-dialog.tsx`).
+- Release note added to `UNRELEASED` (`src/lib/changelog.ts`).
+
+### 2026-11-16 (sidebar theme menu stays open)
+- The Theme radio items in the sidebar account menu (`ProfileMenu`, `src/components/app-sidebar.tsx`) call `preventDefault()` in `onSelect`, so choosing a theme no longer closes the menu.
 
 ### 2026-10-11 (theme cross-fade)
 - New `transitionTheme(update)` in `src/lib/appearance.ts`. It runs a theme change inside `document.startViewTransition`, with `flushSync` so next-themes swaps the class on `<html>` before the new snapshot is taken. If the API is missing, or motion is reduced (in the app setting or the OS), the change is instant.
@@ -22,6 +30,10 @@ The icon-only control (monitor, sun, moon) only showed its meaning in tooltips, 
 The previews use hardcoded light and dark panel colours instead of theme tokens. Each preview has to show its own mode no matter which theme is active. The wallpaper and menu bar still use `--brand`, so the tiles follow the chosen accent colour.
 
 Theme switches used to cut over in one frame. `ThemeProvider` keeps `disableTransitionOnChange` on purpose: if every element ran its own CSS colour transition, they would finish at different times and the page would flicker. A view transition fades one snapshot of the old page into the new one, so the whole page changes as a unit. Following the OS theme ("Auto") is not animated, because that change does not go through `setTheme`.
+
+Choosing a theme in the sidebar account menu used to close the menu while the cross-fade ran. The view transition had already captured the open menu in its snapshot, and the menu was closed underneath. It stayed visible for the 360ms fade, then disappeared all at once. Now the menu stays open and fades with the rest of the page, and the checkmark moves to the chosen theme. This also lets people try each theme without reopening the menu. The trade-off is one extra click or Escape to close it.
+
+OpenDyslexic was added as a reading aid: its heavier letter bottoms help some readers with dyslexia tell similar letters apart. It goes through the existing chat font setting rather than a separate accessibility toggle, so it changes only the transcript, like the other fonts. It ships bundled with the app (no network font load), and it gets normal word spacing because the extra spacing is only for Plus Jakarta Sans. Only the weights the font has (regular and bold) are loaded, so semibold text falls back to the nearest of those.
 
 ## What makes it stand out
 

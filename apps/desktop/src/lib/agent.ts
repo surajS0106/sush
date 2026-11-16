@@ -13,6 +13,7 @@
 //   automation_save saves an automation, after the user approves (automations.ts)
 //   artifact_write  runs immediately: the chat shows it as a versioned artifact (artifacts.ts)
 //   slides_write    runs immediately: the deck opens in the slides panel (slides.ts)
+//   doc_*           run at once in Rust: a Notion-style doc the user edits and shares (docs.ts)
 //   image_generate  runs immediately with the image model from Settings → Images (images.ts)
 //   map_show        runs immediately: the chat shows a Google Map of a route or place (maps.ts)
 //   flights_search  runs immediately: the chat shows a flight card to book from (flights.ts)
@@ -29,6 +30,7 @@ import { useSyncExternalStore } from "react";
 
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
+import { DOC_TOOL_NAMES, docTools, runDocTool } from "@/lib/docs";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
 import { placesOrder } from "@/lib/connector-catalog";
 import {
@@ -48,8 +50,9 @@ import {
 } from "@/lib/crm-tools";
 import { ORDER_TOOL, swiggyService } from "@/lib/swiggy";
 import { FLIGHTS_SEARCH, flightsTool, runFlightsSearch } from "@/lib/flights";
-import { IMAGE_GENERATE, imagesEnabled, IMAGES_OFF, imageTool, runImageGenerate } from "@/lib/images";
+import { IMAGE_GENERATE, imagesEnabled, IMAGES_OFF, IMAGES_SECTION, imageTool, runImageGenerate } from "@/lib/images";
 import { activeConnectors, activeDesignSystem, isToolAllowed, library, type Connector } from "@/lib/library";
+import { YAMMER_CONNECTOR_ID, YAMMER_SECTION } from "@/lib/yammer";
 import { LOCATION_GET, locationTool } from "@/lib/location";
 import { MAP_SHOW, mapTool, runMapShow } from "@/lib/maps";
 import {
@@ -298,7 +301,7 @@ export function buildContext({
   }
 
   const images = imagesEnabled();
-  if (!images) sections.push(IMAGES_OFF);
+  sections.push(images ? IMAGES_SECTION : IMAGES_OFF);
 
   // Web search is on unless turned off in Settings → Search; Research asks for more of it.
   const web = prefs.webSearch;
@@ -316,6 +319,7 @@ export function buildContext({
       "details in tables or lists; answer the question or add what the card doesn't show.",
     );
   }
+  if (connectors.some((t) => t.connector.id === YAMMER_CONNECTOR_ID)) sections.push(YAMMER_SECTION);
 
   const tools: ToolSpec[] = [
     ...(askUser ? [askUserTool] : []),
@@ -324,6 +328,8 @@ export function buildContext({
     skillSaveTool,
     automationSaveTool,
     artifactTool,
+    // Docs are stored, so an incognito chat doesn't get them.
+    ...(incognito ? [] : docTools),
     slidesTool,
     ...(images ? [imageTool] : []),
     mapTool,
@@ -359,6 +365,7 @@ export type ToolKind =
   | "skill-save"
   | "automation-save"
   | "artifact"
+  | "doc"
   | "image"
   | "map"
   | "flights"
@@ -409,7 +416,8 @@ export const TOOLS_LOAD = "tools_load";
  * prompt lists them by name and first sentence. Connector tools are deferred too, unless the
  * user @-mentioned the connector in the conversation.
  */
-const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, IMAGE_GENERATE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN]);
+// image_generate is always offered (not here) so "draw me…" starts drawing on the first step.
+const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN]);
 
 /** The CRM tools, offered from the start where the CRM is the subject (its page, an @crm message). */
 export const CRM_UNDEFERRED: ReadonlySet<string> = new Set([CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG]);
@@ -432,6 +440,7 @@ export function toolKind(name: string): ToolKind {
   if (name === SKILL_SAVE) return "skill-save";
   if (name === AUTOMATION_SAVE) return "automation-save";
   if (name === ARTIFACT_WRITE || name === SLIDES_WRITE) return "artifact";
+  if (DOC_TOOL_NAMES.has(name)) return "doc";
   if (name === IMAGE_GENERATE) return "image";
   if (name === MAP_SHOW) return "map";
   if (name === FLIGHTS_SEARCH) return "flights";
@@ -465,7 +474,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "doc" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
   // Changes to the CRM show what they'll do and ask, unless the user picked Auto.
   if (kind === "crm") return !CRM_WRITES.has(name) || library.prefs().permissionMode === "auto";
   // Starting a workflow can change things; it asks, unless the user picked Auto.
@@ -475,6 +484,8 @@ export function runsWithoutApproval(name: string): boolean {
   // An old "Always allow" never covers spending money.
   if (placesOrder(t.tool)) return false;
   if (isToolAllowed(t.connector.id, t.tool)) return true;
+  // Yammer's meetings are the user's own, on this computer, and its server only reads them.
+  if (t.connector.id === YAMMER_CONNECTOR_ID && t.annotations?.readOnlyHint === true) return true;
   return library.prefs().permissionMode === "auto" && !looksUnsafe(t);
 }
 
@@ -507,7 +518,7 @@ export function runTools(specs: ToolSpec[], defer?: { mentioned: ReadonlySet<str
 }
 
 /** Run a memory, chats, skill, artifact, image, map, flights, weather or topic tool. Never throws; failures become error results the model can read. */
-export async function runTool(name: string, input: unknown): Promise<ToolResult> {
+export async function runTool(name: string, input: unknown, threadId?: string): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
     if (name === MEMORY_WRITE) {
@@ -544,6 +555,7 @@ export async function runTool(name: string, input: unknown): Promise<ToolResult>
       const invalid = validateArtifact(args);
       return invalid ? { errorText: invalid } : { output: `Showed ${args.filename} to the user as an artifact.` };
     }
+    if (DOC_TOOL_NAMES.has(name)) return runDocTool(name, input, threadId);
     if (name === SLIDES_WRITE) {
       const invalid = validateSlides(args);
       if (invalid) return { errorText: invalid };

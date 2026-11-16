@@ -48,6 +48,7 @@ import { ControlBanner } from "@/components/control-banner";
 import { FileChanges } from "@/components/file-changes";
 import { SessionOptions } from "@/components/session-options";
 import { DeckCard, SlidesPanel } from "@/components/slides-panel";
+import { DocCard, DocPanel } from "@/components/doc-panel";
 import { UsageHeatmap } from "@/components/usage-heatmap";
 import { CoworkPanel } from "@/components/workspace-panel";
 import { Mascot } from "@/components/mascot";
@@ -77,6 +78,7 @@ import { modelLogo, providerLogo } from "@/lib/logos";
 import { mentionSegments } from "@/lib/mentions";
 import { parseSlash } from "@/lib/skills";
 import { autoOpenDeck, deckViews, SLIDES_WRITE, useDeckPanel, type Decks } from "@/lib/slides";
+import { autoOpenDoc, DOC_WRITE, docCalls, useDocPanel, type DocCalls } from "@/lib/docs";
 import { formatCost, isLocalUrl } from "@/lib/pricing";
 import { useProjects } from "@/lib/projects";
 import {
@@ -99,6 +101,7 @@ import {
   useQueued,
   useThread,
 } from "@/lib/sessions";
+import { IMAGE_MODE_INSTRUCTION } from "@/lib/images";
 import { isNotebookThread } from "@/lib/notebooks";
 import { saveReplyToNote } from "@/lib/notebook-studio";
 import { forkConversation, setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
@@ -206,16 +209,27 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   }, [id, decks]);
   const deckPanel = useDeckPanel(id);
   const openDeck = deckPanel ? decks.byId.get(deckPanel.deckId) : undefined;
-  const panel = openDeck ? (
+  // Docs: the doc open beside the chat, like a deck.
+  const docs = useMemo(() => docCalls(id, messages), [id, messages]);
+  useEffect(() => {
+    for (const call of docs.latest.values()) autoOpenDoc(id, call);
+  }, [id, docs]);
+  const docPanel = useDocPanel(id);
+  // The panel follows the call it was opened from: that call's doc id settles once its `id` has streamed in.
+  const panelCall = docPanel?.callId ? docs.byCall.get(docPanel.callId) : undefined;
+  const openDocId = panelCall?.docId ?? docPanel?.docId;
+  const panel = docPanel && openDocId ? (
+    <DocPanel threadId={id} docId={openDocId} call={docs.latest.get(openDocId) ?? panelCall} />
+  ) : openDeck ? (
     <SlidesPanel threadId={id} deck={openDeck} busy={busy} />
   ) : workspace ? (
     <CoworkPanel workspace={workspace} changed={changedPaths} />
   ) : watching ? (
     <SharedPanel share={watching} changed={changedPaths} />
   ) : null;
-  const hideChat = !!openDeck && !!deckPanel?.expanded;
+  const hideChat = docPanel ? docPanel.expanded : !!openDeck && !!deckPanel?.expanded;
 
-  const submit = (msg: PromptInputMessage) => {
+  const submit = (msg: PromptInputMessage, opts?: { image?: boolean }) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
     void (async () => {
       // A session that asked for its own worktree moves into it before its first run.
@@ -228,7 +242,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
           return;
         }
       }
-      sendMessage(id, msg.text, await storeAttachments(msg.files));
+      // Image mode: the message shows as typed, and the model is told to draw it at once.
+      sendMessage(id, msg.text, await storeAttachments(msg.files), opts?.image ? { text: IMAGE_MODE_INSTRUCTION } : undefined);
     })();
   };
 
@@ -495,6 +510,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               artifacts={artifacts}
               threadId={id}
               decks={decks}
+              docs={docs}
               workspaceId={workspaceId}
               branchCall={branchCall?.messageId === message.id ? branchCall.part.toolCallId : undefined}
               fileTurn={(() => {
@@ -769,6 +785,7 @@ interface ChatMessageProps {
   artifacts: Map<string, ArtifactView>;
   threadId: string;
   decks: Decks;
+  docs: DocCalls;
   workspaceId?: string;
   /** Cowork: the turn whose changed files show under this, its last reply. */
   fileTurn?: string;
@@ -800,9 +817,9 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
   if (!same) return false;
   // Artifact and deck views are built from the whole thread; only their own cards read them.
   const usesViews = b.message.parts.some(
-    (p) => p.type === "dynamic-tool" && (p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE),
+    (p) => p.type === "dynamic-tool" && (p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE || p.toolName === DOC_WRITE),
   );
-  return !usesViews || (a.artifacts === b.artifacts && a.decks === b.decks);
+  return !usesViews || (a.artifacts === b.artifacts && a.decks === b.decks && a.docs === b.docs);
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -924,6 +941,7 @@ const ChatMessage = memo(function ChatMessage({
   artifacts,
   threadId,
   decks,
+  docs,
   workspaceId,
   fileTurn,
   branchCall,
@@ -1025,6 +1043,9 @@ const ChatMessage = memo(function ChatMessage({
         }
         if (part.toolName === BRANCH_STATUS && part.toolCallId === branchCall) {
           return <BranchCard key={key} part={part} threadId={threadId} />;
+        }
+        if (part.toolName === DOC_WRITE) {
+          return <DocCard key={key} threadId={threadId} part={part} call={docs.byCall.get(part.toolCallId)} />;
         }
         if (part.toolName === SLIDES_WRITE) {
           const view = decks.byCall.get(part.toolCallId);

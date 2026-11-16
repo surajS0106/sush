@@ -10,6 +10,7 @@ import App from "./App";
 import { AuthGate } from "./components/auth-gate";
 import { WindowControls } from "./components/window-controls";
 import { initBrowser } from "./lib/browser";
+import { initDocs } from "./lib/docs";
 import { initMemory } from "./lib/memory";
 import { initNotebooks } from "./lib/notebooks";
 import { initReports } from "./lib/reports";
@@ -46,7 +47,7 @@ const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement)
 
 // Conversations and memory load from disk before anything renders, so the UI
 // can read them synchronously; then follow the runs already going.
-Promise.all([initStore(), initMemory(), initWorkspaces(), initBrowser(), initReports(), initNotebooks()])
+Promise.all([initStore(), initMemory(), initWorkspaces(), initBrowser(), initReports(), initNotebooks(), initDocs()])
   .then(initSessions)
   // Shared sessions come after the runs: their frames arrive on the same channel.
   .then(initShares)

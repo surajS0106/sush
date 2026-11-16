@@ -237,6 +237,7 @@ const FONTS: { value: ChatFont; label: string; family: string }[] = [
   { value: "serif", label: "Lora", family: '"Lora Variable", Georgia, serif' },
   { value: "mono", label: "DM Mono", family: '"DM Mono", ui-monospace, monospace' },
   { value: "space-mono", label: "Space Mono", family: '"Space Mono", ui-monospace, monospace' },
+  { value: "opendyslexic", label: "OpenDyslexic", family: '"OpenDyslexic", sans-serif' },
 ];
 
 function GeneralSection() {

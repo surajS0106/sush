@@ -13,6 +13,7 @@ import { library, requestChat } from "@/lib/library";
 import { sendMessage } from "@/lib/sessions";
 import { createConversation, createStore, getConversations, getTarget } from "@/lib/store";
 import { getWorkspaces } from "@/lib/workspaces";
+import { MEETING_PREP_PROMPT } from "@/lib/yammer";
 
 export { DEFAULT_SCHEDULE, WEEKDAYS, weeklyDays, type Frequency, type Schedule } from "@/lib/automation-save";
 
@@ -297,12 +298,10 @@ export const TEMPLATES: AutomationTemplate[] = [
   },
   {
     name: "Meeting prep",
-    description: "A short brief before each meeting on your calendar, covering attendees, context, and agenda.",
+    description: "A short brief before each meeting on your calendar: attendees, what you last discussed (from your Yammer meetings), what you owe them, and an agenda.",
     icon: "calendar",
     schedule: { frequency: "weekdays", time: "08:00", day: 1 },
-    prompt:
-      "Look at today's meetings on my calendar. For each one, write a short brief: who's attending, " +
-      "relevant context from recent email or past chats, and a suggested agenda.",
+    prompt: MEETING_PREP_PROMPT,
   },
   {
     name: "Weekly review",

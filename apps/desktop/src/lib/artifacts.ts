@@ -14,7 +14,8 @@ export const artifactTool: ToolSpec = {
   description:
     "Show a standalone document or code file in an artifact panel the user can copy, download and step through " +
     "versions of. Use it for substantial content the user will keep or iterate on: code files, documents, emails, " +
-    "configs, anything over about 20 lines meant to be reused. Don't use it for short answers or explanations. " +
+    "configs, anything over about 20 lines meant to be reused. Don't use it for short answers or explanations, or for " +
+    "documents meant to be read, edited and shared (reports, guides, plans, write-ups): those are docs (doc_write). " +
     "Always pass the complete content. To revise an artifact, call this again with the same id; each call becomes " +
     "a new version. Don't repeat the content in your reply; say in a sentence what you made or changed.",
   inputSchema: {

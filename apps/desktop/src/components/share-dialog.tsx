@@ -550,7 +550,7 @@ function Sharing({ share }: { share: ShareView }) {
           <span>
             <span className="block text-sm font-medium">Let them read cited passages</span>
             <span className="block text-xs text-muted-foreground">
-              They always see which of the notebook’s sources an answer cites, and its Studio outputs. With this on, they can
+              They always see which of the binder’s sources an answer cites, and its Studio outputs. With this on, they can
               open a cited passage’s text too. Your notes and the sources themselves stay yours either way.
             </span>
           </span>

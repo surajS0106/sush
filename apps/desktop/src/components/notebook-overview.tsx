@@ -231,7 +231,7 @@ export function CustomizeDialog({ notebook, open, onOpenChange }: { notebook: No
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Customize notebook</DialogTitle>
+          <DialogTitle>Customize binder</DialogTitle>
           <DialogDescription>How it looks, what it's called, and the summary at the start of its chats.</DialogDescription>
         </DialogHeader>
         <form
@@ -336,7 +336,7 @@ export function CustomizeDialog({ notebook, open, onOpenChange }: { notebook: No
               <Textarea
                 value={summary}
                 onChange={(e) => setSummary(e.target.value)}
-                placeholder="What this notebook is about. Markdown works: **bold** a key term."
+                placeholder="What this binder is about. Markdown works: **bold** a key term."
                 aria-label="Summary"
                 className="min-h-28 text-sm"
               />

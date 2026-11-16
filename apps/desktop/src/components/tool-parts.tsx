@@ -52,6 +52,7 @@ import {
   WorkspaceApprovalCard,
 } from "@/components/tool-approval-card";
 import { FlightCard, FlightSearching } from "@/components/flight-card";
+import { ImageTV } from "@/components/image-tv";
 import { LocationCard } from "@/components/location-card";
 import { MapCard } from "@/components/map-card";
 import { CommitsCard } from "@/components/ui/CommitCard";
@@ -81,7 +82,7 @@ import { brandLogo, connectorIcon, placesOrder } from "@/lib/connector-catalog";
 import { isSwiggyOrder, parseSwiggyCard, swiggyService } from "@/lib/swiggy";
 import type { FlightsOutput } from "@/lib/flights";
 import { parseCommits, parsePullRequest } from "@/lib/github";
-import { saveImage, type ImageInput, type ImageOutput } from "@/lib/images";
+import { saveImage, type ImageOutput } from "@/lib/images";
 import { allowTool } from "@/lib/library";
 import type { LocationOutput } from "@/lib/location";
 import type { MapOutput } from "@/lib/maps";
@@ -230,16 +231,10 @@ function AskUserPart({ part, canAnswer, onResult }: ToolPartProps) {
 
 // --- images ------------------------------------------------------------------------
 
-const ASPECT_CLASS = { square: "aspect-square", landscape: "aspect-[3/2]", portrait: "aspect-[2/3] max-w-64" };
-
 function ImagePart({ part }: { part: DynamicToolUIPart }) {
-  const input = (part.input ?? {}) as ImageInput;
   if (part.state === "input-streaming" || part.state === "input-available") {
     return (
-      <div className="flex max-w-md flex-col gap-2">
-        <Skeleton className={cn("w-full rounded-md", ASPECT_CLASS[input.aspect ?? "square"] ?? ASPECT_CLASS.square)} />
-        <LoadingState label="Generating image" />
-      </div>
+      <ImageTV caption={<LoadingState label="Generating your image" />} />
     );
   }
   if (part.state === "output-error") {

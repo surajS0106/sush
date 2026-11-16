@@ -7,6 +7,8 @@ import { AppSidebar, type Page, type SessionMode } from "@/components/app-sideba
 import { AutomationsPage } from "@/components/automations-page";
 import { BoardPage } from "@/components/board-page";
 import { CrmPage } from "@/components/crm-page";
+import { DocsButton } from "@/components/doc-panel";
+import { DocsPage } from "@/components/docs-page";
 import { WorkflowsPage } from "@/components/workflows-page";
 import { ConnectorsPage } from "@/components/connectors-section";
 import { FoldersPage } from "@/components/folders-page";
@@ -38,7 +40,7 @@ import { automationForThread, getAutomations, markSeen, startScheduler, useOpenR
 import { startWorkflowTriggers } from "@/lib/workflow-engine";
 import { watchBudget } from "@/lib/budget";
 import { useLayout } from "@/lib/layout";
-import { openSettings, syncConnectors, useChatRequest, usePageRequest, type ChatRequest } from "@/lib/library";
+import { openSettings, startDeepLinks, syncConnectors, syncYammerConnector, useChatRequest, usePageRequest, type ChatRequest } from "@/lib/library";
 import {
   createIncognitoConversation,
   deleteConversation,
@@ -200,6 +202,9 @@ export default function App() {
   // Run automations that come due while the app is open, from one window only.
   useEffect(() => {
     void syncConnectors();
+    void syncYammerConnector();
+    // sush:// links, such as Yammer's "Ask in Sush" on a meeting.
+    whenLeader(startDeepLinks);
     whenLeader(startScheduler);
     whenLeader(startPriceAlerts);
     // Workflows triggered by CRM changes and the like (the leader acts on them).
@@ -298,6 +303,7 @@ export default function App() {
                   onOpenSession={tabs.openInNewTab}
                 />
               )}
+              {page === "docs" && <DocsPage onOpenSession={tabs.openInNewTab} />}
               {page === "shared" && watched && (
                 <PromptInputProvider key={watched.threadId}>
                   <ChatView
@@ -378,6 +384,7 @@ function AppHeader({
       )}
       {children}
       <span data-tauri-drag-region className="min-w-8 flex-1 self-stretch" />
+      {session && !sharedId && <DocsButton threadId={session.id} />}
       {session && !sharedId && <ShareButton conversation={session} />}
       {/* Who's watching: a session shared from here, or the one being watched. */}
       {(sharedId ?? session?.id) && <ShareActivityButton threadId={(sharedId ?? session?.id)!} />}

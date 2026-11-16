@@ -57,7 +57,7 @@ export function ChatStyleDialog({ notebook, open, onOpenChange }: { notebook: No
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Configure chat</DialogTitle>
-          <DialogDescription>How this notebook’s chats answer. Answers still come from your sources, cited.</DialogDescription>
+          <DialogDescription>How this binder’s chats answer. Answers still come from your sources, cited.</DialogDescription>
         </DialogHeader>
         <form
           className="flex flex-col gap-5"

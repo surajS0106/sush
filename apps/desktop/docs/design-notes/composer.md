@@ -1,8 +1,11 @@
 # Composer — Design Notes
 
-Last updated: 2026-11-04
+Last updated: 2026-11-16
 
 ## What changed
+
+### 2026-11-16
+- The model picker no longer lists models that can't chat: image generators (`gpt-image`, `dall-e`, `imagen`), video (`sora`), speech (`tts`, `whisper`, `transcribe`), embeddings, moderation, realtime and the legacy completion bases. `useProviders` filters each provider's `/models` list through `isChatModel` (`src/hooks/use-providers.ts`). Settings → Images and Speech call `listModels` themselves and still see every model.
 
 ### 2026-11-04
 - The thinking picker's pill keeps one width: every possible label is stacked invisibly in a grid cell under the current one (`PILL_LABELS` in `src/components/reasoning-picker.tsx`).
@@ -25,6 +28,8 @@ The brain icon looked the same at every effort level, so only the text label car
 A colour per level makes the setting readable from colour as well as bar count, and the scale runs between the logo's two colours so it stays within the app's palette. The trade-off is that these colours ignore the accent picker, unlike the rest of the composer: five levels can't be told apart in one accent.
 
 Changing effort resized the pill and shifted its neighbours in the footer. A constant width keeps them in place. The trade-off is empty space after short labels such as "Low".
+
+Providers' `/models` endpoints return every model on the account, so an OpenAI key listed `gpt-image-*` beside the chat models. Picking one sent the chat request to an endpoint that rejects it, and the message got no reply. Filtering by id keeps those models out of the chat picker without hiding them from the settings pages that need them. The trade-off is a name-based list: a new non-chat family with an unfamiliar name still shows until it is added, and a chat model whose id happened to contain one of the tokens would be hidden. Tokens only match as whole id segments, so `gemini-2.5-flash-image`, which can chat, stays listed.
 
 ## What makes it stand out
 

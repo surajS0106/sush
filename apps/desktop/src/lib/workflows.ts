@@ -51,6 +51,7 @@ export type NodeType =
   | "automation"
   | "email"
   | "calendar"
+  | "meeting"
   | "file"
   // steps
   | "agent"
@@ -195,6 +196,16 @@ export const NODE_DEFS: NodeDef[] = [
     icon: CalendarIcon,
     ports: ["out"],
     defaults: { tool: "", args: "", when: "starting", minutes: 10, every: 5 },
+  },
+  {
+    type: "meeting",
+    group: "trigger",
+    label: "Meeting finished",
+    subtitle: "Yammer",
+    description: "Starts when a meeting you recorded with Yammer ends and its notes are written.",
+    icon: NotebookPenIcon,
+    ports: ["out"],
+    defaults: {},
   },
   {
     type: "file",
@@ -424,7 +435,7 @@ export function publish(id: string) {
 }
 
 /** Trigger types that start a workflow by themselves (and so need turning on). */
-const SELF_STARTING: NodeType[] = ["crm-event", "email", "calendar", "file"];
+const SELF_STARTING: NodeType[] = ["crm-event", "email", "calendar", "meeting", "file"];
 
 /**
  * How a workflow starts, in words, and whether it starts by itself. Those that
@@ -634,6 +645,15 @@ function triggerVariables(n: WfNode): Variable[] {
       return [v("trigger.subject", "Email subject"), v("trigger.from", "Sender"), v("trigger.item", "The whole email")];
     case "calendar":
       return [v("trigger.title", "Event title"), v("trigger.start", "Start time"), v("trigger.item", "The whole event")];
+    case "meeting":
+      return [
+        v("trigger.title", "Meeting title"),
+        v("trigger.notes", "Its notes"),
+        v("trigger.yourNotes", "Notes you typed"),
+        v("trigger.link", "Link to the meeting"),
+        v("trigger.started", "When it started"),
+        v("trigger.item", "The whole meeting"),
+      ];
     case "file":
       return [v("trigger.folder", "Folder")];
     default:

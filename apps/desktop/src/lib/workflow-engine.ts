@@ -21,6 +21,7 @@ import { createConversation, createStore } from "@/lib/store";
 import { api, errorMessage, type CrmActivityKind, type CrmEvent, type CrmRecord } from "@/lib/tauri";
 import { whenLeader } from "@/lib/windows";
 import { getWorkspaces, onFilesChanged } from "@/lib/workspaces";
+import { YAMMER_CONNECTOR_ID } from "@/lib/yammer";
 import {
   addStepThread,
   defOf,
@@ -697,11 +698,12 @@ async function pollConnectors() {
     for (const w of getWorkflows()) {
       if (!w.enabled || !w.live) continue;
       const t = w.live.nodes.find(isTrigger);
-      if (!t || (t.type !== "email" && t.type !== "calendar")) continue;
-      const every = Math.max(1, Number(t.config.every) || 10) * 60_000;
+      if (!t || (t.type !== "email" && t.type !== "calendar" && t.type !== "meeting")) continue;
+      // A meeting is checked every minute: Yammer is on this computer, so it costs nothing.
+      const every = t.type === "meeting" ? 60_000 : Math.max(1, Number(t.config.every) || 10) * 60_000;
       const cursor = cursors.get()[w.id];
       if (cursor && Date.now() - cursor.at < every) continue;
-      await pollOne(w, t, cursor);
+      await (t.type === "meeting" ? pollMeetings(w, cursor) : pollOne(w, t, cursor));
     }
   } finally {
     polling = false;
@@ -773,6 +775,56 @@ async function pollOne(w: Workflow, t: WfNode, cursor: { seen: string[]; at: num
   }
 }
 
+// --- Yammer meetings ----------------------------------------------------------------------
+
+/** Recent Yammer meetings that are over and have notes, newest first: what a meeting trigger fires on. */
+async function finishedMeetings(): Promise<{ id: string; item: unknown }[]> {
+  let text: string;
+  try {
+    text = await api.connectorRead(YAMMER_CONNECTOR_ID, "list_meetings", { limit: 20 });
+  } catch (e) {
+    throw new Error(`Couldn't check Yammer: ${errorMessage(e)}. Turn the Yammer connector on under Connectors.`);
+  }
+  return itemsOf(text).filter(({ item }) => {
+    const m = (item ?? {}) as Record<string, unknown>;
+    return m.hasNotes === true && m.live !== true && m.minutes != null;
+  });
+}
+
+/** A meeting as the trigger's input, read in full so later steps have its notes. */
+async function meetingTrigger(id: string): Promise<{ data: Record<string, unknown>; reason: string }> {
+  const m = JSON.parse(await api.connectorRead(YAMMER_CONNECTOR_ID, "get_meeting", { id: Number(id) })) as Record<string, unknown>;
+  const title = fieldOf(m, ["title"]);
+  return {
+    data: { title, notes: fieldOf(m, ["notes"]), yourNotes: fieldOf(m, ["yourNotes"]), link: fieldOf(m, ["link"]), started: fieldOf(m, ["started"]), item: m },
+    reason: `Meeting finished: ${title || "a meeting"}`,
+  };
+}
+
+async function pollMeetings(w: Workflow, cursor: { seen: string[]; at: number } | undefined) {
+  const save = (seen: string[]) => cursors.set((all) => ({ ...all, [w.id]: { seen: seen.slice(-500), at: Date.now() } }));
+  let done: { id: string; item: unknown }[];
+  try {
+    done = await finishedMeetings();
+  } catch (e) {
+    save(cursor?.seen ?? []);
+    toast.error(`“${w.name}” couldn't run its check`, { description: errorMessage(e) });
+    return;
+  }
+  // The first check only notes the meetings already written up; one whose notes come later fires then.
+  const seen = new Set(cursor?.seen ?? []);
+  const fresh = cursor ? done.filter((m) => !seen.has(m.id)) : [];
+  save([...seen, ...done.map((m) => m.id)]);
+  for (const m of fresh.slice(0, 3)) {
+    try {
+      const { data, reason } = await meetingTrigger(m.id);
+      fire((x) => x.id === w.id, () => data, reason);
+    } catch (e) {
+      toast.error(`“${w.name}” couldn't read a meeting`, { description: errorMessage(e) });
+    }
+  }
+}
+
 /** Runs left "running" when Sush last quit (started before this window opened, by another) won't finish: mark them stopped. */
 function cleanUpOrphans() {
   const stale = getRuns().filter((r) => (r.status === "running" || r.status === "waiting") && r.runner !== WINDOW && r.startedAt < performance.timeOrigin);
@@ -835,6 +887,12 @@ export async function sampleTrigger(trigger: WfNode): Promise<{ data: Record<str
       const items = await readItems(trigger);
       if (items.length === 0) throw new Error(`Its tool found no ${trigger.type === "email" ? "emails" : "events"} to test with. Loosen its arguments.`);
       const { data, reason } = itemTrigger(trigger, items[0].item);
+      return { data, reason: `Test run with ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` };
+    }
+    case "meeting": {
+      const [newest] = await finishedMeetings();
+      if (!newest) throw new Error("Yammer has no finished meeting with notes to test with yet.");
+      const { data, reason } = await meetingTrigger(newest.id);
       return { data, reason: `Test run with ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` };
     }
     case "file": {

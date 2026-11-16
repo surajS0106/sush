@@ -89,7 +89,7 @@ export function SharedNotebookTab({ share, notebook }: { share: ShareView; noteb
             <span className="truncate">{notebook.title}</span>
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            A notebook shared with you. Answers cite its sources; {share.policy.showSources ? "open a citation to read the passage." : "the host keeps the sources’ text to themselves."}
+            A binder shared with you. Answers cite its sources; {share.policy.showSources ? "open a citation to read the passage." : "the host keeps the sources’ text to themselves."}
           </p>
 
           <h3 className="mt-4 mb-1 text-xs font-medium text-muted-foreground">Sources</h3>

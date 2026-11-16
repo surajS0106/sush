@@ -271,7 +271,7 @@ function Home({
     <>
       <DialogHeader className="px-6 pt-6">
         <DialogTitle>Add sources</DialogTitle>
-        <DialogDescription>Sush reads each source, and answers in this notebook cite the passages they use.</DialogDescription>
+        <DialogDescription>Sush reads each source, and answers in this binder cite the passages they use.</DialogDescription>
       </DialogHeader>
 
       <form
@@ -594,7 +594,7 @@ function AddText({ notebook, onBack, onDone }: { notebook: Notebook; onBack: () 
   const words = text.trim() ? text.trim().split(/\s+/).length : 0;
   return (
     <>
-      <SubHeader title="Paste text" description="Notes, a transcript, an email, an article’s text. It stays with this notebook." onBack={onBack} />
+      <SubHeader title="Paste text" description="Notes, a transcript, an email, an article’s text. It stays with this binder." onBack={onBack} />
       <form
         className="flex flex-col gap-3 px-6 pt-4"
         onSubmit={(e) => {

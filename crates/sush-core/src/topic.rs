@@ -80,20 +80,32 @@ async fn summary(http: &reqwest::Client, title: &str) -> Result<Option<Value>, S
     Ok(body.filter(|b| b["type"] == "standard"))
 }
 
-fn first_match(search: &Value) -> Option<&str> {
-    search["pages"].get(0)?["key"].as_str()
+/// Search results worth reading, best first: disambiguation pages ("Topics referred to by the same term") are skipped.
+fn candidates(search: &Value) -> Vec<&str> {
+    let Some(pages) = search["pages"].as_array() else { return Vec::new() };
+    pages
+        .iter()
+        .filter(|p| !p["description"].as_str().is_some_and(|d| d.to_lowercase().contains("referred to by the same term")))
+        .filter_map(|p| p["key"].as_str())
+        .take(SEARCH_TRIES)
+        .collect()
 }
+
+/// Search results read before giving up, when the query is ambiguous (e.g. "Notion").
+const SEARCH_TRIES: usize = 3;
 
 async fn find(http: &reqwest::Client, query: &str) -> Result<Option<Value>, String> {
     if let Some(found) = summary(http, query).await? {
         return Ok(Some(found));
     }
-    let url = reqwest::Url::parse_with_params(&format!("{SITE}/w/rest.php/v1/search/page"), [("q", query), ("limit", "1")]).map_err(|e| e.to_string())?;
+    let url = reqwest::Url::parse_with_params(&format!("{SITE}/w/rest.php/v1/search/page"), [("q", query), ("limit", "5")]).map_err(|e| e.to_string())?;
     let Some(results) = get_json(http, url).await? else { return Ok(None) };
-    match first_match(&results) {
-        Some(key) => summary(http, key).await,
-        None => Ok(None),
+    for key in candidates(&results) {
+        if let Some(found) = summary(http, key).await? {
+            return Ok(Some(found));
+        }
     }
+    Ok(None)
 }
 
 /// The start of the article's text, cut at the end of a paragraph where it can be.
@@ -314,9 +326,14 @@ mod tests {
     }
 
     #[test]
-    fn a_search_gives_its_first_page_or_nothing() {
-        assert_eq!(first_match(&json!({ "pages": [{ "key": "A_b" }, { "key": "C" }] })), Some("A_b"));
-        assert_eq!(first_match(&json!({ "pages": [] })), None);
+    fn a_search_skips_disambiguation_pages() {
+        let search = json!({ "pages": [
+            { "key": "Notion", "description": "Topics referred to by the same term" },
+            { "key": "Notion_(productivity_software)", "description": "Productivity web application" },
+            { "key": "C" }, { "key": "D" }, { "key": "E" },
+        ] });
+        assert_eq!(candidates(&search), vec!["Notion_(productivity_software)", "C", "D"]);
+        assert!(candidates(&json!({ "pages": [] })).is_empty());
     }
 
     #[test]

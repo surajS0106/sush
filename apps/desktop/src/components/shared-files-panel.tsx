@@ -55,7 +55,7 @@ export function SharedPanel({ share, changed }: { share: ShareView; changed: Set
   }, [passage, notebook]);
   const tabs: { key: Tab; label: string; Icon: typeof FileIcon }[] = [
     { key: "room", label: "Room", Icon: MessageSquareTextIcon },
-    ...(notebook ? [{ key: "notebook" as const, label: "Notebook", Icon: NotebookTextIcon }] : []),
+    ...(notebook ? [{ key: "notebook" as const, label: "Binder", Icon: NotebookTextIcon }] : []),
     ...(cowork
       ? [
           { key: "files" as const, label: "Files", Icon: FolderIcon },

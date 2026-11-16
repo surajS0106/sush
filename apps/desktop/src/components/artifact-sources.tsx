@@ -1,6 +1,5 @@
 // How `artifact_write` calls and web citations appear inside a message.
 
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { DynamicToolUIPart } from "ai";
 import { FileIcon } from "lucide-react";
 import type { ComponentProps } from "react";
@@ -13,6 +12,7 @@ import { Citation, SourceList } from "@/components/ui/Sources";
 import type { ArtifactView } from "@/lib/artifacts";
 import { isCitationText, type CitedSource } from "@/lib/citations";
 import { isPassageUrl, openPassage, passageKey } from "@/lib/notebooks";
+import { meetingOfLink, openLink } from "@/lib/yammer";
 import { api, errorMessage } from "@/lib/tauri";
 
 // --- artifacts ---------------------------------------------------------------------
@@ -60,22 +60,36 @@ const DefaultLink = defaultComponents.a;
 export function citationComponents(sources: CitedSource[]): Components {
   return {
     a: (props: ComponentProps<"a"> & ExtraProps) => {
+      // A Yammer meeting opens in Yammer, not the browser.
+      if (meetingOfLink(props.href) !== null && !isCitationText(props.children)) {
+        return (
+          <a
+            href={props.href}
+            title="Open this meeting in Yammer"
+            className="cursor-pointer font-medium text-primary underline underline-offset-4"
+            onClick={(e) => {
+              e.preventDefault();
+              openLink(props.href!);
+            }}
+          >
+            {props.children}
+          </a>
+        );
+      }
       if (!isCitationText(props.children)) return DefaultLink ? <DefaultLink {...props} /> : <a {...props} />;
       const source = sources.find((s) => sameUrl(s.url, props.href));
       if (!source) return null;
       // A notebook passage opens in the notebook's viewer, highlighting the words this citation quotes.
       const href = props.href ? safeDecode(props.href) : "";
-      return isPassageUrl(source.url) ? (
-        <Citation n={source.n} title={source.title} onOpen={() => openPassage(href || source.url)} />
-      ) : (
-        <Citation n={source.n} title={source.title} />
-      );
+      if (isPassageUrl(source.url)) return <Citation n={source.n} title={source.title} onOpen={() => openPassage(href || source.url)} />;
+      if (meetingOfLink(source.url) !== null) return <Citation n={source.n} title={source.title} onOpen={() => openLink(source.url)} />;
+      return <Citation n={source.n} title={source.title} />;
     },
   };
 }
 
 export function CitedSourceList({ sources }: { sources: CitedSource[] }) {
-  return <SourceList sources={sources} onOpen={(s) => s.url && (isPassageUrl(s.url) ? openPassage(s.url) : void openUrl(s.url))} />;
+  return <SourceList sources={sources} onOpen={(s) => s.url && (isPassageUrl(s.url) ? openPassage(s.url) : openLink(s.url))} />;
 }
 
 function safeDecode(s: string) {

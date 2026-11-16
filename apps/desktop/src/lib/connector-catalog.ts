@@ -7,6 +7,7 @@
 import instamartLogo from "@/assets/brands/instamart-square.jpg";
 import plinthLogo from "@/assets/brands/plinth-mark.png";
 import swiggyLogo from "@/assets/brands/swiggy-square.jpg";
+import yammerLogo from "@/assets/brands/yammer-mark.png";
 import type { Connector } from "@/lib/library";
 
 export type CatalogAuth =
@@ -107,8 +108,13 @@ export function setupValues(setup: ConnectorSetup, url: string): SetupValues | n
 }
 
 /** Logos shown as they are, in full colour: Swiggy's brand rules forbid recolouring them, and Plinth's
- *  mark is a multicolour image, while the icons below get recoloured as masks. */
-const BRAND_LOGOS: Record<string, string> = { swiggy: swiggyLogo, instamart: instamartLogo, plinth: plinthLogo };
+ *  and Yammer's marks are multicolour images, while the icons below get recoloured as masks. */
+const BRAND_LOGOS: Record<string, string> = {
+  swiggy: swiggyLogo,
+  instamart: instamartLogo,
+  plinth: plinthLogo,
+  yammer: yammerLogo,
+};
 
 /** The full-colour logo of a catalog entry or a connector, if it has one. */
 export const brandLogo = (item: { id?: string; catalogId?: string }): string | undefined => BRAND_LOGOS[item.catalogId ?? item.id ?? ""];

@@ -11,6 +11,7 @@ import { TOOLS_LOAD, toolKind } from "@/lib/agent";
 import { ARTIFACT_WRITE } from "@/lib/artifacts";
 import { CRM_VIEW } from "@/lib/crm-tools";
 import { SLIDES_WRITE } from "@/lib/slides";
+import { DOC_WRITE } from "@/lib/docs";
 import { TODO_WRITE } from "@/lib/todos";
 import { isInstamartCartTool } from "@/lib/instamart-cart";
 import { hasSwiggyCard } from "@/lib/swiggy";
@@ -22,6 +23,8 @@ type Part = SushUIMessage["parts"][number];
 /** Settled calls whose results are a line, not a card the user acts on. */
 function groupableTool(p: Part, supersededCart: boolean): p is DynamicToolUIPart {
   if (p.type !== "dynamic-tool" || p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE) return false;
+  // A written doc keeps its card in view; a failed one can collapse.
+  if (p.toolName === DOC_WRITE && p.state === "output-available") return false;
   // A proposed CRM view keeps its "Open view" button in sight.
   if (p.toolName === CRM_VIEW && p.state === "output-available") return false;
   // Restaurants, a cart or an order stay in view; a failed call can collapse, and so can a cart a later call replaced.

@@ -14,11 +14,17 @@
 @import "@fontsource/space-mono/400.css";
 @import "@fontsource/space-mono/400-italic.css";
 @import "@fontsource/space-mono/700.css";
+@import "@fontsource/opendyslexic/400.css";
+@import "@fontsource/opendyslexic/400-italic.css";
+@import "@fontsource/opendyslexic/700.css";
+@import "@fontsource/opendyslexic/700-italic.css";
 
 /* Streamdown renders markdown with Tailwind classes; let Tailwind see them.
    Bun hoists workspace deps to the repo root. */
 @source "../../../node_modules/streamdown/dist/*.js";
 @source "../../../node_modules/@streamdown/*/dist/*.js";
+/* Docs' block editor (BlockNote, shadcn flavour) styles itself with Tailwind classes too. */
+@source "../../../node_modules/@blocknote/shadcn/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -333,6 +339,39 @@ html[data-resizing] * {
   .sushi-pack [data-pack] { animation: none !important; }
 }
 
+/* ImageTV (components/image-tv.tsx): the set clicks on as a bright line that
+   opens into the picture; the glass has scanlines, a curved vignette and a
+   faint flicker; the power light pulses. */
+.tv-screen-on {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+  animation: tv-on 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes tv-on {
+  0% { transform: scale(0, 0.03); filter: brightness(4); }
+  35% { transform: scale(1, 0.03); filter: brightness(4); }
+  100% { transform: scale(1, 1); filter: brightness(1); }
+}
+.tv-glass {
+  background:
+    repeating-linear-gradient(to bottom, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 45%, rgb(124 245 196 / 0.08) 0%, transparent 55%, rgb(0 0 0 / 0.45) 100%);
+  box-shadow: inset 0 0 6px rgb(0 0 0 / 0.6);
+  animation: tv-flicker 160ms steps(2) infinite;
+}
+@keyframes tv-flicker {
+  from { opacity: 1; }
+  to { opacity: 0.86; }
+}
+.tv-led { animation: tv-led 2.4s ease-in-out infinite; }
+@keyframes tv-led {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tv-screen-on, .tv-glass, .tv-led { animation: none !important; }
+}
+
 /* AskUserCard (components/ask-user-card.tsx) entrances. */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
@@ -358,6 +397,7 @@ html[data-resizing] * {
 [data-chat-font="serif"] { --transcript-font: 'Lora Variable', Georgia, serif; }
 [data-chat-font="mono"] { --transcript-font: 'DM Mono', ui-monospace, monospace; }
 [data-chat-font="space-mono"] { --transcript-font: 'Space Mono', ui-monospace, monospace; }
+[data-chat-font="opendyslexic"] { --transcript-font: 'OpenDyslexic', sans-serif; }
 [data-text-size="small"] { --transcript-text: 0.8125rem; }
 [data-text-size="large"] { --transcript-text: 1rem; }
 [data-transcript-width="narrow"] { --transcript-width: 40rem; }
@@ -661,3 +701,82 @@ html[data-resizing] * {
     transform: translateY(0);
   }
 }
+
+/* Docs (components/doc-editor.tsx, doc-panel.tsx): one centred page at a
+   document scale, not a display one: 15px text, headings a step or two above
+   it at weight 600, the title a clear but quiet 30px. BlockNote leaves 54px
+   each side of the blocks for its handles, so the title and the read-only
+   view use the same gutter to line up. */
+.doc-gutter { max-width: 760px; margin-inline: auto; padding-inline: 54px; }
+.doc-title { display: block; font-size: 1.875rem; line-height: 1.25; padding-block: 2px; font-weight: 600; letter-spacing: -0.02em; }
+.doc-byline { font-size: 13px; color: var(--muted-foreground); }
+.doc-editor .doc-blocks { max-width: 760px; margin-inline: auto; --bn-colors-editor-background: transparent; }
+.doc-editor .bn-editor { background: transparent; padding-inline: 54px; }
+.doc-editor .bn-default-styles { font-family: inherit; font-size: 15px; line-height: 1.65; }
+/* BlockNote places the drag handle (a 30px row) at a fixed offset per heading level, made for its
+   own larger headings: 39px for h1, 27px for h2, 18.5px for h3, below the block's 3px padding. Each
+   heading here gets a fixed line height and the space above that puts its first line's centre on the
+   handle's: padding = offset + 15 - 3 - line height / 2. */
+.doc-editor .bn-block-content[data-content-type="heading"] { --level: 1.4em; padding-top: 36.3px; font-weight: 600; letter-spacing: -0.01em; }
+.doc-editor .bn-block-content[data-content-type="heading"][data-level="2"] { --level: 1.2em; padding-top: 26.4px; }
+.doc-editor .bn-block-content[data-content-type="heading"][data-level="3"] { --level: 1.0667em; padding-top: 19.3px; }
+.doc-editor .bn-block-content[data-content-type="heading"] :is(h1, h2, h3) { font-weight: 600; line-height: 1.4; }
+/* Table handles (BlockNote's row, column and cell grips) are bare dots drawn on the cell borders,
+   which next to the block's own drag handle read as overlapping marks. Here they're small chips on
+   the border, with a surface of their own, so each is clearly one control. */
+.bn-shadcn :is(.bn-table-handle, .bn-table-cell-handle) {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--background); color: var(--muted-foreground);
+  border: 1px solid var(--border); border-radius: 5px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  transition: background-color 120ms, color 120ms;
+}
+.bn-shadcn :is(.bn-table-handle, .bn-table-cell-handle):hover,
+.bn-shadcn .bn-table-handle-dragging { background: var(--accent); color: var(--foreground); }
+.bn-shadcn :is(.bn-table-handle, .bn-table-cell-handle) svg { width: 14px; height: 14px; }
+/* Dragging a table row or column (components/doc-table-menu.tsx): the grip shows it can be
+   held, its row or column is tinted while it moves, and a line marks where it will land. */
+.doc-table-grip .bn-table-handle { cursor: grab; touch-action: none; }
+body.doc-table-dragging, body.doc-table-dragging * { cursor: grabbing !important; user-select: none !important; }
+.doc-table-drag-ghost {
+  position: fixed; z-index: 60; pointer-events: none; border-radius: 4px;
+  background: color-mix(in oklab, var(--brand) 12%, transparent);
+  outline: 1.5px solid color-mix(in oklab, var(--brand) 55%, transparent);
+}
+.doc-table-drop-line { position: fixed; z-index: 61; pointer-events: none; border-radius: 2px; background: var(--brand); box-shadow: 0 0 0 2px color-mix(in oklab, var(--brand) 25%, transparent); }
+.doc-table-drop-line[hidden] { display: none; }
+/* A little more room on the table's left, so its row grips sit clear of the block's drag handle. */
+.doc-editor [data-content-type="table"] .tableWrapper { padding-left: 14px; }
+.doc-editor .bn-block-content[data-content-type="table"] { font-size: 14px; line-height: 1.5; }
+.doc-editor .bn-block-content[data-content-type="quote"] { border-left-color: var(--foreground); }
+.doc-diagram { display: flex; justify-content: center; padding: 12px 0; overflow-x: auto; }
+.doc-diagram svg { max-width: 100%; height: auto; }
+.doc-diagram-error { color: var(--muted-foreground); font-size: 14px; }
+.doc-reading { font-size: 15px; line-height: 1.65; }
+.doc-reading > * + * { margin-top: 0.75em; }
+.doc-reading > :is(h1, h2, h3) { font-weight: 600; letter-spacing: -0.01em; line-height: 1.3; }
+.doc-reading > h1 { font-size: 1.4em; margin-top: 1.6em; }
+.doc-reading > h2 { font-size: 1.2em; margin-top: 1.5em; }
+.doc-reading > h3 { font-size: 1.0667em; margin-top: 1.2em; }
+.doc-reading table { font-size: 14px; }
+@media (max-width: 640px) {
+  .doc-gutter, .doc-editor .bn-editor { padding-inline: 24px; }
+}
+
+/* Diagrams in docs (lib/diagram.ts): boxes in rows, top to bottom, wired by
+   right-angled arrows. Drawn with theme tokens, so they follow light and dark. */
+.doc-widget { position: relative; margin-block: 8px; padding: 20px 16px 16px; border-radius: 12px; background: color-mix(in oklab, var(--muted) 55%, transparent); overflow-x: auto; overflow-y: hidden; }
+.doc-widget.doc-diagram-error { padding: 12px 16px; font-size: 14px; color: var(--muted-foreground); }
+.dgm { margin: 0; min-width: max-content; font-size: 13px; line-height: 1.35; }
+.dgm-title { font-weight: 600; font-size: 14px; margin-bottom: 20px; }
+.dgm-stage { position: relative; display: flex; flex-direction: column; align-items: center; gap: 44px; padding: 0 8px 4px; }
+.dgm-wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; color: color-mix(in oklab, var(--muted-foreground) 70%, transparent); }
+.dgm-wires path { fill: none; stroke: currentColor; stroke-width: 1.25; }
+.dgm-layer { position: relative; display: flex; align-items: flex-start; justify-content: center; gap: 20px; }
+.dgm-node { position: relative; box-sizing: border-box; min-width: 150px; max-width: 240px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--background); text-align: center; }
+.dgm-focus { border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); background: color-mix(in oklab, var(--ring) 10%, var(--background)); }
+.dgm-label { font-weight: 600; }
+.dgm-detail { margin-top: 3px; font-size: 12px; color: var(--muted-foreground); }
+.dgm-items { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
+.dgm-chip { max-width: 100%; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
+.dgm-edge-label { position: absolute; font-size: 11px; color: var(--muted-foreground); white-space: nowrap; pointer-events: none; }

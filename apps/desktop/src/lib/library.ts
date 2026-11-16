@@ -2,10 +2,12 @@
 // design systems, connectors and plugins, plus the `+` menu toggles. Memory lives in memory.ts.
 // Persisted in localStorage like conversations (see store.ts).
 
+import { listen } from "@tauri-apps/api/event";
 import { useSyncExternalStore } from "react";
 
 import { assertionFor } from "@/lib/auth";
 import { createStore } from "@/lib/store";
+import { MEETING_RECIPES, YAMMER_CONNECTOR_ID } from "@/lib/yammer";
 import {
   api,
   errorMessage,
@@ -101,6 +103,8 @@ const plugins = createStore<InstalledPlugin[]>("sush.plugins", []);
 const prefs = createStore<Prefs>("sush.prefs", DEFAULT_PREFS);
 // Saved prefs predate newer fields; fill them in.
 prefs.set((p) => ({ ...DEFAULT_PREFS, ...p }));
+/** Set once Sush has added the Yammer connector, so deleting it keeps it gone. */
+const yammerAdded = createStore<boolean>("sush.yammerConnectorAdded", false);
 /** Connector tools the user said never to ask about again, as `connectorId/tool`. */
 const allowedTools = createStore<string[]>("sush.allowedTools", []);
 
@@ -203,6 +207,30 @@ const setStatus = (id: string, status: ConnectorStatus | null) =>
     else delete next[id];
     return next;
   });
+
+/**
+ * Yammer, Sush's notetaker, serves its meetings over MCP (`yammer --mcp`, read-only, on this
+ * computer). Once Yammer says it can (its `mcp.json`, `yammer.rs`), add a connector for them,
+ * once: delete it and it stays deleted. An existing one follows Yammer when it moves.
+ */
+export async function syncYammerConnector() {
+  const found = await api.yammerMcpServer().catch(() => null);
+  if (!found) return;
+  const server: ServerSpec = { type: "stdio", command: found.command, args: found.args, env: {} };
+  const existing = connectors.get().find((c) => c.id === YAMMER_CONNECTOR_ID);
+  if (existing) {
+    const s = existing.server;
+    const moved = s.type !== "stdio" || s.command !== server.command || s.args.join(" ") !== server.args.join(" ");
+    if (moved) saveConnector({ ...existing, server });
+    return;
+  }
+  if (yammerAdded.get()) return;
+  yammerAdded.set(true);
+  saveConnector({ id: YAMMER_CONNECTOR_ID, name: "Yammer", server, enabled: true });
+  // Its recipes come with it, as skills (`/meeting-promises`), unless one by that name exists.
+  const have = new Set(skills.get().map((s) => s.name.toLowerCase()));
+  for (const r of MEETING_RECIPES) if (!have.has(r.name.toLowerCase())) saveSkill({ ...r, enabled: true });
+}
 
 /** Start active connectors that aren't running and stop ones that were turned off. */
 export async function syncConnectors() {
@@ -395,6 +423,31 @@ export interface ChatRequest {
 const chatRequest = createStore<ChatRequest | null>("sush.chatRequest", null, false);
 export const useChatRequest = () => use(chatRequest);
 export const requestChat = (prompt: string) => chatRequest.set({ id: crypto.randomUUID(), prompt });
+
+/** The composer's text for asking about a Yammer meeting: @Yammer loads its tools, the link names the meeting. */
+export function askAboutMeetingPrompt(meeting: number, title: string): string {
+  const name = title.trim() ? `“${title.trim()}” ` : "";
+  return `@Yammer About my meeting ${name}(yammer://meeting/${meeting}): `;
+}
+
+/**
+ * Act on `sush://` links (`deep_link.rs`): one that started Sush is waiting already, later ones
+ * arrive as a `deep-link` event. They only ever prefill the composer; the user sends it.
+ * Run in one window (`whenLeader`), so a link opens one chat.
+ */
+export function startDeepLinks() {
+  const take = () =>
+    void api.deepLinkTake().then(
+      (links) => {
+        for (const link of links) {
+          if (link.kind === "ask-meeting") requestChat(askAboutMeetingPrompt(link.meeting, link.title));
+        }
+      },
+      () => {},
+    );
+  take();
+  void listen("deep-link", take);
+}
 
 /** Skills are made with Sush in chat: open a new one ready for `/create-skill`. */
 export function createSkillInChat() {

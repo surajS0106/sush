@@ -10,6 +10,46 @@ import type { ModelTarget } from "@/lib/transport";
 
 const UPPER = new Set(["gpt", "glm", "qwq", "llm", "oss", "vl"]);
 
+/**
+ * Models that only make images (or video) and fail on a chat endpoint: OpenAI's gpt-image and DALL·E,
+ * xAI's Grok Imagine, Imagen, Veo, Sora, FLUX, Stable Diffusion. They belong in Settings → Images, so the
+ * chat picker leaves them out. Chat models that can also draw (gemini-…-image) are kept.
+ */
+const IMAGE_ONLY =
+  /^(chatgpt-image|gpt-image|dall-e|grok-(\d+-)?image|grok-imagine|imagen|veo|sora|flux|stable-diffusion|sdxl|sd3|recraft|ideogram|midjourney)/i;
+
+/**
+ * Other models that can't hold a conversation: speech, transcription, embeddings, moderation,
+ * realtime, legacy completions. Picked for a chat they only fail.
+ */
+const NOT_CHAT =
+  /(^|[/:_.-])(tts|whisper|transcribe|embed|embedding|embeddings|moderation|omni-moderation|text-moderation|realtime|davinci-002|babbage-002)($|[/:_.-])/i;
+
+/** Whether a model only makes images or video (Settings → Images lists these). */
+export function isImageOnlyModel(id: string): boolean {
+  return IMAGE_ONLY.test(id.split("/").pop() ?? id);
+}
+
+/** Whether a model belongs in the chat picker. Filtered at display time, never when the list loads. */
+export function isChatModel(id: string): boolean {
+  return !isImageOnlyModel(id) && !NOT_CHAT.test(id);
+}
+
+const SNAPSHOT = /[-_]?(20\d{2})-?(\d{2})-?(\d{2})$/;
+
+/**
+ * Leaves out dated snapshots ("gpt-image-2.5-sunburst-2026-08-01") when the provider also lists the
+ * alias ("gpt-image-2.5-sunburst"): both read as the same name, so the picker showed what looked like
+ * duplicates. The alias tracks the newest snapshot; a snapshot without an alias stays.
+ */
+export function withoutSnapshots<T extends { id: string }>(models: T[]): T[] {
+  const ids = new Set(models.map((m) => m.id));
+  return models.filter((m) => {
+    const alias = m.id.replace(SNAPSHOT, "");
+    return alias === m.id || !ids.has(alias);
+  });
+}
+
 /** A model's name for people: its own display name, else its id tidied up. */
 export function friendlyName(id: string, displayName?: string | null): string {
   if (displayName?.trim()) return displayName.trim();

@@ -6,6 +6,7 @@ import {
   BlocksIcon,
   BrainIcon,
   FolderPlusIcon,
+  ImageIcon,
   MessageCircleQuestionMarkIcon,
   PaletteIcon,
   PaperclipIcon,
@@ -55,6 +56,7 @@ import {
   useSkills,
   type SettingsSection,
 } from "@/lib/library";
+import { useImagesReady } from "@/lib/images";
 import { setAskUser, useAskUser } from "@/lib/store";
 import { api, errorMessage, type Folder } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type ModelTarget, type SushUIMessage } from "@/lib/transport";
@@ -67,9 +69,13 @@ interface ComposerMenuProps {
   onOpenSettings: () => void;
   /** Send a message in this chat, e.g. `/create-skill` for "Record a skill". */
   onSend: (text: string) => void;
+  /** Image mode: the composer's Image chip, so the next messages are drawn. */
+  imageMode: boolean;
+  onImageMode: (on: boolean) => void;
 }
 
-export function ComposerMenu({ target, messages, researchAvailable, onOpenSettings, onSend }: ComposerMenuProps) {
+export function ComposerMenu({ target, messages, researchAvailable, onOpenSettings, onSend, imageMode, onImageMode }: ComposerMenuProps) {
+  const imagesReady = useImagesReady();
   const { attachments } = usePromptInputController();
   const askUser = useAskUser();
   const prefs = usePrefs();
@@ -125,6 +131,12 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
         <PromptInputActionMenuItem onSelect={() => attachments.openFileDialog()}>
           <PaperclipIcon /> <Label hint="Images, PDFs and text">Files and photos</Label>
           <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>
+        </PromptInputActionMenuItem>
+        <PromptInputActionMenuItem onSelect={() => (imagesReady ? onImageMode(!imageMode) : manage("images"))}>
+          <ImageIcon />{" "}
+          <Label hint={imagesReady ? (imageMode ? "On: your messages become images" : "Draw what you describe") : "Pick an image model first"}>
+            {imageMode ? "Stop creating images" : "Create image"}
+          </Label>
         </PromptInputActionMenuItem>
         <PromptInputActionMenuItem onSelect={() => void addFolder()}>
           <FolderPlusIcon /> <Label hint="Include a folder's files">Add folder</Label>

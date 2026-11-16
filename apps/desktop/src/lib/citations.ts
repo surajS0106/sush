@@ -79,7 +79,7 @@ export function citedSources(message: SushUIMessage): CitedSource[] {
         if (byUrl.has(key)) continue;
         const ref = parsePassageUrl(url);
         const name = title || (ref && sourceTitle(ref.sourceId)) || "Source";
-        byUrl.set(key, { n: byUrl.size + 1, url, title: name, domain: "Notebook source", letter: (name[0] ?? "S").toUpperCase(), tone: "bg-brand" });
+        byUrl.set(key, { n: byUrl.size + 1, url, title: name, domain: "Binder source", letter: (name[0] ?? "S").toUpperCase(), tone: "bg-brand" });
         continue;
       }
       if (byUrl.has(url)) continue;

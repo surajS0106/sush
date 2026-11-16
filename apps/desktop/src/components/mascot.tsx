@@ -37,6 +37,9 @@ const SPRITE = [
   "..rrrrrrrrrrrr..",
 ];
 
+/** Sushi's body rows (rice where the eyes go), for scenes that paint it (`image-tv.tsx`). */
+export const SUSHI_ROWS = SPRITE;
+
 // Walk cycle: legs apart, then feet together.
 const LEG_FRAMES = ["...L..L....L..L.", "....LL......LL.."];
 
@@ -319,14 +322,23 @@ export function MascotSprite({ kind, scale = 1, closed, className }: { kind: str
   );
 }
 
-/** Sushi's body with happy closed eyes, in sprite pixels, for scenes drawn elsewhere (`compact-sushi.tsx`). */
-export function SushiPixels() {
+/**
+ * Sushi's body in sprite pixels, for scenes drawn elsewhere (`compact-sushi.tsx`,
+ * `image-tv.tsx`). Happy closed eyes unless `look` opens them, glancing that way
+ * by a pixel; `legs` adds the walk cycle's frame under it.
+ */
+export function SushiPixels({ look, legs }: { look?: { x: number; y: number }; legs?: number } = {}) {
   return (
     <>
       <Pixels runs={SUSHI.body} />
-      {SUSHI.eyes.map((e) => (
-        <rect key={e.x} x={e.x} y={e.y + 1} width={2} height={1} fill={COLORS.E} />
-      ))}
+      {SUSHI.eyes.map((e) =>
+        look ? (
+          <rect key={e.x} x={e.x + look.x} y={e.y + look.y} width={2} height={2} fill={COLORS.E} />
+        ) : (
+          <rect key={e.x} x={e.x} y={e.y + 1} width={2} height={1} fill={COLORS.E} />
+        ),
+      )}
+      {legs !== undefined && <Pixels runs={SUSHI.legs[legs % SUSHI.legs.length]} />}
     </>
   );
 }

@@ -111,8 +111,8 @@ fn running() -> bool {
     }
 }
 
-/// Yammer's `settings.json`, if it has one yet.
-fn settings() -> Option<serde_json::Value> {
+/// Yammer's config dir, where its `settings.json` and `mcp.json` live.
+fn config_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     let base = std::env::var_os("APPDATA").map(PathBuf::from);
     #[cfg(target_os = "macos")]
@@ -121,8 +121,31 @@ fn settings() -> Option<serde_json::Value> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    let raw = std::fs::read(base?.join(IDENTIFIER).join("settings.json")).ok()?;
+    Some(base?.join(IDENTIFIER))
+}
+
+/// Yammer's `settings.json`, if it has one yet.
+fn settings() -> Option<serde_json::Value> {
+    let raw = std::fs::read(config_dir()?.join("settings.json")).ok()?;
     serde_json::from_slice(&raw).ok()
+}
+
+/// How to start Yammer's MCP server, which serves its meetings read-only (`yammer --mcp`).
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct YammerMcp {
+    command: String,
+    args: Vec<String>,
+}
+
+/// Yammer writes `mcp.json` at startup once it can serve its meetings, naming its own binary.
+/// Older Yammers don't, so they're never launched with a flag they don't know (it would open their window).
+fn mcp() -> Option<YammerMcp> {
+    let raw = std::fs::read(config_dir()?.join("mcp.json")).ok()?;
+    let spec: serde_json::Value = serde_json::from_slice(&raw).ok()?;
+    let command = spec["command"].as_str().filter(|c| Path::new(c).is_file())?.to_owned();
+    let args = spec["args"].as_array()?.iter().filter_map(|a| a.as_str().map(str::to_owned)).collect();
+    Some(YammerMcp { command, args })
 }
 
 fn status() -> YammerStatus {
@@ -235,6 +258,40 @@ pub async fn yammer_open() -> AppResult<()> {
             return Ok(());
         }
         launch(&bin, false)
+    })
+    .await
+    .map_err(|e| AppError::Invalid(e.to_string()))?
+}
+
+/// The command for Yammer's meetings connector, or none when this Yammer can't serve them.
+#[tauri::command]
+pub async fn yammer_mcp_server() -> AppResult<Option<YammerMcp>> {
+    tauri::async_runtime::spawn_blocking(mcp).await.map_err(|e| AppError::Invalid(e.to_string()))
+}
+
+/// Start (or stop) a Yammer meeting transcript, starting Yammer first if it isn't running.
+/// Asking for the state it's already in does nothing (`--meeting=start|stop`, unlike its toggle).
+#[tauri::command]
+pub async fn yammer_meeting(start: bool) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bin = binary().ok_or_else(not_installed)?;
+        ensure_running(&bin)?;
+        let flag = if start { "--meeting=start" } else { "--meeting=stop" };
+        reap(quiet(Command::new(&bin).arg(flag)).spawn()?);
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Invalid(e.to_string()))?
+}
+
+/// Show a meeting in Yammer: a `yammer://meeting/<id>` link in an answer. Starts Yammer first if it isn't running.
+#[tauri::command]
+pub async fn yammer_open_meeting(id: u64) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bin = binary().ok_or_else(not_installed)?;
+        ensure_running(&bin)?;
+        reap(quiet(Command::new(&bin).arg(format!("--open-meeting={id}"))).spawn()?);
+        Ok(())
     })
     .await
     .map_err(|e| AppError::Invalid(e.to_string()))?

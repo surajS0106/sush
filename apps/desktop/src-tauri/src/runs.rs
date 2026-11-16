@@ -80,6 +80,10 @@ pub enum RunFrame {
     Notebook { notebook: Notebook },
     /// A notebook was deleted.
     NotebookGone { id: String },
+    /// A doc was written, edited or restored (`docs.rs`).
+    Doc { doc: sush_core::docs::Doc },
+    /// A doc was deleted.
+    DocGone { id: String },
     /// CRM records were added or changed (`crm.rs`).
     CrmRecords { records: Vec<sush_core::crm::Record> },
     /// CRM records were deleted.

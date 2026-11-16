@@ -73,7 +73,7 @@ export async function createNotebook(title: string): Promise<Notebook | null> {
     upsert(notebook);
     return notebook;
   } catch (e) {
-    toast.error("Couldn’t create the notebook", { description: errorMessage(e) });
+    toast.error("Couldn’t create the binder", { description: errorMessage(e) });
     return null;
   }
 }
@@ -82,7 +82,7 @@ export async function renameNotebook(id: string, title: string) {
   try {
     upsert(await api.notebookRename(id, title));
   } catch (e) {
-    toast.error("Couldn’t rename the notebook", { description: errorMessage(e) });
+    toast.error("Couldn’t rename the binder", { description: errorMessage(e) });
   }
 }
 
@@ -93,7 +93,7 @@ export async function deleteNotebook(id: string) {
     remove(id);
     for (const t of threads) deleteConversation(t);
   } catch (e) {
-    toast.error("Couldn’t delete the notebook", { description: errorMessage(e) });
+    toast.error("Couldn’t delete the binder", { description: errorMessage(e) });
   }
 }
 
@@ -140,7 +140,7 @@ export async function addDroppedFiles(notebookId: string, files: File[]): Promis
   let added = 0;
   for (const file of files) {
     if (!SOURCE_FILE.test(file.name)) {
-      toast.error(`${file.name} can’t be added`, { description: "Notebooks read PDFs, text and Markdown files." });
+      toast.error(`${file.name} can’t be added`, { description: "Binders read PDFs, text and Markdown files." });
       continue;
     }
     const data = base64(new Uint8Array(await file.arrayBuffer()));

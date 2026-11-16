@@ -25,6 +25,9 @@
     }
   },
   "plugins": {
+    "deep-link": {
+      "desktop": { "schemes": ["sush"] }
+    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdEM0FEMkEyOUEzREM2RTIKUldUaXhqMmFvdEk2ZldteW4wZ0sxYUQzSzBoYjMvZnFFUVdBOE4vT3lpdGt1dVFGMGt1aHNqNDgK",
       "endpoints": ["https://github.com/surajS0106/sush/releases/latest/download/latest.json"],

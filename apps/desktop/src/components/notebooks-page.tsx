@@ -104,7 +104,7 @@ function NotebookList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (i
   const [creating, setCreating] = useState(false);
   const create = async () => {
     setCreating(true);
-    const n = await createNotebook("Untitled notebook");
+    const n = await createNotebook("Untitled binder");
     setCreating(false);
     if (n) onOpen(n.id);
   };
@@ -113,14 +113,14 @@ function NotebookList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (i
       <div className="mx-auto w-full max-w-5xl px-8 pt-12 pb-16">
         <header className="flex flex-wrap items-start gap-4">
           <div className="min-w-0 flex-1">
-            <h1 className="text-3xl font-semibold tracking-tight">Notebooks</h1>
+            <h1 className="text-3xl font-semibold tracking-tight">Binders</h1>
             <p className="mt-2 text-muted-foreground">
               Gather PDFs, web pages, papers and notes, then ask about them. Every answer cites the passage it comes from.
             </p>
           </div>
           {notebooks.length > 0 && (
             <Button onClick={() => void create()} disabled={creating}>
-              {creating ? <Spinner /> : <PlusIcon />} New notebook
+              {creating ? <Spinner /> : <PlusIcon />} New binder
             </Button>
           )}
         </header>
@@ -130,14 +130,14 @@ function NotebookList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (i
               <NotebookTextIcon className="size-5 text-muted-foreground" />
             </span>
             <div>
-              <p className="font-medium">No notebooks yet</p>
+              <p className="font-medium">No binders yet</p>
               <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                A notebook holds the sources for one topic. Sush reads them, finds the passages that answer your questions, and
+                A binder holds the sources for one topic. Sush reads them, finds the passages that answer your questions, and
                 shows you exactly where each claim comes from.
               </p>
             </div>
             <Button className="mt-1" onClick={() => void create()} disabled={creating}>
-              {creating ? <Spinner /> : <PlusIcon />} Create a notebook
+              {creating ? <Spinner /> : <PlusIcon />} Create a binder
             </Button>
           </div>
         ) : (
@@ -198,7 +198,7 @@ function NotebookCard({ notebook, onOpen }: { notebook: Notebook; onOpen: () => 
       <RenameDialog
         open={renaming}
         onOpenChange={setRenaming}
-        title="Rename notebook"
+        title="Rename binder"
         value={notebook.title}
         onSave={(t) => renameNotebook(notebook.id, t)}
       />
@@ -304,7 +304,7 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
             variant="ghost"
             size="sm"
             className="text-muted-foreground"
-            title="How this notebook’s chats answer"
+            title="How this binder’s chats answer"
             onClick={() => setConfiguring(true)}
           >
             <SlidersHorizontalIcon />
@@ -325,7 +325,7 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Notebook options">
+            <Button variant="ghost" size="icon-sm" aria-label="Binder options">
               <MoreHorizontalIcon />
             </Button>
           </DropdownMenuTrigger>
@@ -349,7 +349,7 @@ function NotebookView({ notebook, onBack, catalog, hasProviders, onOpenSettings,
             )}
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={() => setDeleting(true)}>
-              <Trash2Icon /> Delete notebook
+              <Trash2Icon /> Delete binder
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -442,7 +442,7 @@ function ChatPicker({ chats, current, onPick, onNew }: { chats: Conversation[]; 
         {started.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuLabel className="text-xs text-muted-foreground">Chats in this notebook</DropdownMenuLabel>
+            <DropdownMenuLabel className="text-xs text-muted-foreground">Chats in this binder</DropdownMenuLabel>
             {started.map((c) => (
               <DropdownMenuItem key={c.id} onSelect={() => onPick(c.id)} aria-current={c.id === current?.id ? "true" : undefined}>
                 <span className="min-w-0 flex-1 truncate">{c.title}</span>

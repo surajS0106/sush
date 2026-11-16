@@ -5,6 +5,7 @@ mod commands;
 mod connector_auth;
 mod connectors;
 mod crm;
+mod docs;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
@@ -32,6 +33,7 @@ mod whisper;
 mod widgets;
 mod windows;
 mod workspaces;
+mod deep_link;
 mod yammer;
 
 use tauri::webview::{PermissionKind, PermissionResponse};
@@ -42,7 +44,15 @@ pub fn run() {
     #[cfg(unix)]
     login_env::init();
     paths::init();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // First, so a second launch hands its arguments (a sush:// link on Windows and Linux) to this
+    // copy and exits. Not for a second profile in a debug build, which runs beside the first (paths.rs).
+    let builder = match paths::profile() {
+        None => builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| deep_link::focus(app))),
+        Some(_) => builder,
+    };
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -58,6 +68,7 @@ pub fn run() {
             let config_dir = paths::config_dir(app.handle())?;
             secrets::init(&config_dir);
             app.manage(state::AppState::load(config_dir, paths::data_dir(app.handle())?)?);
+            deep_link::init(app.handle());
             if let (Some(profile), Some(window)) = (paths::profile(), app.get_webview_window("main")) {
                 let _ = window.set_title(&format!("Sush ({profile})"));
             }
@@ -188,6 +199,13 @@ pub fn run() {
             notebooks::notebook_source_delete,
             notebooks::notebook_source_retry,
             notebooks::notebook_source_text,
+            docs::docs_list,
+            docs::doc_tool,
+            docs::doc_create,
+            docs::doc_update,
+            docs::doc_restore,
+            docs::doc_set_date,
+            docs::doc_delete,
             crm::crm_load,
             crm::crm_save,
             crm::crm_save_many,
@@ -273,6 +291,10 @@ pub fn run() {
             yammer::yammer_status,
             yammer::yammer_toggle,
             yammer::yammer_open,
+            deep_link::deep_link_take,
+            yammer::yammer_mcp_server,
+            yammer::yammer_meeting,
+            yammer::yammer_open_meeting,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Sush")

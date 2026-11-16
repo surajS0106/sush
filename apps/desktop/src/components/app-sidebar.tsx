@@ -1,5 +1,6 @@
 import {
   BookOpenIcon,
+  FileTextIcon,
   ContactIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -110,7 +111,8 @@ const NAV = [
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "review", label: "Review", icon: GitPullRequestIcon },
   { id: "wiki", label: "Wiki", icon: BookOpenIcon },
-  { id: "notebooks", label: "Notebooks", icon: NotebookTextIcon },
+  { id: "notebooks", label: "Binders", icon: NotebookTextIcon },
+  { id: "docs", label: "Docs", icon: FileTextIcon },
 ] as const;
 
 type NavItem = (typeof NAV)[number];
@@ -127,7 +129,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "crm" | "workflows" | "shared";
+export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "docs" | "crm" | "workflows" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -779,7 +781,9 @@ function ProfileMenu({
           <DropdownMenuSubContent className="w-36">
             <DropdownMenuRadioGroup value={theme} onValueChange={(t) => transitionTheme(() => setTheme(t))}>
               {THEMES.map(({ value, label, icon: Icon }) => (
-                <DropdownMenuRadioItem key={value} value={value}>
+                // Stay open: closing the menu while transitionTheme cross-fades the
+                // page leaves it frozen in the snapshot, then it vanishes in a jump.
+                <DropdownMenuRadioItem key={value} value={value} onSelect={(e) => e.preventDefault()}>
                   <Icon /> {label}
                 </DropdownMenuRadioItem>
               ))}

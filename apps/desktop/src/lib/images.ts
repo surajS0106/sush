@@ -8,22 +8,76 @@ import { createStore } from "@/lib/store";
 import { api, errorMessage, type GeneratedImage, type ImageApi, type ImageAspect, type ProviderView, type ToolSpec } from "@/lib/tauri";
 
 export interface ImageSettings {
-  /** null: image generation is off. */
+  /** null: automatic (the first added provider that can draw); `IMAGES_OFF_ID`: off. */
   providerId: string | null;
   model: string;
   api: ImageApi;
 }
+
+export const IMAGES_OFF_ID = "off";
 
 const images = createStore<ImageSettings>("sush.images", { providerId: null, model: "", api: "images" });
 
 export const useImageSettings = () => useSyncExternalStore(images.subscribe, images.get);
 export const setImageSettings = (patch: Partial<ImageSettings>) => images.set((s) => ({ ...s, ...patch }));
 
-/** Whether a model is set up to make images, so the tool is offered. */
-export const imagesEnabled = () => {
-  const s = images.get();
-  return !!s.providerId && !!s.model.trim();
+/** The providers the user has added, so "automatic" can pick one. Kept current by `useProviders`. */
+let known: ProviderView[] = [];
+const knownListeners = new Set<() => void>();
+export const setImageProviders = (list: ProviderView[]) => {
+  known = list;
+  knownListeners.forEach((l) => l());
 };
+const subscribeKnown = (l: () => void) => {
+  knownListeners.add(l);
+  return () => void knownListeners.delete(l);
+};
+const getKnown = () => known;
+
+/** A provider's settings for images, when we know a model it draws with and it's ready to call. */
+const autoFor = (p: ProviderView): ImageSettings | null => {
+  const model = defaultImageModel(p);
+  const ready = p.auth.type !== "api-key" || p.hasKey;
+  return canGenerateImages(p) && ready && model ? { providerId: p.id, model, api: defaultImageApi(p) } : null;
+};
+
+/**
+ * What draws images right now: the user's pick, or automatically the first added provider that can
+ * (OpenAI, xAI, OpenRouter), so a chat with any model can make images without visiting Settings.
+ * null when off or nothing can draw.
+ */
+export function activeImageSettings(): ImageSettings | null {
+  const s = images.get();
+  if (s.providerId === IMAGES_OFF_ID) return null;
+  if (s.providerId) {
+    if (s.model.trim()) return { ...s, model: s.model.trim() };
+    const p = known.find((x) => x.id === s.providerId);
+    return p ? autoFor(p) : null;
+  }
+  for (const p of known) {
+    const auto = autoFor(p);
+    if (auto) return auto;
+  }
+  return null;
+}
+
+/** Whether a model is set up to make images, so the tool is offered. */
+export const imagesEnabled = () => activeImageSettings() !== null;
+
+/** The provider "automatic" would use, for Settings to name it. */
+export const autoImageProvider = () => known.find((p) => autoFor(p));
+
+/** What draws images right now, re-rendering as settings or the provider list change. */
+export function useActiveImageSettings(): ImageSettings | null {
+  useSyncExternalStore(images.subscribe, images.get);
+  useSyncExternalStore(subscribeKnown, getKnown);
+  return activeImageSettings();
+}
+
+export const useImagesReady = () => useActiveImageSettings() !== null;
+
+/** Whether a provider has a model we know draws images, for the "Images" tag in Settings. */
+export const drawsImages = (p: ProviderView) => canGenerateImages(p) && !!defaultImageModel(p);
 
 /** Claude doesn't output images, so Anthropic-format providers can't make them. */
 export const canGenerateImages = (p: ProviderView) => p.format === "openai-chat";
@@ -34,7 +88,13 @@ export const isOpenRouter = (p: ProviderView) => /openrouter\.ai/.test(p.baseUrl
 export const defaultImageApi = (p: ProviderView): ImageApi => (isOpenRouter(p) ? "chat-modalities" : "images");
 
 export const defaultImageModel = (p: ProviderView) =>
-  isOpenRouter(p) ? "google/gemini-2.5-flash-image" : /api\.openai\.com/.test(p.baseUrl) ? "gpt-image-1" : "";
+  isOpenRouter(p)
+    ? "google/gemini-2.5-flash-image"
+    : /api\.openai\.com/.test(p.baseUrl)
+      ? "gpt-image-1"
+      : /api\.x\.ai/.test(p.baseUrl)
+        ? "grok-imagine-image"
+        : "";
 
 // --- the tool ------------------------------------------------------------------------
 
@@ -67,6 +127,24 @@ export const imageTool: ToolSpec = {
   },
 };
 
+/**
+ * In the system prompt while images are on: a request for a picture is answered by drawing it at once,
+ * the way ChatGPT does, not by planning, asking or offering options first.
+ */
+export const IMAGES_SECTION =
+  "When the user asks you to create, draw, generate, make or design an image, picture, photo, illustration, " +
+  "logo, icon or wallpaper, call image_generate straight away as your first step. Write the detailed prompt " +
+  "yourself from their words, choosing the style, composition, lighting and colours they didn't specify. " +
+  "Don't ask clarifying questions, don't make a to-do list, don't describe options or ask which they prefer, " +
+  "and don't search the web first unless the image depends on facts you don't know. After the image, say in " +
+  "one short sentence what you made.";
+
+/** Sent with a message written in image mode (the composer's Image chip): draw it, nothing else. */
+export const IMAGE_MODE_INSTRUCTION =
+  "The user picked Create image for this message: call image_generate now, with a detailed prompt built from " +
+  "the message above (and any attached image as reference for its content and style). Don't ask questions or " +
+  "plan first. Then say in one short sentence what you made.";
+
 export const IMAGES_OFF =
   "You can't generate images in this chat: no image model is set up. If the user asks for an image, say so " +
   "and tell them they can pick an image model in Settings → Images; don't offer HTML or SVG as a substitute " +
@@ -91,10 +169,10 @@ export async function runImageGenerate(input: unknown): Promise<{ output: ImageO
   if (aspect !== undefined && !ASPECTS.includes(aspect)) {
     return { errorText: "`aspect` must be square, landscape or portrait, or left out." };
   }
-  const s = images.get();
-  if (!s.providerId || !s.model.trim()) return { errorText: IMAGES_OFF };
+  const s = activeImageSettings();
+  if (!s?.providerId) return { errorText: IMAGES_OFF };
   try {
-    const image = await api.imageGenerate(s.providerId, s.model.trim(), s.api, prompt.trim(), aspect ?? null);
+    const image = await api.imageGenerate(s.providerId, s.model, s.api, prompt.trim(), aspect ?? null);
     return { output: { ...image, prompt: prompt.trim(), note: "The image is shown to the user." } };
   } catch (e) {
     return { errorText: `Image generation failed: ${errorMessage(e)}` };

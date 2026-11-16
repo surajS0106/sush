@@ -8,7 +8,7 @@ import { flushSync } from "react-dom";
 
 import { createStore } from "@/lib/store";
 
-export type ChatFont = "sans" | "serif" | "mono" | "space-mono";
+export type ChatFont = "sans" | "serif" | "mono" | "space-mono" | "opendyslexic";
 export type TextSize = "small" | "medium" | "large";
 /** "custom" is a width the user dragged the column to, kept in `customWidth`. */
 export type TranscriptWidth = "narrow" | "medium" | "wide" | "custom";

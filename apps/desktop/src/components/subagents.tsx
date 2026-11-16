@@ -89,7 +89,7 @@ export function agentState(part: DynamicToolUIPart, child: ChildStatus, running:
 }
 
 /** Sushi to cast as sub-agents, in order, skipping whichever leads. */
-const CREW = ["maguro", "kappa-maki", "tamago", "ebi", "onigiri", "ikura", "sake-maki", "wasabi", "inari", "temaki", "matcha", "salmon"];
+const CREW = ["maguro", "kappa-maki", "tamago", "ebi", "onigiri", "ikura", "sake-maki", "wasabi", "inari", "temaki", "matcha", "salmon", "dango", "tempura"];
 
 function crewFor(lead: string, n: number): { kind: string; name: string }[] {
   const cast = CREW.filter((k) => k !== lead && AVATARS.some((a) => a.key === k));

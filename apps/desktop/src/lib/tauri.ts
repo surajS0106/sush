@@ -501,6 +501,40 @@ export type ThreadOp =
   | { type: "set-part"; index: number; part: unknown }
   | { type: "set-metadata"; metadata: Record<string, unknown> };
 
+// --- docs (`docs.rs`, `sush_core::docs`) ----------------------------------------------
+
+export type DocAuthor = "sush" | "user";
+
+export interface DocVersion {
+  /** Shown as `v{number}`. */
+  number: number;
+  author: DocAuthor;
+  note: string;
+  title: string;
+  content: string;
+  at: number;
+}
+
+/** A Notion-style doc (`sush_core::docs::Doc`): Markdown with a title, kept with its versions. */
+export interface Doc {
+  /** `<thread id>/<slug>` for one the model wrote, `doc-<random>` for one the user started. */
+  id: string;
+  slug: string;
+  threadId?: string;
+  title: string;
+  icon?: string;
+  content: string;
+  /** The date shown under the title (`YYYY-MM-DD`), when the user picked one; else `createdAt`. */
+  date?: string;
+  createdAt: number;
+  updatedAt: number;
+  /** Goes up with every change; edits are made on a rev. */
+  rev: number;
+  /** `rev` when the model last wrote or read it. */
+  seenRev: number;
+  versions: DocVersion[];
+}
+
 // --- CRM (`crm.rs`, `sush_core::crm`) --------------------------------------------------
 
 export type CrmKind = "company" | "contact" | "deal";
@@ -763,6 +797,8 @@ export type RunFrame =
   | { type: "report"; report: Report }
   | { type: "notebook"; notebook: Notebook }
   | { type: "notebook-gone"; id: string }
+  | { type: "doc"; doc: Doc }
+  | { type: "doc-gone"; id: string }
   | { type: "crm-records"; records: CrmRecord[] }
   | { type: "crm-gone"; ids: string[] }
   | { type: "crm-activities"; recordId: string; activities: CrmActivity[] }
@@ -1083,6 +1119,9 @@ export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
 
 /** How a provider transcribes: OpenAI-style `/audio/transcriptions`, or Ollama chat with an audio-capable model. */
 export type TranscribeApi = "transcriptions" | "ollama-chat";
+
+/** What a `sush://` link asks for (`src-tauri/src/deep_link.rs`). */
+export type LinkRequest = { kind: "ask-meeting"; meeting: number; title: string };
 
 /** Yammer, Sush's dictation app (`src-tauri/src/yammer.rs`). */
 export interface YammerStatus {
@@ -1425,6 +1464,17 @@ export const api = {
   reportAskThread: (id: string, threadId: string | null) => invoke<Report>("report_ask_thread", { id, threadId }),
   reportDelete: (id: string) => invoke<void>("report_delete", { id }),
 
+  docsList: () => invoke<Doc[]>("docs_list"),
+  /** Run a `doc_*` tool for a thread's model; resolves to what the model is told. */
+  docTool: (threadId: string, name: string, input: unknown) => invoke<string>("doc_tool", { threadId, name, input }),
+  docCreate: (title: string) => invoke<Doc>("doc_create", { title }),
+  /** The user's edit, made on `baseRev`; refused if the doc changed since. */
+  docUpdate: (id: string, baseRev: number, title: string, content: string, icon: string | null) =>
+    invoke<Doc>("doc_update", { id, baseRev, title, content, icon }),
+  docRestore: (id: string, number: number) => invoke<Doc>("doc_restore", { id, number }),
+  /** Set or clear the date under the title; doesn't change `rev`. */
+  docSetDate: (id: string, date: string | null) => invoke<Doc>("doc_set_date", { id, date }),
+  docDelete: (id: string) => invoke<void>("doc_delete", { id }),
   crmLoad: () => invoke<{ records: CrmRecord[]; views: CrmView[]; settings: CrmSettings }>("crm_load"),
   crmSave: (record: CrmRecord) => invoke<CrmRecord>("crm_save", { record }),
   /** A bulk edit; all or none. */
@@ -1605,6 +1655,14 @@ export const api = {
   yammerToggle: () => invoke<boolean>("yammer_toggle"),
   /** Show Yammer's window (its setup and settings). */
   yammerOpen: () => invoke<void>("yammer_open"),
+  /** How to start Yammer's meetings server (`yammer --mcp`); null when Yammer can't serve them. */
+  yammerMcpServer: () => invoke<{ command: string; args: string[] } | null>("yammer_mcp_server"),
+  /** Start or stop a Yammer meeting transcript, starting Yammer first if it isn't running. */
+  yammerMeeting: (start: boolean) => invoke<void>("yammer_meeting", { start }),
+  /** Show a meeting in Yammer (a `yammer://meeting/<id>` link), starting Yammer if needed. */
+  yammerOpenMeeting: (id: number) => invoke<void>("yammer_open_meeting", { id }),
+  /** `sush://` links that arrived since the last call, oldest first; a `deep-link` event says more came. */
+  deepLinkTake: () => invoke<LinkRequest[]>("deep_link_take"),
   /** A tab was dragged out of this window's strip and let go (`windows.rs`); `last` if it was the only one. */
   tabDrop: (threadId: string, last: boolean) => invoke<TabDrop>("tab_drop", { threadId, last }),
   /** A torn-off tab is being dragged (null: the drag is over); true while another window's strip is under the cursor. */

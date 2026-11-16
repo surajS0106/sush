@@ -78,7 +78,7 @@ export async function startStudio(
   options: StudioOptions | string = {},
 ): Promise<NotebookNote | null> {
   if (!getTarget()) {
-    toast.error("Pick a model first", { description: "Choose one in the notebook’s chat." });
+    toast.error("Pick a model first", { description: "Choose one in the binder’s chat." });
     return null;
   }
   const label = kindLabel(kind);

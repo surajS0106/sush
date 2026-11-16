@@ -28,13 +28,14 @@ import { buildContext, CRM_UNDEFERRED, notebookContext, runTool, runTools, setTo
 import { budgetBlock } from "@/lib/budget";
 import { applyCrmActivities, applyCrmEvent, applyCrmGone, applyCrmRecords, applyCrmSettings, applyCrmViews, isCrmThread } from "@/lib/crm";
 import { CRM_MENTION_NOTE, mentionsCrm } from "@/lib/crm-tools";
-import { noteModelProblem, noteModelWorked } from "@/lib/model-names";
+import { friendlyName, isChatModel, noteModelProblem, noteModelWorked } from "@/lib/model-names";
 import { providerTrouble, stepThread } from "@/lib/workflows";
 import { activeConnectors, library } from "@/lib/library";
 import { expandMentions, mentionSegments } from "@/lib/mentions";
 import { recordModelUse } from "@/lib/model-usage";
 import { getProject } from "@/lib/projects";
 import { capsFor, reasoningRequest } from "@/lib/reasoning";
+import { applyDoc, applyDocGone } from "@/lib/docs";
 import { applyNotebook, applyNotebookGone, isNotebookThread } from "@/lib/notebooks";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
@@ -193,7 +194,7 @@ function onFrame(frame: RunFrame) {
       setToolRunning(frame.callId, frame.running);
       break;
     case "client-tool":
-      void runTool(frame.name, frame.input).then((result) =>
+      void runTool(frame.name, frame.input, frame.threadId).then((result) =>
         api.toolResult(frame.callId, result).catch((e) => console.error("Could not return a tool result", e)),
       );
       break;
@@ -205,6 +206,12 @@ function onFrame(frame: RunFrame) {
       break;
     case "report":
       applyReport(frame.report);
+      break;
+    case "doc":
+      applyDoc(frame.doc);
+      break;
+    case "doc-gone":
+      applyDocGone(frame.id);
       break;
     case "notebook":
       applyNotebook(frame.notebook);
@@ -347,6 +354,10 @@ function runConfig(id: string, messages: SushUIMessage[]): RunConfig {
   // A workflow step runs on the model its workflow picked, from whichever window answers it.
   const target = stepThread(id)?.target ?? sessionTarget(id);
   if (!target) throw new Error("Pick a model first. Add a provider in Settings if the list is empty.");
+  if (!isChatModel(target.model))
+    throw new Error(
+      `${friendlyName(target.model)} only makes images, so it can't chat. Pick a chat model in the model picker: the image models are listed at its bottom, and the one you pick draws whenever you ask for a picture.`,
+    );
   // Worked out here, not at render: a retry can switch model and send in one go.
   const prefs = library.prefs();
   const reasoning = reasoningRequest(capsFor(target.providerId, formats.get(target.providerId), target.model), {

@@ -1,6 +1,6 @@
-import { BoxIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, TriangleAlertIcon } from "lucide-react";
+import { BoxIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, ImageIcon, TriangleAlertIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ModelSelector,
@@ -15,10 +15,11 @@ import {
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
 import { PromptInputButton } from "@/components/ai-elements/prompt-input";
-import type { ProviderModels } from "@/hooks/use-providers";
+import { failedToLoad, reloadProviders, type ProviderModels } from "@/hooks/use-providers";
+import { canGenerateImages, defaultImageApi, defaultImageModel, setImageSettings, useActiveImageSettings } from "@/lib/images";
 import { logoColor, modelLogo, providerLogo } from "@/lib/logos";
 import { topModels, useModelUsage } from "@/lib/model-usage";
-import { friendlyName, isLocalProvider, modelHint, modelProblem, useModelHealth } from "@/lib/model-names";
+import { friendlyName, isChatModel, isImageOnlyModel, withoutSnapshots, isLocalProvider, modelHint, modelProblem, useModelHealth } from "@/lib/model-names";
 import type { ModelTarget } from "@/lib/transport";
 import { cn } from "@/lib/utils";
 
@@ -26,6 +27,42 @@ interface ModelPickerProps {
   catalog: ProviderModels[];
   value: ModelTarget | null;
   onChange: (target: ModelTarget) => void;
+  /**
+   * Offer image models too, in their own group: picking one makes it the image model (Settings → Images)
+   * rather than the chat model, and calls this (the composer turns its Image chip on).
+   */
+  onPickImageModel?: () => void;
+}
+
+/**
+ * Search by words, not cmdk's fuzzy letters: every word typed must appear in the row's provider, id or name.
+ * Fuzzy matching had "image" find Mistral Large 4 (m-I-stral … a-G-E) and re-sorted rows by score, which split
+ * a provider's models apart; equal scores keep the list's own order.
+ */
+const wordFilter = (value: string, search: string) => {
+  const hay = value.toLowerCase();
+  return search.toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w)) ? 1 : 0;
+};
+
+/** Video models (Grok Imagine Video, Veo, Sora) don't make still images, so they aren't offered for pictures. */
+const VIDEO = /video|^veo|^sora/i;
+
+/** Each provider's image models: the image-only ones it lists, plus the one we know it draws with. */
+function imageModels(catalog: ProviderModels[]) {
+  const out: { provider: ProviderModels["provider"]; id: string; displayName?: string | null }[] = [];
+  for (const { provider, models } of catalog) {
+    if (!canGenerateImages(provider)) continue;
+    const ids = new Set<string>();
+    for (const m of withoutSnapshots(models)) {
+      if (!isImageOnlyModel(m.id) || VIDEO.test(m.id.split("/").pop() ?? m.id)) continue;
+      ids.add(m.id);
+      out.push({ provider, id: m.id, displayName: m.displayName });
+    }
+    // Only alongside a list that loaded: on its own it hid that the provider's models were missing.
+    const known = defaultImageModel(provider);
+    if (known && models.length > 0 && !ids.has(known)) out.push({ provider, id: known });
+  }
+  return out;
 }
 
 /** Renders a monochrome SVG as a mask so it takes the surrounding text color (or its brand color) in either theme. */
@@ -48,7 +85,22 @@ export function Logo({ src, className }: { src?: string; className?: string }) {
 const itemValue = (providerName: string, id: string, displayName?: string | null) =>
   `${providerName} ${id} ${displayName ?? ""}`.trim();
 
-export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
+export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }: ModelPickerProps) {
+  // Image-only models can't chat: they're listed apart (when the composer asks) and picked as the image model.
+  const catalog = useMemo(
+    () => all.map((c) => ({ ...c, models: withoutSnapshots(c.models.filter((m) => isChatModel(m.id))) })),
+    [all],
+  );
+  const images = useMemo(() => (onPickImageModel ? imageModels(all) : []), [all, onPickImageModel]);
+  const imageNow = useActiveImageSettings();
+  // Providers whose model list didn't load (a timeout or network blip at startup): they're retried when the
+  // picker opens, and named at the top of the list with the reason and a Retry, rather than silently missing.
+  const failed = all.filter(failedToLoad);
+  const [retrying, setRetrying] = useState(false);
+  const retry = () => {
+    setRetrying(true);
+    void reloadProviders().finally(() => setRetrying(false));
+  };
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   // In "All models", groups start open; this holds the ones the user folded.
@@ -102,6 +154,10 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
   // The highlighted row: the current model when the list opens, then wherever the keyboard or search moves it.
   const [active, setActive] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open && failed.length > 0 && !retrying) retry();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     setActive(currentValue);
@@ -170,7 +226,7 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
           <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
         </PromptInputButton>
       </ModelSelectorTrigger>
-      <ModelSelectorContent title="Pick a model" commandProps={{ value: active, onValueChange: setActive }}>
+      <ModelSelectorContent title="Pick a model" commandProps={{ value: active, onValueChange: setActive, filter: wordFilter }}>
         <ModelSelectorInput placeholder="Search all models…" value={search} onValueChange={setSearch} />
         <ModelSelectorList
           ref={listRef}
@@ -180,6 +236,27 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
           {/* cmdk counts rendered rows, so collapsed groups alone would otherwise read as "no models". */}
           {(search || catalog.every((c) => c.models.length === 0)) && (
             <ModelSelectorEmpty>No models found. Add a provider in Settings.</ModelSelectorEmpty>
+          )}
+          {!search && failed.length > 0 && (
+            <div className="mx-1 mt-1 mb-1.5 flex flex-col gap-1 rounded-md border border-coral/30 bg-coral/5 px-2.5 py-2 text-xs">
+              {failed.map(({ provider, error }) => (
+                <div key={provider.id} className="flex items-start gap-2">
+                  <Logo className="mt-px size-3.5" src={providerLogo(provider)} />
+                  <span className="min-w-0 flex-1">
+                    <span className="font-medium">{provider.name}’s models didn’t load.</span>{" "}
+                    <span className="line-clamp-2 text-muted-foreground">{error}</span>
+                  </span>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={retry}
+                disabled={retrying}
+                className="self-start rounded-md px-1.5 py-0.5 font-medium text-coral hover:bg-coral/10 disabled:opacity-60"
+              >
+                {retrying ? "Retrying…" : "Retry"}
+              </button>
+            </div>
           )}
           {!search && !showAll ? (
             // A short list: the current model, the ones used most, and a couple from each provider.
@@ -295,6 +372,50 @@ export function ModelPicker({ catalog, value, onChange }: ModelPickerProps) {
                 </Fragment>
               );
             })
+          )}
+          {images.length > 0 && (
+            <>
+              <ModelSelectorSeparator />
+              <ModelSelectorGroup
+                heading={
+                  <span className="flex items-center gap-1.5">
+                    <ImageIcon className="size-3" />
+                    Image models
+                    <span className="ml-auto font-normal opacity-70">the chat model writes the prompt, this one draws it</span>
+                  </span>
+                }
+              >
+                {images.map(({ provider, id, displayName }) => {
+                  const selected = imageNow?.providerId === provider.id && imageNow.model === id;
+                  return (
+                    <ModelSelectorItem
+                      key={`image/${provider.id}/${id}`}
+                      value={`image ${itemValue(provider.name, id, displayName)}`}
+                      className={cn("py-2", selected && "bg-sky-500/10 data-selected:bg-sky-500/15")}
+                      onSelect={() => {
+                        setImageSettings({ providerId: provider.id, model: id, api: defaultImageApi(provider) });
+                        onPickImageModel?.();
+                        setOpen(false);
+                      }}
+                    >
+                      <Logo className="text-foreground/80" src={modelLogo(id) ?? providerLogo(provider)} />
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className={cn("truncate", selected && "font-medium")}>{friendlyName(id, displayName)}</span>
+                        <span className="truncate text-xs text-muted-foreground">{provider.name}</span>
+                      </span>
+                      <span className="shrink-0 rounded-full bg-sky-500/10 px-1.5 py-0.5 text-[10px] text-sky-700 dark:text-sky-300">
+                        Image
+                      </span>
+                      <CheckIcon
+                        className={cn("size-4 shrink-0 text-sky-500", !selected && "invisible")}
+                        aria-label={selected ? "Current image model" : undefined}
+                        aria-hidden={!selected}
+                      />
+                    </ModelSelectorItem>
+                  );
+                })}
+              </ModelSelectorGroup>
+            </>
           )}
         </ModelSelectorList>
       </ModelSelectorContent>

@@ -44,6 +44,15 @@ impl Aspect {
         }
     }
 
+    /// `aspect_ratio` for xAI's `/images/generations`.
+    fn xai_ratio(self) -> &'static str {
+        match self {
+            Aspect::Square => "1:1",
+            Aspect::Landscape => "4:3",
+            Aspect::Portrait => "3:4",
+        }
+    }
+
     /// `image_config.aspect_ratio` for chat completions (OpenRouter).
     fn ratio(self) -> &'static str {
         match self {
@@ -81,7 +90,12 @@ pub async fn generate_image(
     let (image, revised_prompt) = match api {
         ImageApi::Images => {
             let mut body = json!({ "model": model, "prompt": prompt, "n": 1 });
-            if let Some(size) = aspect.and_then(|a| a.size(model)) {
+            // xAI takes `aspect_ratio` rather than OpenAI's pixel `size`.
+            if cfg.base_url.contains("api.x.ai") {
+                if let Some(a) = aspect {
+                    body["aspect_ratio"] = a.xai_ratio().into();
+                }
+            } else if let Some(size) = aspect.and_then(|a| a.size(model)) {
                 body["size"] = size.into();
             }
             let resp = ep.apply(http.post(ep.url("images/generations"))).json(&body).send().await.map_err(ProviderError::sending)?;

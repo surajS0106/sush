@@ -22,6 +22,7 @@ import { useCrm } from "@/lib/crm";
 import { errorMessage } from "@/lib/tauri";
 import { sampleInput, setUpStep, suggestNext, type Suggestion } from "@/lib/workflow-ai";
 import { useWorkspaces } from "@/lib/workspaces";
+import { YAMMER_CONNECTOR_ID } from "@/lib/yammer";
 import {
   connect,
   defOf,
@@ -292,6 +293,18 @@ function Config({ node, field, choice, workflow }: { node: WfNode; field: FieldF
         </>
       );
     }
+    case "meeting":
+      return connectorTools().some((t) => t.connector.id === YAMMER_CONNECTOR_ID) ? (
+        <p className="text-sm text-muted-foreground">
+          Starts once a meeting you recorded with Yammer has ended and its notes are written, checked every minute while Sush is open. Later steps
+          get its title, notes and a link to it.
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Reads your meetings through the Yammer connector, which isn't on. Install or update Yammer and open it once, then turn on Yammer under
+          Connectors.
+        </p>
+      );
     case "file":
       return choice("workspaceId", "Folder", [{ value: "", label: "Pick a folder" }, ...workspaces.map((w) => ({ value: w.id, label: w.name }))]);
     case "crm-event": {
