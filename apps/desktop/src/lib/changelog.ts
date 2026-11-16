@@ -28,7 +28,7 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Docs you edit together with Sush, your Yammer meetings in chat, and pictures in any conversation.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
@@ -41,7 +41,6 @@ export const UNRELEASED: Change[] = [
   { kind: "improved", text: "The Meeting prep automation template now brings in what you last discussed with each attendee, from your Yammer meetings when Yammer is connected." },
   { kind: "improved", title: "Sushi TV", text: "While an image is being made, Sushi switches on an old wood-grain TV and paints you a picture. There may be something else on another channel." },
   { kind: "improved", text: "Notebooks are now called Binders. Everything in them stays as it was." },
-  { kind: "new", text: "xAI is now in the Add provider list, so you can use Grok models with your xAI API key." },
   { kind: "improved", title: "Image models in the model picker", text: "The model picker lists image models in their own group at the bottom. Pick one and it draws your pictures, and the Image chip turns on (hover it to see which model). A chat that was set to an image model switches to your usual chat model and keeps that one for pictures, instead of failing." },
   { kind: "new", title: "Create image", text: "Pick Create image from the + menu and an Image chip appears in the composer: everything you send is drawn as a picture until you remove it. Without the chip, asking for a picture draws it straight away, with no questions or planning first." },
   { kind: "improved", title: "Settings → Images", text: "Shows at a glance whether images are on and which model draws them, tags the providers that can make images, and explains the ways to ask for one." },
