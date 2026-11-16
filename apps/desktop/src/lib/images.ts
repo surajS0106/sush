@@ -159,6 +159,8 @@ export interface ImageInput {
 export interface ImageOutput extends GeneratedImage {
   prompt: string;
   note: string;
+  /** Which provider and model drew it, for the card; stripped before the model (`CARD_ONLY`). Missing on older images. */
+  cardOnly?: { model: string; provider?: string };
 }
 
 const ASPECTS: ImageAspect[] = ["square", "landscape", "portrait"];
@@ -173,7 +175,11 @@ export async function runImageGenerate(input: unknown): Promise<{ output: ImageO
   if (!s?.providerId) return { errorText: IMAGES_OFF };
   try {
     const image = await api.imageGenerate(s.providerId, s.model, s.api, prompt.trim(), aspect ?? null);
-    return { output: { ...image, prompt: prompt.trim(), note: "The image is shown to the user." } };
+    // The provider's name as it is now, so renaming or removing it later doesn't change the record.
+    const provider = known.find((p) => p.id === s.providerId)?.name;
+    return {
+      output: { ...image, prompt: prompt.trim(), note: "The image is shown to the user.", cardOnly: { model: s.model, provider } },
+    };
   } catch (e) {
     return { errorText: `Image generation failed: ${errorMessage(e)}` };
   }

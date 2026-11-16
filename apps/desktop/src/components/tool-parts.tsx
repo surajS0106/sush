@@ -272,6 +272,12 @@ function ImagePart({ part }: { part: DynamicToolUIPart }) {
       <figcaption className="mt-1.5 line-clamp-2 text-xs text-muted-foreground" title={output.revisedPrompt ?? output.prompt}>
         {output.revisedPrompt ?? output.prompt}
       </figcaption>
+      {output.cardOnly?.model && (
+        <p className="mt-0.5 truncate text-xs text-muted-foreground/70" title="The model that drew this image">
+          {output.cardOnly.provider ? `${output.cardOnly.provider} · ` : ""}
+          {output.cardOnly.model}
+        </p>
+      )}
     </figure>
   );
 }

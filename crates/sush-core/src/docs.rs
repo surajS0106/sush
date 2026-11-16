@@ -183,6 +183,7 @@ fn str_field<'a>(input: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// What a tool call did: the doc as saved (None if unchanged) and what the model is told.
+#[derive(Debug)]
 pub struct ToolOutcome {
     pub doc: Option<Doc>,
     pub output: String,
