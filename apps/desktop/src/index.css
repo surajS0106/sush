@@ -749,6 +749,64 @@ body.doc-table-dragging, body.doc-table-dragging * { cursor: grabbing !important
 .doc-editor [data-content-type="table"] .tableWrapper { padding-left: 14px; }
 .doc-editor .bn-block-content[data-content-type="table"] { font-size: 14px; line-height: 1.5; }
 .doc-editor .bn-block-content[data-content-type="quote"] { border-left-color: var(--foreground); }
+/* Code blocks: BlockNote paints them near-black in both themes. Here they're a creamy
+   off-white in light mode and the theme's muted surface in dark mode. */
+.doc-editor { --doc-code-bg: #fffefb; --doc-code-border: #efebe3; }
+/* Dark: just above the page (three parts page to one part muted), so the block reads as a
+   deep well rather than a grey slab; the border keeps its edge. */
+.dark .doc-editor { --doc-code-bg: color-mix(in oklch, var(--background) 75%, var(--muted)); --doc-code-border: var(--border); }
+.doc-editor .bn-block-content[data-content-type="codeBlock"] {
+  color: var(--foreground); background-color: var(--doc-code-bg);
+  border: 1px solid var(--doc-code-border); border-radius: 8px;
+  /* Room around each block, so two in a row read as two (8px each side plus BlockNote's
+     3px block padding: 22px between neighbours; the margins sit in separate flex blocks
+     and don't collapse). */
+  margin-block: 8px;
+}
+.doc-editor .bn-block-content[data-content-type="codeBlock"] > pre {
+  --bn-suggestion-surface: var(--doc-code-bg);
+  padding: 32px 20px 16px; font-size: 13.5px; line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+/* Syntax colours (lib/doc-code-block.ts, Shiki): each token carries both themes' colours. */
+.doc-editor [data-content-type="codeBlock"] pre [style*="--shiki-light"] { color: var(--shiki-light); font-style: var(--shiki-light-font-style, inherit); }
+.dark .doc-editor [data-content-type="codeBlock"] pre [style*="--shiki-dark"] { color: var(--shiki-dark); font-style: var(--shiki-dark-font-style, inherit); }
+/* The code block's bar (lib/doc-code-block.ts): the language as a button sized to its name,
+   opening a filterable list, and Copy on the right, shown on hover like Notion's. */
+.doc-code-bar {
+  position: absolute; top: 4px; left: 12px; right: 8px; height: 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--font-sans, inherit); user-select: none; z-index: 1;
+}
+.doc-code-lang, .doc-code-copy {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 6px;
+  font-size: 12px; line-height: 1; color: var(--muted-foreground); background: transparent;
+  transition: background-color 120ms, color 120ms, opacity 120ms;
+}
+button.doc-code-lang, .doc-code-copy { cursor: pointer; }
+button.doc-code-lang:hover, .doc-code-copy:hover { background: var(--accent); color: var(--foreground); }
+.doc-code-lang:focus-visible, .doc-code-copy:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.doc-code-copy { opacity: 0; }
+[data-content-type="codeBlock"]:hover .doc-code-copy, .doc-code-copy:focus-visible { opacity: 1; }
+@media (hover: none) { .doc-code-copy { opacity: 1; } }
+.doc-code-menu {
+  position: fixed; width: 220px; padding: 4px; z-index: 60;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--popover); color: var(--popover-foreground);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12), 0 2px 4px rgb(0 0 0 / 0.06);
+}
+.doc-code-menu-filter {
+  width: 100%; height: 28px; padding: 0 8px; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; background: transparent; color: inherit; outline: none;
+}
+.doc-code-menu-filter:focus { border-color: var(--ring); }
+.doc-code-menu-list { position: relative; max-height: 240px; overflow-y: auto; }
+.doc-code-menu-item {
+  display: flex; align-items: center; justify-content: space-between; height: 28px; padding: 0 8px;
+  border-radius: 4px; font-size: 13px; cursor: pointer;
+}
+.doc-code-menu-item[data-active] { background: var(--accent); color: var(--accent-foreground); }
+.doc-code-menu-empty { padding: 8px; font-size: 13px; color: var(--muted-foreground); }
+@media (prefers-reduced-motion: reduce) { .doc-code-lang, .doc-code-copy { transition: none; } }
 .doc-diagram { display: flex; justify-content: center; padding: 12px 0; overflow-x: auto; }
 .doc-diagram svg { max-width: 100%; height: auto; }
 .doc-diagram-error { color: var(--muted-foreground); font-size: 14px; }

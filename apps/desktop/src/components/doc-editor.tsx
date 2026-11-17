@@ -13,14 +13,19 @@
 import "@blocknote/shadcn/style.css";
 
 import type { BlockNoteEditor } from "@blocknote/core";
+import { SuggestionMenu as SuggestionMenuExtension, SyntaxHighlightingExtension } from "@blocknote/core/extensions";
 import {
+  type DefaultReactSuggestionItem,
   FormattingToolbar,
   FormattingToolbarController,
   getFormattingToolbarItems,
+  SuggestionMenuController,
+  type SuggestionMenuProps,
   TableHandlesController,
   useBlockNoteEditor,
   useComponentsContext,
   useCreateBlockNote,
+  useExtensionState,
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import {
@@ -37,6 +42,7 @@ import {
   MinusIcon,
   PilcrowIcon,
   RotateCcwIcon,
+  SearchIcon,
   SparklesIcon,
   TableIcon,
   TextQuoteIcon,
@@ -62,6 +68,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DIAGRAM_GUIDE } from "@/lib/diagram";
 import { complete, extractJson } from "@/lib/complete";
+import { codeBlockKey } from "@/lib/doc-code-block";
+import { SELECT_ALL_EVENT } from "@/lib/select-all";
 import { blocksToMarkdown, markdownToBlocks, schema } from "@/lib/doc-schema";
 import { getDoc, saveDoc } from "@/lib/docs";
 import { useMascot } from "@/lib/mascot";
@@ -136,6 +144,16 @@ interface Anchor {
 }
 
 type BlockEditor = BlockNoteEditor<typeof schema.blockSchema, typeof schema.inlineContentSchema, typeof schema.styleSchema>;
+
+// Code blocks are coloured by Shiki, loaded the first time a doc shows one; languages load
+// as blocks use them. With a light and a dark theme loaded, BlockNote writes both colours
+// on each token (--shiki-light / --shiki-dark) and index.css picks one by the app's theme.
+// BlockNote finds the pair by "light" and "dark" in their names, so both must carry them.
+// Night Owl Light (calm blues and teals, italic accents) on the light paper, Vitesse Dark
+// (soft, muted) on the dark one.
+const CODE_HIGHLIGHTING = SyntaxHighlightingExtension({
+  createHighlighter: () => import("shiki").then((s) => s.createHighlighter({ themes: ["night-owl-light", "vitesse-dark"], langs: [] })),
+});
 
 function BlockSushi({ editor, anchor, title, onOpenChange }: { editor: BlockEditor; anchor: Anchor; title: string; onOpenChange: (open: boolean) => void }) {
   const kind = useMascot();
@@ -469,7 +487,7 @@ export interface DocEditorProps {
 
 export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
   const { resolvedTheme } = useTheme();
-  const editor = useCreateBlockNote({ schema });
+  const editor = useCreateBlockNote({ schema, extensions: [CODE_HIGHLIGHTING] });
   const rootRef = useRef<HTMLDivElement>(null);
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   const menuOpen = useRef(false);
@@ -508,8 +526,22 @@ export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (!inEditor(e.target) || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (!inEditor(e.target)) return;
+      // Tab, Shift+Tab and Enter in a code block indent, outdent and keep the indent.
+      if (codeBlockKey(editor.prosemirrorView, e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
       const k = e.key.toLowerCase();
+      // Select all, when the key reaches the page (Windows, Linux): BlockNote's Mod-a.
+      if (k === "a" && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        selectAll(e);
+        return;
+      }
       if (k !== "z" && k !== "y") return;
       e.preventDefault();
       e.stopPropagation();
@@ -521,11 +553,33 @@ export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
       e.stopPropagation();
       run(e.inputType === "historyRedo");
     };
+    // Select all is BlockNote's Mod-a (the block's text, then the whole doc), handed a key event
+    // straight, not through Tiptap's `keyboardShortcut` command, which keeps only a transaction's
+    // steps and so dropped this selection-only change. On macOS Cmd+A is the Edit menu's, which
+    // would select natively (nothing ProseMirror takes up, so nothing in a code block); the menu
+    // item is Sush's own and asks the page (lib/select-all.ts), answered here.
+    const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    let lastSelectAll = 0;
+    const selectAll = (e?: KeyboardEvent) => {
+      // A key that reached the page and the menu's request for the same press run it once.
+      if (performance.now() - lastSelectAll < 150) return;
+      lastSelectAll = performance.now();
+      const view = editor.prosemirrorView;
+      const key = e ?? new KeyboardEvent("keydown", { key: "a", metaKey: mac, ctrlKey: !mac });
+      view.someProp("handleKeyDown", (f) => f(view, key));
+    };
+    const onSelectAll = (e: Event) => {
+      if (!inEditor(e.target)) return;
+      e.preventDefault();
+      selectAll();
+    };
     root.addEventListener("keydown", onKey, true);
     root.addEventListener("beforeinput", onInput, true);
+    root.addEventListener(SELECT_ALL_EVENT, onSelectAll);
     return () => {
       root.removeEventListener("keydown", onKey, true);
       root.removeEventListener("beforeinput", onInput, true);
+      root.removeEventListener(SELECT_ALL_EVENT, onSelectAll);
     };
   }, [editor]);
 
@@ -709,6 +763,7 @@ export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
         theme={resolvedTheme === "dark" ? "dark" : "light"}
         formattingToolbar={false}
         tableHandles={false}
+        slashMenu={false}
         onChange={() => {
           schedule();
           place();
@@ -716,6 +771,7 @@ export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
         className="doc-blocks"
       >
         <TableHandlesController tableHandle={DocTableHandle} />
+        <SuggestionMenuController triggerCharacter="/" suggestionMenuComponent={SlashMenu} />
         <FormattingToolbarController
           formattingToolbar={() => (
             <FormattingToolbar>
@@ -738,6 +794,70 @@ export default function DocEditor({ doc, onAsk, className }: DocEditorProps) {
           }}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * The "/" menu, with a search field on top. The field shows what's typed after the "/"
+ * (that text is the query BlockNote filters by), so focus never leaves the doc: moving
+ * it into a real input would close the menu, and arrow keys and Enter are handled by
+ * the editor. Clicking the field keeps the cursor where it is.
+ */
+function SlashMenu({ items, loadingState, selectedIndex, onItemClick }: SuggestionMenuProps<DefaultReactSuggestionItem>) {
+  const Components = useComponentsContext()!;
+  const query = useExtensionState(SuggestionMenuExtension, { selector: (s) => s?.query ?? "" });
+
+  const rows: React.ReactNode[] = [];
+  let group: string | undefined;
+  items.forEach((item, i) => {
+    if (item.group !== group) {
+      group = item.group;
+      rows.push(
+        <Components.SuggestionMenu.Label key={`group-${group}`} className="bn-suggestion-menu-label">
+          {group}
+        </Components.SuggestionMenu.Label>,
+      );
+    }
+    rows.push(
+      <Components.SuggestionMenu.Item
+        key={item.title}
+        id={`bn-suggestion-menu-item-${i}`}
+        className={cn("bn-suggestion-menu-item", item.size === "small" && "bn-suggestion-menu-item-small")}
+        item={item}
+        isSelected={i === selectedIndex}
+        onClick={() => onItemClick?.(item)}
+      />,
+    );
+  });
+  const loading = loadingState !== "loaded";
+
+  return (
+    <div className="flex min-h-0 min-w-72 flex-col overflow-hidden rounded-md bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10">
+      <div
+        role="searchbox"
+        aria-label="Search blocks"
+        aria-readonly="true"
+        onMouseDown={(e) => e.preventDefault()}
+        className="flex shrink-0 items-center gap-2 border-b px-3 py-2 text-sm"
+      >
+        <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
+        {query ? (
+          <span className="truncate">{query}</span>
+        ) : (
+          <span className="truncate text-muted-foreground">Type to search blocks</span>
+        )}
+      </div>
+      <Components.SuggestionMenu.Root
+        id="bn-suggestion-menu"
+        className="bn-suggestion-menu min-h-0 flex-1 rounded-none bg-transparent shadow-none ring-0"
+      >
+        {rows}
+        {rows.length === 0 && !loading && (
+          <Components.SuggestionMenu.EmptyItem className="bn-suggestion-menu-item">No matching blocks</Components.SuggestionMenu.EmptyItem>
+        )}
+        {loading && <Components.SuggestionMenu.Loader className="bn-suggestion-menu-loader" />}
+      </Components.SuggestionMenu.Root>
     </div>
   );
 }

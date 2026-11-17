@@ -3,34 +3,51 @@
 // Kept out of the editor's component file so that file exports only components and
 // hot-reloads on its own. Also the Markdown conversions that keep diagram fences whole.
 
-import { BlockNoteEditor, BlockNoteSchema, createCodeBlockSpec, defaultBlockSpecs } from "@blocknote/core";
+import { BlockNoteEditor, BlockNoteSchema, defaultBlockSpecs } from "@blocknote/core";
 
 import { DiagramBlock } from "@/components/doc-diagram-block";
+import { codeBlockSpec } from "@/lib/doc-code-block";
 
+/** Code block languages, keyed by Shiki's language id (what highlighting loads). */
 const LANGUAGES = {
   text: { name: "Plain text", aliases: ["txt", "plain"] },
-  mermaid: { name: "Mermaid" },
-  typescript: { name: "TypeScript", aliases: ["ts", "tsx"] },
-  javascript: { name: "JavaScript", aliases: ["js", "jsx"] },
-  python: { name: "Python", aliases: ["py"] },
-  rust: { name: "Rust", aliases: ["rs"] },
-  go: { name: "Go" },
-  java: { name: "Java" },
-  swift: { name: "Swift" },
   bash: { name: "Shell", aliases: ["sh", "shell", "zsh"] },
-  json: { name: "JSON" },
-  yaml: { name: "YAML", aliases: ["yml"] },
-  html: { name: "HTML" },
+  c: { name: "C" },
+  cpp: { name: "C++", aliases: ["c++"] },
+  csharp: { name: "C#", aliases: ["cs", "c#"] },
   css: { name: "CSS" },
-  sql: { name: "SQL" },
+  diff: { name: "Diff" },
+  dockerfile: { name: "Dockerfile", aliases: ["docker"] },
+  go: { name: "Go" },
+  graphql: { name: "GraphQL", aliases: ["gql"] },
+  html: { name: "HTML" },
+  java: { name: "Java" },
+  javascript: { name: "JavaScript", aliases: ["js"] },
+  jsx: { name: "JSX" },
+  json: { name: "JSON" },
+  kotlin: { name: "Kotlin", aliases: ["kt"] },
   markdown: { name: "Markdown", aliases: ["md"] },
+  mermaid: { name: "Mermaid" },
+  php: { name: "PHP" },
+  powershell: { name: "PowerShell", aliases: ["ps1"] },
+  python: { name: "Python", aliases: ["py"] },
+  ruby: { name: "Ruby", aliases: ["rb"] },
+  rust: { name: "Rust", aliases: ["rs"] },
+  scss: { name: "SCSS" },
+  sql: { name: "SQL" },
+  swift: { name: "Swift" },
+  toml: { name: "TOML" },
+  tsx: { name: "TSX" },
+  typescript: { name: "TypeScript", aliases: ["ts"] },
+  xml: { name: "XML" },
+  yaml: { name: "YAML", aliases: ["yml"] },
 };
 
 export const schema = BlockNoteSchema.create({
   blockSpecs: {
     ...defaultBlockSpecs,
     diagram: DiagramBlock(),
-    codeBlock: createCodeBlockSpec({ defaultLanguage: "text", supportedLanguages: LANGUAGES }),
+    codeBlock: codeBlockSpec({ defaultLanguage: "text", supportedLanguages: LANGUAGES }),
   },
 });
 

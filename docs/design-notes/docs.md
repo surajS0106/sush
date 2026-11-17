@@ -1,8 +1,53 @@
 # Docs — Design Notes
 
-Last updated: 2026-11-16
+Last updated: 2026-11-17
 
 ## What changed
+
+### 2026-11-17 (space between code blocks)
+- Code blocks have an 8px margin above and below. Two neighbours now sit 22px apart, counting BlockNote's 3px block padding, where their borders had touched (`index.css`).
+
+### 2026-11-17 (indenting by language)
+- Indentation in code blocks follows the block's language (`codeBlockKey` in `lib/doc-code-block.ts`). Enter goes one level deeper after an opener: a trailing `{ [ (`, a trailing `:` in Python and YAML, an open non-void tag in HTML, XML, JSX, TSX and Markdown, or `then` / `do` in shell. Between a pair (`{|}`, `<div>|</div>`) the closer moves to its own line at the outer indent, and the caret lands on the inner line. Typing `}`, `]`, `)`, or the `/` of `</`, on an indented blank line steps back one level. A level is 4 spaces for Python, Rust, Java, C, C++, C#, Kotlin, Swift, PHP and PowerShell, a tab for Go, and 2 spaces otherwise. Tab and Shift+Tab use the same unit. Plain text only keeps the current indent.
+- The split's caret is made with the current selection's own class (`TextSelection.create`), because `prosemirror-state` isn't a declared dependency of the app and importing it would rely on hoisting.
+- Why: Enter only copied the current line's indent, so typing code by hand needed every level added manually and closers left over-indented. A real language server would be much heavier; these few rules cover what most hand-typed snippets need. Checked headlessly on 11 cases (JS braces and pair split, closer outdent, Python nesting, HTML tags, pair split and void tags, Go tabs, plain text, kept indent).
+
+### 2026-11-17 (language change after a reload)
+- The code block's bar finds its block when clicked, from the node view's `getPos` (the container's `id`, the node's `language` and text), instead of the `block` captured when it was drawn. This applies to both the language menu and Copy (`lib/doc-code-block.ts`).
+- Why: loading a doc's text again after a save (`replaceBlocks`) gives every block a new id. ProseMirror keeps a node view whose own node is unchanged, and a code block's attrs (`language`) don't include the id, which lives on the container. The view then held a dead id, `updateBlock` threw "Block with ID … not found", and a block that existed before the reload couldn't change language while a new one could. Reproduced headlessly (load, reload, pick) before and after the fix.
+
+### 2026-11-17 (Select All through the menu)
+- On macOS the app menu is Tauri's default with Edit → Select All replaced by Sush's own item. It keeps its place and the Cmd+A shortcut and emits `menu-select-all` (`src-tauri/src/menu.rs`). `lib/select-all.ts` has the focused window send a cancelable `sush:select-all` DOM event from the focused element. The doc editor answers it with BlockNote's Mod-a, and anything unanswered gets `document.execCommand("selectAll")`, the native behaviour, so text fields and the composer are unchanged. A Cmd+A keydown that does reach the page (Windows, Linux) still runs the same select-all, and a 150 ms guard stops one press running twice (`components/doc-editor.tsx`).
+- Why: the menu's predefined Select All is a key equivalent, so it took Cmd+A before the page's key listener and ran the webview's native select-all. In paragraphs that happened to look right. Inside a code block it selected nothing ProseMirror took up, so nothing was selected. The keydown fix below never ran on macOS. Headless tests of BlockNote's Mod-a (with highlighting on) selected the code and then the doc correctly, which pointed at the menu.
+
+### 2026-11-17 (light code colours)
+- Light mode's code colours are Night Owl Light (calm blues and teals, italic keywords and comments) instead of Vitesse Light. Dark mode stays Vitesse Dark. Tokens' italics come through as `--shiki-light-font-style` (`components/doc-editor.tsx`, `index.css`).
+- Why: Vitesse Light was too faint on the cream block, and the code read as nearly plain. The user picked Night Owl Light from a side-by-side render of six light themes on the block's background (One Light, Ayu, Snazzy, Material Lighter, Vitesse).
+
+### 2026-11-17 (darker dark code blocks)
+- In dark mode a code block's background is three parts page colour to one part `--muted` (`color-mix` in OKLCH), about 14% lightness against the page's 11.5%, instead of `--muted` itself (23%). The border is unchanged and keeps the edge visible. It follows the theme's hue because it's mixed from the theme's own tokens (`index.css`).
+- Why: on the near-black page the muted grey read as a light slab, and the syntax colours lost contrast against it.
+
+### 2026-11-17 (code block menu, indenting)
+- The language list opens on `<body>`, fixed under its button, follows it when the doc scrolls, and closes on resize, Escape or a click elsewhere. A language is picked on mouse press. Hovering only moves the highlight, and the list is rebuilt only when the filter changes. The list scrolls by hand rather than with `scrollIntoView`, which would also scroll the doc. An earlier version rebuilt the list on every hover and closed on any outside scroll, so a pick could be lost between press and release. Nothing in the block's bar changes after it is drawn: Copy confirms with a toast, and the open state lives in a variable rather than `aria-expanded`. The bar stops its own presses from reaching ProseMirror (`lib/doc-code-block.ts`).
+- Tab inserts an indent of two spaces at the caret, or indents every selected line. Shift+Tab takes one indent off each line. Enter starts the next line with the current line's indent. A blank or unindented line keeps BlockNote's Enter, so two empty lines still leave the block (`codeBlockKey`, run from the editor's capture listener before BlockNote's keys).
+- Why: the menu sat inside the block's DOM, outside its editable part. ProseMirror reads changes there as edits and redraws the block, which most likely took the menu away as soon as it opened. Indenting relied on BlockNote's Tab, which only inserted spaces at the caret: it couldn't indent a selection, outdent or carry indentation onto the next line.
+
+### 2026-11-17 (select all)
+- Cmd/Ctrl+A in a doc is caught by the same capture listener as undo and hands the event to ProseMirror's `handleKeyDown` props, so BlockNote's own Mod-a keymap runs. Tiptap's `keyboardShortcut` command was tried first. It keeps only the steps of the transactions it captures, so a selection-only change was dropped and nothing got selected. The first press selects the current block's text and the next selects the whole doc, as in Notion. Text boxes inside the doc keep their own select all (`components/doc-editor.tsx`).
+- Why: as with Cmd+Z, the macOS Edit menu's Select All could run the webview's native select-all, which ProseMirror doesn't take up, so nothing was selected.
+
+### 2026-11-17 (code highlighting, language menu)
+- Code blocks are syntax highlighted. The editor adds BlockNote's `SyntaxHighlightingExtension` with a Shiki highlighter (`vitesse-light` and `vitesse-dark`: muted colours that suit the cream block better than GitHub's saturated ones, which were tried first; BlockNote picks the pair by "light"/"dark" in the theme names, which rules out pairs like Catppuccin's), imported the first time a doc shows code. Languages load as blocks use them (`CODE_HIGHLIGHTING` in `components/doc-editor.tsx`). Each token carries both colours as `--shiki-light` / `--shiki-dark`, and `index.css` picks one by the app's theme, so switching themes needs no re-highlight.
+- The language picker is a button sized to the language's name, opening a list with a search field: arrows, Enter and Escape work, the current language is ticked, and aliases match ("ts", "py"). Copy sits at the block's top right and shows on hover. `lib/doc-code-block.ts` keeps BlockNote's code block spec (shortcuts, Markdown, the `highlight` hook). It calls BlockNote's own `render` and swaps the `<select>` in its output for the bar. It doesn't replace `render`, because the spec's `render` is already wrapped to place its output in `.bn-block-content[data-content-type="codeBlock"]`, and every code block style needs that element. This supersedes the restyled `<select>` chip below.
+- The language list grew from 16 to 31 (C, C++, C#, Kotlin, Ruby, PHP, PowerShell, Dockerfile, TOML, XML, Diff, GraphQL, SCSS, JSX, TSX). Keys are Shiki's language ids, since highlighting loads by key (`lib/doc-schema.ts`). "tsx" is now its own language instead of an alias of TypeScript.
+- Why: BlockNote 0.57 highlights only when the editor is given a highlighter. Without one, every language rendered as plain text, so the picker changed nothing visible. A native `<select>` is as wide as its longest option and draws its list with the OS, so the chip still left a gap between the name and the chevron, and its list could not be searched.
+
+### 2026-11-17 (slash menu search, code blocks)
+- The "/" menu is Sush's own `SlashMenu` (`components/doc-editor.tsx`, through `SuggestionMenuController` with `slashMenu={false}` on the view): BlockNote's items and grouping, with a search field on top that shows the text typed after the "/" (read from the `SuggestionMenu` extension's `query`), or "Type to search blocks" when empty. The field doesn't take focus: clicking it keeps the cursor in the doc.
+- Why the field mirrors the query instead of being an input: BlockNote closes the menu on any editor blur and handles arrows and Enter in the editor, so a focused input would close the menu it sits in.
+- Code blocks are a creamy off-white (`#fffefb`, border `#efebe3`) in light mode and the theme's muted surface in dark mode, through `--doc-code-bg` / `--doc-code-border` on `.doc-editor`, instead of BlockNote's fixed `#161616` with white text. The neutral muted grey was tried first in light mode and read as cold next to the page; the language picker and its options follow the theme too (`index.css`).
+- The code block's language picker is always shown, as a small chip with a chevron at the block's top left, highlighted on hover and focus. BlockNote kept it at opacity 0 until hover and then 0.5, which in dark mode left nothing visible to click. `opacity: 1 !important` is needed because BlockNote's stylesheet loads with the lazy editor, after `index.css`, and its hover rule has the same specificity.
 
 ### 2026-11-16 (undo)
 - The doc editor handles Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z and Cmd/Ctrl+Y itself, in a capture listener on its root, and also the `historyUndo` / `historyRedo` input events the window's Edit menu sends, calling BlockNote's `undo` / `redo`. Text boxes inside the doc (a diagram's source) keep their own undo. Loading a doc's text is kept out of the undo history (`addToHistory: false`), so the first undo can't empty the page (`components/doc-editor.tsx`).
@@ -93,5 +138,6 @@ Sharing is local: rich-text copy (pastes formatted into Notion, Google Docs, ema
 - Partial revisions via `doc_edit` (find/replace, all-or-nothing, uniqueness checked) instead of resending the whole document on every change.
 - Version history with author (Sush or You), note and time; any version can be previewed read-only and restored as a new version.
 - Mermaid diagrams render inside the editor through BlockNote's `createPreview`, not only in the read-only view.
+- Code blocks highlight in both themes from one pass (dual-theme Shiki tokens), with a searchable language menu and a Copy button. BlockNote's default is unhighlighted text under a native `<select>`.
 - The panel streams the doc as it is written, then hands over to the editor; cross-window sync uses the same frame channel as notebooks and the CRM, so no window broadcasts on its own.
 - The editor bundle loads only when a doc is opened (`React.lazy`), keeping chat startup unchanged.

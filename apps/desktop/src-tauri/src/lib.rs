@@ -16,6 +16,8 @@ mod location;
 #[cfg(unix)]
 mod login_env;
 mod maps;
+#[cfg(target_os = "macos")]
+mod menu;
 mod notebooks;
 mod paths;
 mod reports;
@@ -69,6 +71,8 @@ pub fn run() {
             secrets::init(&config_dir);
             app.manage(state::AppState::load(config_dir, paths::data_dir(app.handle())?)?);
             deep_link::init(app.handle());
+            #[cfg(target_os = "macos")]
+            menu::init(app.handle())?;
             if let (Some(profile), Some(window)) = (paths::profile(), app.get_webview_window("main")) {
                 let _ = window.set_title(&format!("Sush ({profile})"));
             }

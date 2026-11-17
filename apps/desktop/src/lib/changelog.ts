@@ -32,6 +32,11 @@ export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
+  { kind: "new", text: "Your Sushi has new tricks. In Settings → Sushi, pick what it should do: take a coffee break (it brews a mug at a little machine, then sips it), read a book in its glasses, dance, nap, work out with a dumbbell, juggle, meditate in a floating glow, play a handheld game, or work." },
+  { kind: "improved", text: "In docs, the / menu has a search field at the top: keep typing after the / to narrow it down." },
+  { kind: "fixed", text: "Code blocks in docs now follow light and dark mode instead of always being black." },
+  { kind: "fixed", text: "Cmd+A works in docs again: press it once to select the line or block you're in, and again to select the whole doc." },
+  { kind: "improved", title: "Code in docs", text: "Code blocks in docs are now coloured by language. Click the language name at the top to pick another, or type to search the list, and use Copy at the top right to copy the code. Tab and Shift+Tab indent and outdent the lines you're on, and Enter indents for the language you picked: a level deeper after {, a Python colon or an HTML tag, and back out when you type the closing bracket or tag." },
 ];
 
 /** Released versions, newest first. */

@@ -12,9 +12,13 @@
 // them leaves it dizzy: it reels, eyes rolling, falls flat on its back with a
 // "whoa" and a thud (`lib/sfx.ts`) and lies there seeing stars to birdsong,
 // then springs back up. Switching characters
-// pops the new one in with a puff of sparkles. Purely decorative.
+// pops the new one in with a puff of sparkles. Between replies it can also act
+// out an activity on request (`act`, from Settings → Sushi): a coffee break (a
+// machine beside it fills a mug, then it sips), reading a book in its glasses,
+// dancing with music notes, a nap, a workout with a dumbbell, juggling,
+// meditating in a floating glow, or a handheld game. Purely decorative.
 
-import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion, type TargetAndTransition } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 
 import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
@@ -75,6 +79,47 @@ const BUBBLE = [
 const BUBBLE_DOTS = [4, 6, 8];
 const ZED = ["ZZZ", ".Z.", "ZZZ"];
 const STAR = [".Y.", "YYY", ".Y."];
+const NOTE = [".ZZ", ".Z.", "ZZ.", "ZZ."];
+const DROP = [".w.", "www", ".w."];
+
+// A dumbbell pressed up from the chest past the eyes and back down.
+const DUMBBELL = ["II........II", "IIiiiiiiiiII", "II........II"];
+const DUMBBELL_W = DUMBBELL[0].length;
+/** One press, up or down, in ms. */
+const REP_MS = 650;
+
+// A handheld game console held like the book: d-pad left, buttons right.
+const CONSOLE = ["VVVVVVVVVVVV", "VVxVnnnnVoVV", "VxxxnnnnVVoV", "VVxVVVVVVVVV"];
+const CONSOLE_W = CONSOLE[0].length;
+
+// Juggling balls, each its own colour, looping over the head out of phase.
+const BALLS = ["#f0533f", "#f6c945", "#5b8def"];
+
+// A coffee break: a little machine stands beside the character (in Sushi's
+// pixels, its feet level with the character's) and fills a mug, which then
+// goes in the character's hands for sips. The machine's mug gap is x 2–7,
+// rows 6–9, under the nozzle.
+const MACHINE = [
+  "DDDDDDDDD",
+  "DdddddddD",
+  "DdAdddgdD",
+  "DDDDDDDDD",
+  "DD..BB..D",
+  "DD......D",
+  "DD......D",
+  "DD......D",
+  "DD......D",
+  "DD......D",
+  "DDDDDDDDD",
+];
+const MUG = ["MeeeM.", "MMMMMm", "MMMMMm", ".MMM.."];
+const MUG_W = MUG[0].length;
+/** How long the machine takes to fill the mug. */
+const BREW_MS = 3200;
+
+// A book held up in front of the face, cover towards us.
+const BOOK = ["UUUUUuUUUUU", "UvvvUuUUUUU", "UUUUUuUUUUU", "UvvUUuUUUUU"];
+const BOOK_W = BOOK[0].length;
 
 const COLORS: Record<string, string> = {
   S: "#f0533f", // salmon
@@ -95,7 +140,31 @@ const COLORS: Record<string, string> = {
   G: "#2b2b2b", // glasses frame
   W: "#ffffff", // thought bubble
   b: "#c9ced6", // thought bubble edge
+  D: "#4a4f57", // coffee machine
+  d: "#6b727c", // coffee machine panel
+  A: "#f0533f", // coffee machine light
+  g: "#7ee0a1", // coffee machine ready light
+  M: "#5b8def", // mug
+  m: "#3f6fc9", // mug handle
+  e: "#2f4f8f", // inside of the mug
+  c: "#6b3e26", // coffee
+  U: "#3b6fd8", // book cover
+  u: "#2a4fa0", // book spine
+  v: "#f6c945", // book title
+  w: "#7cc7ff", // sweat
+  I: "#3d3d3d", // dumbbell plates
+  i: "#aeb5bf", // dumbbell bar
+  V: "#8a6fd1", // game console
+  x: "#2b2b2b", // d-pad
+  o: "#f0533f", // console buttons
+  n: "#7ee0a1", // console screen
 };
+
+const MACHINE_RUNS = runs(MACHINE);
+const MUG_RUNS = runs(MUG);
+const BOOK_RUNS = runs(BOOK);
+const DUMBBELL_RUNS = runs(DUMBBELL);
+const CONSOLE_RUNS = runs(CONSOLE);
 
 /** How far left of its spot it may wander, in CSS px, and how fast it walks. */
 const WANDER = 72;
@@ -353,8 +422,13 @@ export type MascotStage = "thinking" | "tools" | "writing";
 
 type Mood = "idle" | MascotStage;
 
+/** Something to do between replies, played on request (Settings → Sushi). */
+export type MascotAct = "coffee" | "read" | "dance" | "nap" | "workout" | "juggle" | "meditate" | "game";
+
 interface MascotProps {
   busy: boolean;
+  /** An activity to act out while idle; a running reply takes over. */
+  act?: MascotAct;
   /** The stage of the running reply; just "tools" (the laptop) when left out. */
   stage?: MascotStage;
   draft: string;
@@ -388,6 +462,7 @@ const SPARKS = [
 
 function MascotBody({
   busy,
+  act,
   stage,
   draft,
   still,
@@ -399,6 +474,8 @@ function MascotBody({
   const glasses = glassesOf(character);
   const mood: Mood = busy ? (stage ?? "tools") : "idle";
   const laptopOut = mood === "tools" || mood === "writing";
+  const activity = busy ? null : (act ?? null);
+  const dancing = activity === "dance";
   const reduceMotion = useReducedMotion();
   const hopControls = useAnimationControls();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -415,9 +492,16 @@ function MascotBody({
   const [sparks, setSparks] = useState(entrance && !reduceMotion);
   const [ponder, setPonder] = useState(false);
   const [dizzy, setDizzy] = useState<"reeling" | "down" | null>(null);
+  const [coffee, setCoffee] = useState<"brew" | "drink" | null>(null);
+  const [sip, setSip] = useState(false);
+  const asleep = sleeping || activity === "nap";
+  // Workout: up on true, down on false.
+  const [lift, setLift] = useState(false);
 
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  const activityRef = useRef(activity);
+  activityRef.current = activity;
   const moodRef = useRef(mood);
   moodRef.current = mood;
   const prevMood = useRef<Mood>(mood);
@@ -438,7 +522,7 @@ function MascotBody({
 
   // Blink every few seconds, at slightly random intervals, sometimes twice.
   useEffect(() => {
-    if (reduceMotion || sleeping) return;
+    if (reduceMotion || asleep) return;
     let timer: ReturnType<typeof setTimeout>;
     const blinkOnce = (then: () => void) => {
       setBlink(true);
@@ -455,7 +539,7 @@ function MascotBody({
     };
     next();
     return () => clearTimeout(timer);
-  }, [reduceMotion, sleeping]);
+  }, [reduceMotion, asleep]);
 
   // Follow the pointer with the eyes; any activity resets the sleep clock and wakes it.
   useEffect(() => {
@@ -486,7 +570,7 @@ function MascotBody({
     window.addEventListener("pointerdown", wake);
     window.addEventListener("keydown", wake);
     const idle = setInterval(() => {
-      if (!still && !busyRef.current && !sleepingRef.current && !dizzyRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
+      if (!still && !busyRef.current && !activityRef.current && !sleepingRef.current && !dizzyRef.current && Date.now() - lastActivity.current > SLEEP_AFTER) setSleeping(true);
     }, 5000);
     return () => {
       cancelAnimationFrame(frame);
@@ -562,9 +646,11 @@ function MascotBody({
     });
   }, [mood, busy, laptopOut, reduceMotion, hopControls, entrance]);
 
-  // While thinking, the eyes drift up to one side, then the other.
+  // While thinking, the eyes drift up to one side, then the other; while
+  // reading, they run along the lines the same way.
+  const scanning = mood === "thinking" || activity === "read" || activity === "juggle";
   useEffect(() => {
-    if (reduceMotion || mood !== "thinking") return;
+    if (reduceMotion || !scanning) return;
     let timer: ReturnType<typeof setTimeout>;
     const next = () => {
       timer = setTimeout(
@@ -577,7 +663,92 @@ function MascotBody({
     };
     next();
     return () => clearTimeout(timer);
-  }, [mood, reduceMotion]);
+  }, [scanning, reduceMotion]);
+
+  // A coffee break: the machine fills the mug while the character watches,
+  // then a hop as it takes the mug, and sips every few seconds after that.
+  useEffect(() => {
+    if (activity !== "coffee") return setCoffee(null);
+    setCoffee("brew");
+    const t = setTimeout(
+      () => {
+        setCoffee("drink");
+        if (!reduceMotion) void hopControls.start({ y: [0, -6, 0], transition: { duration: 0.3, ease: "easeOut" } });
+      },
+      reduceMotion ? 0 : BREW_MS,
+    );
+    return () => clearTimeout(t);
+  }, [activity, reduceMotion, hopControls]);
+
+  useEffect(() => {
+    if (reduceMotion || coffee !== "drink") return setSip(false);
+    let timer: ReturnType<typeof setTimeout>;
+    const next = () => {
+      timer = setTimeout(
+        () => {
+          setSip(true);
+          timer = setTimeout(() => {
+            setSip(false);
+            next();
+          }, 1100);
+        },
+        1400 + Math.random() * 1400,
+      );
+    };
+    next();
+    return () => clearTimeout(timer);
+  }, [coffee, reduceMotion]);
+
+  // Dancing sways side to side on the beat; reading rocks gently. Both settle
+  // when they stop (a reply starting puts on its own motion after this).
+  useEffect(() => {
+    if (reduceMotion || !activity || activity === "coffee" || activity === "nap" || activity === "workout") return;
+    const loops: Record<typeof activity, TargetAndTransition> = {
+      dance: {
+        x: [0, -3, 0, 3, 0],
+        y: [0, -3, 0, -3, 0],
+        rotate: [0, -8, 0, 8, 0],
+        scaleY: [1, 0.94, 1, 0.94, 1],
+        transition: { duration: 1, repeat: Infinity, ease: "easeInOut" },
+      },
+      read: { rotate: [0, -2, 0, 2, 0], transition: { duration: 5, repeat: Infinity, ease: "easeInOut" } },
+      // A little bounce in time with the throws.
+      juggle: { y: [0, 1, 0], scaleY: [1, 0.96, 1], transition: { duration: 0.4, repeat: Infinity, ease: "easeInOut" } },
+      // Floating off the ground, rising and sinking with the breath.
+      meditate: { y: [-4, -9, -4], rotate: 0, transition: { duration: 3.2, repeat: Infinity, ease: "easeInOut" } },
+      // Leaning into the game, button-mashing.
+      game: { y: [0, 0.5, 0], rotate: [0, -3, 0, 3, 0], transition: { duration: 1.2, repeat: Infinity, ease: "easeInOut" } },
+    };
+    void hopControls.start(loops[activity]);
+    return () => {
+      void hopControls.start({ x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1, transition: { duration: 0.25 } });
+    };
+  }, [activity, reduceMotion, hopControls]);
+
+  // Workout: press the dumbbell up and down, squashing with the effort.
+  useEffect(() => {
+    if (reduceMotion || activity !== "workout") return setLift(false);
+    const id = setInterval(() => setLift((l) => !l), REP_MS);
+    return () => {
+      clearInterval(id);
+      void hopControls.start({ scaleX: 1, scaleY: 1, transition: { duration: 0.2 } });
+    };
+  }, [activity, reduceMotion, hopControls]);
+  useEffect(() => {
+    if (reduceMotion || activity !== "workout") return;
+    void hopControls.start(
+      lift
+        ? { scaleY: 0.92, scaleX: 1.05, y: 0, rotate: 0, transition: { duration: REP_MS / 2000, ease: "easeOut" } }
+        : { scaleY: 1, scaleX: 1, y: 0, rotate: 0, transition: { duration: REP_MS / 2000, ease: "easeOut" } },
+    );
+  }, [lift, activity, reduceMotion, hopControls]);
+
+  // Gaming: every few seconds it wins a level and sparkles go off.
+  useEffect(() => {
+    if (reduceMotion || activity !== "game") return;
+    const id = setInterval(() => setSparks(true), 5000);
+    return () => clearInterval(id);
+  }, [activity, reduceMotion]);
 
   // Every few seconds at the laptop, glance up from the screen for a moment.
   useEffect(() => {
@@ -600,8 +771,9 @@ function MascotBody({
   }, [laptopOut, reduceMotion]);
 
   // One frame counter drives the walking legs, the typing hands and the rolling eyes.
-  const moving = walking || laptopOut || dizzy !== null;
-  const frameMs = dizzy === "reeling" ? 80 : dizzy === "down" ? 130 : walking ? 150 : mood === "writing" ? 90 : 120;
+  const gaming = activity === "game";
+  const moving = walking || laptopOut || dancing || gaming || dizzy !== null;
+  const frameMs = dizzy === "reeling" ? 80 : dizzy === "down" ? 130 : walking ? 150 : dancing ? 250 : gaming ? 140 : mood === "writing" ? 90 : 120;
   useEffect(() => {
     if (reduceMotion || !moving) return setFrame(0);
     const id = setInterval(() => setFrame((f) => f + 1), frameMs);
@@ -610,7 +782,7 @@ function MascotBody({
 
   // Every so often, stroll somewhere along the composer's edge (or back home).
   useEffect(() => {
-    if (reduceMotion || still || walking || busy || sleeping || dizzy) return;
+    if (reduceMotion || still || walking || busy || activity || sleeping || dizzy) return;
     const t = setTimeout(
       () => {
         let target = x !== 0 && Math.random() < 0.6 ? 0 : -Math.round(Math.random() * WANDER);
@@ -621,7 +793,7 @@ function MascotBody({
       9000 + Math.random() * 12000,
     );
     return () => clearTimeout(t);
-  }, [reduceMotion, still, walking, busy, sleeping, dizzy, x]);
+  }, [reduceMotion, still, walking, busy, activity, sleeping, dizzy, x]);
 
   const [walkFrom, setWalkFrom] = useState(0);
   useEffect(() => {
@@ -694,7 +866,8 @@ function MascotBody({
     clicks.current = [...clicks.current.filter((t) => now - t < 900), now];
     pokes.current = [...pokes.current.filter((t) => now - t < DIZZY_WINDOW), now];
     setHearts((h) => [...h, now]);
-    if (busy) return;
+    // Busy with a reply or an activity: a heart, but no hop to break the act.
+    if (busy || activity) return;
     if (pokes.current.length >= DIZZY_CLICKS) {
       pokes.current = [];
       clicks.current = [];
@@ -719,10 +892,23 @@ function MascotBody({
     }
   };
 
-  const closed = !dizzy && (sleeping || blink);
+  // Happy closed eyes while sipping, dancing and meditating; a squint on each press.
+  const closed = !dizzy && (asleep || blink || sip || dancing || activity === "meditate" || (activity === "workout" && lift));
   const look: Look = dizzy
     ? EYE_ROLL[frame % EYE_ROLL.length]
-    : sleeping
+    : asleep
+    ? { x: 0, y: 1 }
+    : coffee === "brew"
+    ? { x: 1, y: 0 }
+    : coffee === "drink"
+    ? { x: 0, y: 1 }
+    : activity === "read"
+    ? { x: ponder ? 1 : -1, y: 1 }
+    : activity === "juggle"
+    ? { x: ponder ? 1 : -1, y: -1 }
+    : activity === "workout"
+    ? { x: 0, y: lift ? -1 : 0 }
+    : gaming
     ? { x: 0, y: 1 }
     : walking
       ? { x: walkDir, y: 0 }
@@ -736,6 +922,8 @@ function MascotBody({
           ? { x: -1, y: 1 }
           : pointerLook;
   const hands = HAND_FRAMES[frame % HAND_FRAMES.length];
+  /** Where a prop `w` Sushi-pixels wide sits when held, centred where the laptop goes. */
+  const heldAt = (w: number) => ({ x: laptop.x + ((LAPTOP_W - w) * laptop.scale) / 2 });
 
   return (
     <motion.div
@@ -773,7 +961,122 @@ function MascotBody({
             <Glyph rows={STAR} />
           </motion.div>
         ))}
-      {sleeping &&
+      {dancing &&
+        !reduceMotion &&
+        [0, 1].map((i) => (
+          <motion.div
+            key={`note${i}`}
+            className={cn("pointer-events-none absolute -top-1 text-brand", i ? "left-0" : "right-0")}
+            initial={{ opacity: 0 }}
+            animate={{ x: i ? [0, -4, -8] : [0, 4, 8], y: [0, -10, -22], opacity: [0, 1, 0], rotate: i ? [0, -15] : [0, 15] }}
+            transition={{ duration: 1.8, delay: i * 0.9, repeat: Infinity, ease: "easeOut" }}
+          >
+            <Glyph rows={NOTE} px={2} />
+          </motion.div>
+        ))}
+      {activity === "workout" &&
+        !reduceMotion &&
+        [0, 1].map((i) => (
+          // Sweat flying off either side of the head.
+          <motion.div
+            key={`drop${i}`}
+            className={cn("pointer-events-none absolute top-0", i ? "left-0" : "right-0")}
+            initial={{ opacity: 0 }}
+            animate={{ x: i ? [0, -6, -10] : [0, 6, 10], y: [0, -6, 2], opacity: [0, 1, 0] }}
+            transition={{ duration: 0.9, delay: i * 0.65, repeat: Infinity, repeatDelay: 0.4, ease: "easeOut" }}
+          >
+            <Glyph rows={DROP} px={1.5} />
+          </motion.div>
+        ))}
+      {activity === "juggle" &&
+        BALLS.map((color, i) => (
+          // Each ball loops up over the head from one hand to the other and back low, a third of a cycle apart.
+          <motion.div
+            key={color}
+            className="pointer-events-none absolute left-1/2 -ml-1 size-2"
+            style={{ top: height * px * 0.45, background: color }}
+            initial={{ opacity: 0 }}
+            animate={
+              reduceMotion
+                ? { opacity: 1, x: (i - 1) * 10, y: -18 }
+                : { opacity: 1, x: [-12, -6, 0, 6, 12, 0, -12], y: [0, -24, -30, -24, 0, 4, 0] }
+            }
+            transition={reduceMotion ? { duration: 0.2 } : { duration: 1.5, delay: (i * 1.5) / 3, repeat: Infinity, ease: "linear" }}
+          />
+        ))}
+      {activity === "meditate" &&
+        !reduceMotion &&
+        [0, 1].map((i) => (
+          // A calm glow breathing out behind it.
+          <motion.div
+            key={`aura${i}`}
+            className="pointer-events-none absolute left-1/2 rounded-full border-2 border-brand/40"
+            style={{ width: width * px, height: width * px, marginLeft: (-width * px) / 2, bottom: 0 }}
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: [0, 0.8, 0], scale: [0.6, 1.4] }}
+            transition={{ duration: 3.2, delay: i * 1.6, repeat: Infinity, ease: "easeOut" }}
+          />
+        ))}
+      <AnimatePresence>
+        {activity === "coffee" && (
+          // The coffee machine, standing beside the character at Sushi's pixel size.
+          <motion.svg
+            key="machine"
+            viewBox={`0 0 ${MACHINE[0].length} ${MACHINE.length}`}
+            width={MACHINE[0].length * SUSHI.px}
+            height={MACHINE.length * SUSHI.px}
+            shapeRendering="crispEdges"
+            className="pointer-events-none absolute bottom-0 left-full ml-1"
+            style={{ transformOrigin: "50% 100%" }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scaleY: 0.4, y: 4 }}
+            animate={{ opacity: 1, scaleY: 1, y: 0, transition: { duration: 0.3, ease: "easeOut" } }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scaleY: 0.4, y: 4, transition: { duration: 0.25 } }}
+          >
+            <Pixels runs={MACHINE_RUNS} />
+            {coffee === "brew" && (
+              <>
+                {/* The light blinks while it brews. */}
+                <motion.rect
+                  x={2}
+                  y={2}
+                  width={1}
+                  height={1}
+                  fill="#ffd1c9"
+                  animate={reduceMotion ? { opacity: 0 } : { opacity: [0, 1, 0] }}
+                  transition={{ duration: 0.6, repeat: Infinity }}
+                />
+                {!reduceMotion &&
+                  [0, 1].map((i) => (
+                    <motion.rect
+                      key={i}
+                      x={4 + i}
+                      width={1}
+                      height={1}
+                      fill={COLORS.c}
+                      initial={{ y: 5, opacity: 0 }}
+                      animate={{ y: [5, 6], opacity: [1, 0.6] }}
+                      transition={{ duration: 0.35, delay: i * 0.17, repeat: Infinity, ease: "easeIn" }}
+                    />
+                  ))}
+                <g transform="translate(2 6)">
+                  <Pixels runs={MUG_RUNS} />
+                  <motion.rect
+                    x={1}
+                    y={0}
+                    width={3}
+                    height={1}
+                    fill={COLORS.c}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: reduceMotion ? 0 : BREW_MS / 1000, ease: "easeIn" }}
+                  />
+                </g>
+              </>
+            )}
+          </motion.svg>
+        )}
+      </AnimatePresence>
+      {asleep &&
         !reduceMotion &&
         [0, 1, 2].map((i) => (
           <motion.div
@@ -858,11 +1161,11 @@ function MascotBody({
           height={height * px}
           shapeRendering="crispEdges"
           style={{ transformOrigin: "50% 100%" }}
-          animate={reduceMotion || moving ? { scaleY: 1 } : { scaleY: sleeping ? [1, 1.05, 1] : [1, 1.03, 1] }}
+          animate={reduceMotion || moving ? { scaleY: 1 } : { scaleY: asleep ? [1, 1.05, 1] : [1, 1.03, 1] }}
           transition={
             reduceMotion || moving
               ? { duration: 0.2 }
-              : { duration: sleeping ? 3.6 : 2.8, repeat: Infinity, ease: "easeInOut" }
+              : { duration: asleep ? 3.6 : 2.8, repeat: Infinity, ease: "easeInOut" }
           }
           className="drop-shadow-[0_1px_0_rgb(0_0_0/0.08)]"
         >
@@ -878,7 +1181,7 @@ function MascotBody({
             />
           ))}
           <AnimatePresence>
-            {mood !== "idle" && glasses.lenses.length > 0 && (
+            {(mood !== "idle" || activity === "read") && glasses.lenses.length > 0 && (
               // Slid down from the forehead onto the eyes; lifted back up when done.
               <motion.g
                 key="glasses"
@@ -909,8 +1212,107 @@ function MascotBody({
               </motion.g>
             )}
           </AnimatePresence>
-          <Pixels runs={legs[walking ? frame % legs.length : 0]} />
+          <Pixels runs={legs[walking || dancing ? frame % legs.length : 0]} />
           <AnimatePresence>
+            {coffee === "drink" && (
+              // The mug in both hands under the face, steaming; a sip lifts and tips it.
+              <motion.g key="mug">
+                <g transform={`translate(${heldAt(MUG_W).x} ${laptop.y}) scale(${laptop.scale})`}>
+                <motion.g
+                  style={{ transformBox: "fill-box", transformOrigin: "50% 100%" }}
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3, x: 6 }}
+                  animate={{
+                    opacity: 1,
+                    x: 0,
+                    y: sip ? -1.5 : 0,
+                    rotate: sip ? -18 : 0,
+                    transition: { duration: sip ? 0.35 : 0.3, ease: "easeOut" },
+                  }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3, transition: { duration: 0.2 } }}
+                >
+                  {!reduceMotion &&
+                    [1, 3].map((sx, i) => (
+                      <motion.rect
+                        key={sx}
+                        x={sx}
+                        width={1}
+                        height={1}
+                        fill="#c9ced6"
+                        initial={{ y: -1, opacity: 0 }}
+                        animate={{ y: [-1, -3, -5], x: [0, 0.5, 0], opacity: [0, 0.8, 0] }}
+                        transition={{ duration: 1.6, delay: i * 0.8, repeat: Infinity, ease: "easeOut" }}
+                      />
+                    ))}
+                  <Pixels runs={MUG_RUNS} />
+                  <rect x={1} y={0} width={3} height={1} fill={COLORS.c} />
+                  <rect x={-1} y={1} width={1} height={2} fill={COLORS.R} />
+                  <rect x={MUG_W} y={1} width={1} height={2} fill={COLORS.R} />
+                </motion.g>
+                </g>
+              </motion.g>
+            )}
+            {activity === "read" && (
+              // A book held up under the eyes; a page turns every few seconds.
+              <motion.g key="book">
+                <g transform={`translate(${heldAt(BOOK_W).x} ${laptop.y}) scale(${laptop.scale})`}>
+                <motion.g
+                  style={{ transformBox: "fill-box", transformOrigin: "50% 100%" }}
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4, scaleY: 0.3 }}
+                  animate={{ opacity: 1, y: 0, scaleY: 1, transition: { delay: 0.1, duration: 0.25, ease: "easeOut" } }}
+                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3, scaleY: 0.2, transition: { duration: 0.2 } }}
+                >
+                  <Pixels runs={BOOK_RUNS} />
+                  {!reduceMotion && (
+                    <motion.rect
+                      y={0}
+                      width={1}
+                      height={BOOK.length - 1}
+                      fill={COLORS.W}
+                      initial={{ x: BOOK_W - 2, opacity: 0 }}
+                      animate={{ x: [BOOK_W - 2, BOOK_W / 2, 1], opacity: [0, 1, 0] }}
+                      transition={{ duration: 0.5, repeat: Infinity, repeatDelay: 3.5, ease: "easeInOut" }}
+                    />
+                  )}
+                  <rect x={-1} y={1} width={1} height={1} fill={COLORS.R} />
+                  <rect x={BOOK_W} y={1} width={1} height={1} fill={COLORS.R} />
+                </motion.g>
+                </g>
+              </motion.g>
+            )}
+            {activity === "workout" && (
+              // The dumbbell, pressed from the chest up past the eyes on each rep.
+              <motion.g key="dumbbell">
+                <g transform={`translate(${heldAt(DUMBBELL_W).x} ${laptop.y}) scale(${laptop.scale})`}>
+                  <motion.g
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1, y: lift ? -5 : 0, transition: { duration: REP_MS / 1000 - 0.1, ease: "easeInOut" } }}
+                    exit={{ opacity: 0, transition: { duration: 0.2 } }}
+                  >
+                    <Pixels runs={DUMBBELL_RUNS} />
+                    <rect x={2} y={2} width={1} height={1} fill={COLORS.R} />
+                    <rect x={DUMBBELL_W - 3} y={2} width={1} height={1} fill={COLORS.R} />
+                  </motion.g>
+                </g>
+              </motion.g>
+            )}
+            {gaming && (
+              // A handheld console under the eyes; thumbs tapping, the screen flickering.
+              <motion.g key="console">
+                <g transform={`translate(${heldAt(CONSOLE_W).x} ${laptop.y}) scale(${laptop.scale})`}>
+                  <motion.g
+                    style={{ transformBox: "fill-box", transformOrigin: "50% 100%" }}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4, scaleY: 0.3 }}
+                    animate={{ opacity: 1, y: 0, scaleY: 1, transition: { delay: 0.1, duration: 0.25, ease: "easeOut" } }}
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3, scaleY: 0.2, transition: { duration: 0.2 } }}
+                  >
+                    <Pixels runs={CONSOLE_RUNS} />
+                    <rect x={4 + (frame % 4)} y={1 + (frame % 2)} width={1} height={1} fill={COLORS.W} opacity={0.8} />
+                    <rect x={2} y={hands[0]} width={1} height={1} fill={COLORS.R} />
+                    <rect x={CONSOLE_W - 2} y={hands[1]} width={1} height={1} fill={COLORS.R} />
+                  </motion.g>
+                </g>
+              </motion.g>
+            )}
             {laptopOut && (
               <motion.g key="laptop">
                 {/* Screen light flickering on the face. */}

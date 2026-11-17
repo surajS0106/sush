@@ -17,6 +17,7 @@ import { initReports } from "./lib/reports";
 import { initSessions } from "./lib/sessions";
 import { initShares } from "./lib/share";
 import { initWorkspaces } from "./lib/workspaces";
+import { initSelectAll } from "./lib/select-all";
 import { initZoom } from "./lib/zoom";
 import { initStore } from "./lib/store";
 import { errorMessage } from "./lib/tauri";
@@ -42,6 +43,7 @@ document.addEventListener("click", (e) => {
 });
 
 initZoom();
+initSelectAll();
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
 
