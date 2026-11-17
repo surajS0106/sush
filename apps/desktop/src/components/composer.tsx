@@ -1,5 +1,5 @@
 import type { ChatStatus } from "ai";
-import { ArrowUpIcon, FileIcon, FolderIcon, ImageIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,8 +29,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { YammerSetupDialog } from "@/components/yammer-setup-dialog";
 import { useDictation } from "@/hooks/use-dictation";
 import type { ProviderModels } from "@/hooks/use-providers";
-import { canGenerateImages, defaultImageApi, setImageSettings, useActiveImageSettings, useImagesReady } from "@/lib/images";
-import { friendlyName, isChatModel } from "@/lib/model-names";
+import { ImageQualityPicker } from "@/components/image-quality-picker";
+import { canGenerateImages, defaultImageApi, setImageChat, setImageSettings, useActiveImageSettings, useImageChat, useImagesReady } from "@/lib/images";
+import { isChatModel } from "@/lib/model-names";
 import { topModels, useModelUsage } from "@/lib/model-usage";
 import { useNotebookForThread } from "@/lib/notebooks";
 import { FOLDER_MEDIA_TYPE, type ModelTarget, type SushUIMessage } from "@/lib/transport";
@@ -81,7 +82,7 @@ interface ComposerProps {
   target: ModelTarget | null;
   onPickModel: (target: ModelTarget) => void;
   status: ChatStatus;
-  /** `image`: sent with the Image chip on, so it's drawn rather than answered. */
+  /** `image`: sent in an image chat, so it's drawn rather than answered. */
   onSubmit: (msg: PromptInputMessage, opts?: { image?: boolean }) => void;
   onStop: () => void;
   onOpenSettings: () => void;
@@ -129,16 +130,29 @@ export function Composer({
   const highlightRef = useRef<HTMLDivElement>(null);
   // A notebook's chat: its menu, strip and prompt are about sources.
   const notebook = useNotebookForThread(conversationId);
-  // The Image chip (from the + menu): while it's on, each message is drawn as an image. It stays on until
-  // removed, like ChatGPT's, and goes off when images can't be made.
-  const [imageModeOn, setImageMode] = useState(false);
+  // An image chat: an image model picked in the model picker (or Create image from the + menu) draws every
+  // message, until a chat model is picked. Kept per chat (`lib/images.ts`); a composer with no chat keeps it here.
+  const [localImageMode, setLocalImageMode] = useState(false);
+  const storedImageMode = useImageChat(conversationId);
+  const setImageMode = useCallback(
+    (on: boolean) => (conversationId ? setImageChat(conversationId, on) : setLocalImageMode(on)),
+    [conversationId],
+  );
   const imagesReady = useImagesReady();
-  const imageMode = imageModeOn && imagesReady && !notebook;
+  const imageMode = (conversationId ? storedImageMode : localImageMode) && imagesReady && !notebook;
   const imageModel = useActiveImageSettings();
-  const turnOnImages = useCallback(() => setImageMode(true), []);
+  const turnOnImages = useCallback(() => setImageMode(true), [setImageMode]);
+  // Picking a chat model ends drawing: the chat talks again.
+  const pickChatModel = useCallback(
+    (t: ModelTarget) => {
+      setImageMode(false);
+      onPickModel(t);
+    },
+    [setImageMode, onPickModel],
+  );
 
   // A chat still set to an image-only model (picked before they were split out) can't chat. Like ChatGPT,
-  // treat it as "make images": it becomes the image model, the Image chip goes on, and the chat moves to
+  // treat it as "make images": it becomes the image model, the chat becomes an image chat, and its chat model moves to
   // the chat model used most (else the first one from the same provider) so the message just works.
   const usage = useModelUsage();
   useEffect(() => {
@@ -327,43 +341,21 @@ export function Composer({
                 onImageMode={setImageMode}
               />
             )}
-            <AnimatePresence initial={false}>
-              {imageMode && (
-                <motion.button
-                  type="button"
-                  key="image-chip"
-                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.9 }}
-                  transition={{ duration: 0.16, ease: EASE_OUT }}
-                  onClick={() => setImageMode(false)}
-                  aria-label="Stop creating images"
-                  title={`Your messages are drawn by ${imageModel ? friendlyName(imageModel.model) : "the image model"}. Change it in the model picker. Click to stop.`}
-                  // Sized and shaded like the Auto pill beside it (h-7, text-xs, /50 border, /15 fill), in the sky of the picker's Image tag.
-                  className="group/chip flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-sky-500/50 bg-sky-500/15 pr-1.5 pl-2.5 text-xs font-medium text-sky-800 shadow-xs transition-colors hover:bg-sky-500/25 dark:bg-sky-500/20 dark:text-sky-300 dark:hover:bg-sky-500/30"
-                >
-                  {/* Names the model that draws, so it isn't mistaken for the chat model in the picker beside it. Capped
-                      and truncated so the controls on the right (the chat model's name above all) keep their room; plain
-                      "Image" in a mid-width composer, the icon alone in a narrow one; the full name is in the tooltip. */}
-                  <ImageIcon className="size-3.5 shrink-0" />
-                  <span className="hidden @sm:inline @xl:hidden">Image</span>
-                  <span className="hidden max-w-28 truncate @xl:inline">
-                    {imageModel ? friendlyName(imageModel.model) : "Image"}
-                  </span>
-                  <span className="flex size-4 items-center justify-center rounded-full transition-colors group-hover/chip:bg-sky-500/25">
-                    <XIcon className="size-3" />
-                  </span>
-                </motion.button>
-              )}
-            </AnimatePresence>
             {/* Shrinks in a narrow panel: the model name truncates first, the send button never does. */}
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 [&>*]:shrink-0">
               {/* A notebook's source tools never ask, so there's no approval mode to pick. */}
               {!notebook && <PermissionModePicker />}
               <div className="composer-pill min-w-24 shrink! [&_button]:max-w-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
-                <ModelPicker catalog={catalog} value={target} onChange={onPickModel} onPickImageModel={notebook ? undefined : turnOnImages} />
+                <ModelPicker
+                  catalog={catalog}
+                  value={target}
+                  onChange={pickChatModel}
+                  onPickImageModel={notebook ? undefined : turnOnImages}
+                  drawing={imageMode ? imageModel : null}
+                />
               </div>
-              <ReasoningPicker catalog={catalog} target={target} />
+              {/* An image chat runs no chat model, so its control is the image's quality, not thinking. */}
+              {imageMode ? <ImageQualityPicker image={imageModel} /> : <ReasoningPicker catalog={catalog} target={target} />}
               <ContextMeter catalog={catalog} target={target} messages={messages} conversationId={conversationId} busy={busy} />
               <Tooltip>
                 <TooltipTrigger asChild>

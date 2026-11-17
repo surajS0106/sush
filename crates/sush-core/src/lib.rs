@@ -31,6 +31,6 @@ pub mod workspace;
 
 pub use error::ProviderError;
 pub use message::{ChatEvent, ChatRequest, Effort, FinishReason, Message, Part, Role, ToolSpec, WebSource};
-pub use imagegen::{generate_image, Aspect, GeneratedImage, ImageApi};
+pub use imagegen::{generate_image, Aspect, GeneratedImage, ImageApi, ImageUsage, Quality};
 pub use transcribe::{transcribe, TranscribeApi};
 pub use provider::{build_provider, AuthKind, EventStream, ModelInfo, Provider, ProviderConfig, WireFormat};

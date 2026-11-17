@@ -3,6 +3,8 @@
 // Input read from the prompt cache costs a tenth of the input rate. Cache writes
 // (a quarter more than input on Anthropic) are counted as plain input.
 
+import type { ImageUsage } from "@/lib/tauri";
+
 /** What a cached input token costs, as a share of the input rate. */
 const CACHED_SHARE = 0.1;
 
@@ -85,4 +87,42 @@ export function formatCost(
   if (local) return "Free";
   const usd = costUsd(model, inputTokens, outputTokens, false, cachedTokens);
   return usd === undefined ? undefined : formatUsd(usd);
+}
+
+// --- images ---------------------------------------------------------------------------
+
+/** gpt-image prices per million tokens, from OpenAI's pricing page (Images, Standard). */
+interface ImagePrice {
+  textInput: number;
+  imageInput: number;
+  imageOutput: number;
+  /** Only models that bill text output list it. */
+  textOutput: number;
+}
+
+const GPT_IMAGE_2: ImagePrice = { textInput: 5, imageInput: 8, imageOutput: 30, textOutput: 0 };
+const GPT_IMAGE_1_5: ImagePrice = { textInput: 5, imageInput: 8, imageOutput: 32, textOutput: 10 };
+
+// Longest prefix wins, as for chat models.
+const IMAGE_PRICES = ([
+  ["gpt-image-2", GPT_IMAGE_2],
+  ["gpt-image-2.5", GPT_IMAGE_2],
+  ["gpt-image-2.6", GPT_IMAGE_2],
+  ["gpt-image-1.5", GPT_IMAGE_1_5],
+  ["chatgpt-image-latest", GPT_IMAGE_1_5],
+  ["gpt-image-1-mini", { textInput: 2, imageInput: 2.5, imageOutput: 8, textOutput: 0 }],
+] satisfies [string, ImagePrice][]).sort((a, b) => b[0].length - a[0].length);
+
+/** What an image cost in USD from its billed tokens, or undefined for a model whose price isn't known. */
+export function imageCostUsd(model: string, usage: ImageUsage): number | undefined {
+  const id = normalize(model);
+  const price = IMAGE_PRICES.find(([prefix]) => id.startsWith(prefix))?.[1];
+  if (!price) return undefined;
+  return (
+    (usage.inputTextTokens * price.textInput +
+      usage.inputImageTokens * price.imageInput +
+      usage.outputImageTokens * price.imageOutput +
+      usage.outputTextTokens * price.textOutput) /
+    1_000_000
+  );
 }

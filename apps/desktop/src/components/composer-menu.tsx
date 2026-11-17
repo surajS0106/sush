@@ -69,7 +69,7 @@ interface ComposerMenuProps {
   onOpenSettings: () => void;
   /** Send a message in this chat, e.g. `/create-skill` for "Record a skill". */
   onSend: (text: string) => void;
-  /** Image mode: the composer's Image chip, so the next messages are drawn. */
+  /** Image mode: the chat is an image chat, so its messages are drawn. */
   imageMode: boolean;
   onImageMode: (on: boolean) => void;
 }

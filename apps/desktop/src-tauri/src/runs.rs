@@ -656,7 +656,7 @@ impl Host {
         let (parent, config) = {
             let s = self.live.state.lock().unwrap();
             // A sub-agent never inherits the commands a click approved for the lead.
-            (s.thread.clone(), RunConfig { approved: Vec::new(), ..self.live.ui_config.lock().unwrap().clone() })
+            (s.thread.clone(), RunConfig { approved: Vec::new(), direct: None, ..self.live.ui_config.lock().unwrap().clone() })
         };
         if parent.parent_id.is_some() || parent.incognito {
             return Err("Sub-agents aren't available here.".into());
@@ -793,6 +793,8 @@ fn report_when_done(app: AppHandle, parent_id: String, child: Arc<Live>, child_i
             }
         };
         let Some(thread) = thread else { return };
+        // The report is answered by the model, even if the lead's last message was drawn directly.
+        let config = RunConfig { direct: None, ..config };
         if let Err(e) = start(&app, thread, RunAction::Steer { message }, config, None).await {
             eprintln!("sush: couldn't deliver a sub-agent's report to {parent_id}: {e}");
         }

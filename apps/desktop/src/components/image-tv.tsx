@@ -1,7 +1,8 @@
 // Shown while `image_generate` makes a picture: an 80s wood-grain CRT set,
 // rabbit ears and all, drawn on Sushi's pixel grid. On screen Sushi stands at
 // an easel flicking paint at a canvas until a picture fills in (a sunset, then
-// a self-portrait), admires it, and starts the next.
+// a self-portrait), admires it, and starts the next. Once the image model
+// streams a rough version of the real picture, Sushi paints that instead.
 //
 // The easter egg: click the TV (or focus it and press Enter) and it changes
 // channel to Pong. You are Sushi, the paddle at the bottom, moved with the
@@ -272,6 +273,192 @@ function Painting({ p, still }: { p: Paint; still: boolean }) {
   );
 }
 
+// --- painting the real picture, in screen pixels ---------------------------------
+//
+// Once the image model streams a rough version (`preview`), Sushi paints that
+// instead, on a bigger canvas: each dab flicked from the brush reveals its patch
+// of the picture, in the picture's own colours. A sharper version arrives and is
+// painted over the last; between them Sushi admires the work.
+
+/** The big canvas's frame, and the picture inside it. */
+const BIG_CANVAS = { x: 27, y: 3, w: 33, h: 28 };
+const BIG_PIC = { x: BIG_CANVAS.x + 1, y: BIG_CANVAS.y + 1, w: BIG_CANVAS.w - 2, h: BIG_CANVAS.h - 2 };
+const BIG_DAB = 4;
+const BIG_COLS = Math.ceil(BIG_PIC.w / BIG_DAB);
+const BIG_ROWS = Math.ceil(BIG_PIC.h / BIG_DAB);
+const BIG_DABS = BIG_COLS * BIG_ROWS;
+const BIG_FLICK_EVERY = 0.05;
+/** Back and forth along each row, top to bottom, like the small canvas. */
+const bigDabAt = (n: number) => {
+  const row = Math.floor(n / BIG_COLS);
+  const i = n % BIG_COLS;
+  const col = row % 2 ? BIG_COLS - 1 - i : i;
+  return { x: col * BIG_DAB, y: row * BIG_DAB };
+};
+
+interface PreviewPaint {
+  t: number;
+  /** The version being painted, and the one under it (already finished). */
+  url: string | null;
+  under: string | null;
+  /** Each dab's colour, sampled from the version being painted. */
+  colors: string[];
+  launched: number;
+  landed: number;
+  launchIn: number;
+  flecks: { n: number; age: number }[];
+  brushUp: number;
+}
+
+const newPreviewPaint = (): PreviewPaint => ({ t: 0, url: null, under: null, colors: [], launched: 0, landed: 0, launchIn: 0, flecks: [], brushUp: 0 });
+
+/** Start painting a new version over whatever is on the canvas. */
+function paintVersion(p: PreviewPaint, url: string) {
+  if (p.url === url) return;
+  // The version on the easel goes underneath, whole, and the new one is painted over it.
+  p.under = p.url;
+  Object.assign(p, { url, colors: [], launched: 0, landed: 0, launchIn: 0.15, flecks: [] });
+}
+
+function stepPreview(p: PreviewPaint, dt: number) {
+  p.t += dt;
+  p.brushUp = Math.max(0, p.brushUp - dt);
+  if (!p.url) return;
+  p.launchIn -= dt;
+  if (p.launchIn <= 0 && p.launched < BIG_DABS) {
+    p.flecks.push({ n: p.launched++, age: 0 });
+    p.launchIn = BIG_FLICK_EVERY;
+    p.brushUp = 0.05;
+  }
+  p.flecks = p.flecks.filter((f) => {
+    f.age += dt;
+    if (f.age < FLIGHT) return true;
+    p.landed = Math.max(p.landed, f.n + 1);
+    return false;
+  });
+}
+
+/** Each dab's average colour, from the picture shrunk to one pixel per dab. */
+function sampleColors(url: string): Promise<string[]> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = BIG_COLS;
+        canvas.height = BIG_ROWS;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return resolve([]);
+        // Cropped like the canvas shows it (`slice`): the middle of the picture at the canvas's shape.
+        const aspect = BIG_PIC.w / BIG_PIC.h;
+        const sw = Math.min(img.width, img.height * aspect);
+        const sh = sw / aspect;
+        ctx.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, 0, 0, BIG_COLS, BIG_ROWS);
+        const data = ctx.getImageData(0, 0, BIG_COLS, BIG_ROWS).data;
+        resolve(
+          Array.from({ length: BIG_DABS }, (_, n) => {
+            const { x, y } = bigDabAt(n);
+            const i = ((y / BIG_DAB) * BIG_COLS + x / BIG_DAB) * 4;
+            return `rgb(${data[i]} ${data[i + 1]} ${data[i + 2]})`;
+          }),
+        );
+      } catch {
+        resolve([]);
+      }
+    };
+    img.onerror = () => resolve([]);
+    img.src = url;
+  });
+}
+
+function PreviewPainting({ p, still, maskId }: { p: PreviewPaint; still: boolean; maskId: string }) {
+  const landed = still ? BIG_DABS : p.landed;
+  const done = landed >= BIG_DABS;
+  const blink = p.t % 3.4 < 0.12;
+  const hop = !still && done && Math.floor(p.t / 0.25) % 2 === 0;
+  const colorOfDab = (n: number) => p.colors[n] ?? PAINT["3"];
+  const lastColor = p.launched ? colorOfDab(p.launched - 1) : PAINT["3"];
+  const wood = TV.wood;
+  const picture = (href: string, mask?: string) => (
+    <image
+      href={href}
+      x={BIG_PIC.x}
+      y={BIG_PIC.y}
+      width={BIG_PIC.w}
+      height={BIG_PIC.h}
+      preserveAspectRatio="xMidYMid slice"
+      mask={mask}
+    />
+  );
+  return (
+    <>
+      <rect width={SCREEN.w} height={SCREEN.h} fill={TV.glass} />
+      <rect y={SCREEN.h - 1} width={SCREEN.w} height={1} fill={TV.net} />
+
+      {/* The easel, taller: a canvas over three legs that reach the floor. */}
+      <rect x={BIG_CANVAS.x + Math.floor(BIG_CANVAS.w / 2) - 1} y={BIG_CANVAS.y - 2} width={2} height={2} fill={wood} />
+      <rect x={BIG_CANVAS.x + Math.floor(BIG_CANVAS.w / 2)} y={BIG_CANVAS.y + BIG_CANVAS.h} width={1} height={SCREEN.h - 1 - BIG_CANVAS.y - BIG_CANVAS.h} fill={TV.woodDark} />
+      <g fill={wood}>
+        <rect x={BIG_CANVAS.x + 3} y={31} width={1} height={5} />
+        <rect x={BIG_CANVAS.x + 2} y={36} width={1} height={4} />
+        <rect x={BIG_CANVAS.x + 1} y={40} width={1} height={4} />
+        <rect x={BIG_CANVAS.x + BIG_CANVAS.w - 4} y={31} width={1} height={5} />
+        <rect x={BIG_CANVAS.x + BIG_CANVAS.w - 3} y={36} width={1} height={4} />
+        <rect x={BIG_CANVAS.x + BIG_CANVAS.w - 2} y={40} width={1} height={4} />
+      </g>
+      <rect x={BIG_CANVAS.x} y={BIG_CANVAS.y} width={BIG_CANVAS.w} height={BIG_CANVAS.h} fill={TV.woodDark} />
+      <rect x={BIG_PIC.x} y={BIG_PIC.y} width={BIG_PIC.w} height={BIG_PIC.h} fill={PAINT["7"]} />
+
+      {/* The earlier version, then the new one showing through the dabs that have landed. */}
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse">
+          {Array.from({ length: Math.min(landed, BIG_DABS) }, (_, n) => {
+            const { x, y } = bigDabAt(n);
+            return <rect key={n} x={BIG_PIC.x + x} y={BIG_PIC.y + y} width={BIG_DAB} height={BIG_DAB} fill="white" />;
+          })}
+        </mask>
+      </defs>
+      {p.under && picture(p.under)}
+      {p.url && picture(p.url, done ? undefined : `url(#${maskId})`)}
+      <rect x={BIG_CANVAS.x - 1} y={BIG_CANVAS.y + BIG_CANVAS.h} width={BIG_CANVAS.w + 2} height={1} fill={TV.woodLight} />
+
+      {/* Sushi with its brush, as on the small canvas. */}
+      <g transform={`translate(${PAINTER_X} ${SUSHI_TOP - (hop ? 1 : 0)})`}>
+        {blink ? <SushiPixels legs={0} /> : <SushiPixels look={{ x: 1, y: done ? 0 : -1 }} legs={hop ? 1 : 0} />}
+      </g>
+      {!done && p.brushUp > 0 ? (
+        <g>
+          <rect x={23} y={37} width={1} height={1} fill={TV.woodLight} />
+          <rect x={24} y={36} width={1} height={1} fill={TV.woodLight} />
+          <rect x={25} y={35} width={1} height={1} fill={TV.woodLight} />
+          <rect x={BRUSH_TIP.x} y={BRUSH_TIP.y} width={1} height={2} fill={lastColor} />
+        </g>
+      ) : (
+        <g>
+          <rect x={23} y={38} width={3} height={1} fill={TV.woodLight} />
+          <rect x={26} y={38} width={2} height={1} fill={lastColor} />
+        </g>
+      )}
+
+      {/* Paint in flight, in the colour of the patch it lands on. */}
+      {p.flecks.map((f) => {
+        const k = f.age / FLIGHT;
+        const to = bigDabAt(f.n);
+        const x = BRUSH_TIP.x + (BIG_PIC.x + to.x + 2 - BRUSH_TIP.x) * k;
+        const y = BRUSH_TIP.y + (BIG_PIC.y + to.y + 2 - BRUSH_TIP.y) * k - Math.sin(Math.PI * k) * 6;
+        return <rect key={f.n} x={px(x)} y={px(y)} width={1} height={1} fill={colorOfDab(f.n)} />;
+      })}
+
+      {/* Admiring the version just finished, until a sharper one comes. */}
+      {done && !still && (
+        <g transform={Math.floor(p.t / 0.3) % 2 ? `translate(${BIG_CANVAS.x - 2} ${BIG_CANVAS.y - 1})` : `translate(${BIG_CANVAS.x + BIG_CANVAS.w - 2} ${BIG_CANVAS.y + 4})`}>
+          <PixelRows rows={STAR} colors={GAME} />
+        </g>
+      )}
+    </>
+  );
+}
+
 // --- Pong, in screen pixels ------------------------------------------------------
 
 const STICKS_Y = 6;
@@ -511,9 +698,20 @@ const RIGHT = new Set(["ArrowRight", "d", "D"]);
 
 /**
  * The image loader: Sushi's TV, painting until the picture is ready, or
- * playing Pong once clicked. `caption` sits right under the set.
+ * playing Pong once clicked. `caption` sits right under the set. With
+ * `preview` (a rough version the image model streamed), Sushi paints that.
  */
-export function ImageTV({ scale = 3, caption, className }: { scale?: number; caption?: ReactNode; className?: string }) {
+export function ImageTV({
+  scale = 3,
+  caption,
+  className,
+  preview,
+}: {
+  scale?: number;
+  caption?: ReactNode;
+  className?: string;
+  preview?: string;
+}) {
   const reduceMotion = useReducedMotion() ?? false;
   // Two loaders at once (two images in a step) each need their own clip.
   const clipId = `image-tv-glass-${useId().replace(/:/g, "")}`;
@@ -522,7 +720,25 @@ export function ImageTV({ scale = 3, caption, className }: { scale?: number; cap
   paint.current ??= newPaint();
   const game = useRef<Game | null>(null);
   game.current ??= newGame();
+  const previewPaint = useRef<PreviewPaint | null>(null);
+  previewPaint.current ??= newPreviewPaint();
+  const maskId = `image-tv-reveal-${useId().replace(/:/g, "")}`;
   const [, setFrame] = useState(0);
+
+  // Each sharper version is painted over the last, in its own colours once they're read.
+  useEffect(() => {
+    if (!preview) return;
+    const p = previewPaint.current!;
+    paintVersion(p, preview);
+    setFrame((f) => f + 1);
+    let live = true;
+    void sampleColors(preview).then((colors) => {
+      if (live && p.url === preview) p.colors = colors;
+    });
+    return () => {
+      live = false;
+    };
+  }, [preview]);
 
   useEffect(() => {
     if (mode === "paint" && reduceMotion) return;
@@ -533,6 +749,7 @@ export function ImageTV({ scale = 3, caption, className }: { scale?: number; cap
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
       if (mode === "play") stepGame(game.current!, dt);
+      else if (previewPaint.current!.url) stepPreview(previewPaint.current!, dt);
       else stepPaint(paint.current!, dt);
       setFrame((f) => f + 1);
       raf = requestAnimationFrame(tick);
@@ -597,7 +814,13 @@ export function ImageTV({ scale = 3, caption, className }: { scale?: number; cap
             <g clipPath={`url(#${clipId})`}>
               {/* Keyed by channel so changing it replays the CRT's switch-on. */}
               <g key={mode} className="tv-screen-on">
-                {mode === "play" ? <Pong g={game.current!} /> : <Painting p={paint.current} still={reduceMotion} />}
+                {mode === "play" ? (
+                  <Pong g={game.current!} />
+                ) : previewPaint.current.url ? (
+                  <PreviewPainting p={previewPaint.current} still={reduceMotion} maskId={maskId} />
+                ) : (
+                  <Painting p={paint.current} still={reduceMotion} />
+                )}
               </g>
             </g>
           </g>

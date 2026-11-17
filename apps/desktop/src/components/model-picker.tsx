@@ -16,7 +16,14 @@ import {
 } from "@/components/ai-elements/model-selector";
 import { PromptInputButton } from "@/components/ai-elements/prompt-input";
 import { failedToLoad, reloadProviders, type ProviderModels } from "@/hooks/use-providers";
-import { canGenerateImages, defaultImageApi, defaultImageModel, setImageSettings, useActiveImageSettings } from "@/lib/images";
+import {
+  canGenerateImages,
+  defaultImageApi,
+  defaultImageModel,
+  setImageSettings,
+  useActiveImageSettings,
+  type ImageSettings,
+} from "@/lib/images";
 import { logoColor, modelLogo, providerLogo } from "@/lib/logos";
 import { topModels, useModelUsage } from "@/lib/model-usage";
 import { friendlyName, isChatModel, isImageOnlyModel, withoutSnapshots, isLocalProvider, modelHint, modelProblem, useModelHealth } from "@/lib/model-names";
@@ -29,9 +36,11 @@ interface ModelPickerProps {
   onChange: (target: ModelTarget) => void;
   /**
    * Offer image models too, in their own group: picking one makes it the image model (Settings → Images)
-   * rather than the chat model, and calls this (the composer turns its Image chip on).
+   * rather than the chat model, and calls this (the composer makes the chat an image chat).
    */
   onPickImageModel?: () => void;
+  /** The image model drawing this chat's messages, shown in place of the chat model until one is picked. */
+  drawing?: ImageSettings | null;
 }
 
 /**
@@ -85,7 +94,7 @@ export function Logo({ src, className }: { src?: string; className?: string }) {
 const itemValue = (providerName: string, id: string, displayName?: string | null) =>
   `${providerName} ${id} ${displayName ?? ""}`.trim();
 
-export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }: ModelPickerProps) {
+export function ModelPicker({ catalog: all, value, onChange, onPickImageModel, drawing }: ModelPickerProps) {
   // Image-only models can't chat: they're listed apart (when the composer asks) and picked as the image model.
   const catalog = useMemo(
     () => all.map((c) => ({ ...c, models: withoutSnapshots(c.models.filter((m) => isChatModel(m.id))) })),
@@ -119,6 +128,18 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
   const label = value ? friendlyName(value.model, currentModel?.displayName) : undefined;
   const currentValue = current && value ? itemValue(current.name, value.model, currentModel?.displayName) : "";
   const currentLogo = value ? (modelLogo(value.model) ?? (current && providerLogo(current))) : undefined;
+  // An image chat shows the model that draws it; picking a chat model from the list goes back to chatting.
+  const drawer = drawing ? all.find((c) => c.provider.id === drawing.providerId)?.provider : undefined;
+  const shown = drawing
+    ? {
+        key: `image/${drawing.providerId}/${drawing.model}`,
+        label: friendlyName(drawing.model),
+        logo: modelLogo(drawing.model) ?? (drawer && providerLogo(drawer)),
+        provider: drawer?.name,
+      }
+    : value
+      ? { key: `${value.providerId}/${value.model}`, label: label!, logo: currentLogo, provider: current?.name }
+      : null;
   const reduceMotion = useReducedMotion();
 
   const health = useModelHealth();
@@ -180,18 +201,31 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
     >
       <ModelSelectorTrigger asChild>
         <PromptInputButton
-          aria-label={value ? `Model: ${label}${current ? ` (${current.name})` : ""}. Change model` : "Select model"}
+          aria-label={
+            drawing && shown
+              ? `Drawing images with ${shown.label}. Pick a chat model to chat again`
+              : value
+                ? `Model: ${label}${current ? ` (${current.name})` : ""}. Change model`
+                : "Select model"
+          }
           className={cn(
             "relative max-w-64 min-w-0 gap-1.5 overflow-visible rounded-full text-foreground/90 hover:text-foreground",
-            !value && "text-amber-600 dark:text-amber-500",
+            !shown && "text-amber-600 dark:text-amber-500",
+            drawing && "text-sky-800! dark:text-sky-300!",
           )}
-          tooltip={current && value ? `${current.name} / ${value.model}` : undefined}
+          tooltip={
+            drawing
+              ? `Every message in this chat is drawn by ${drawer ? `${drawer.name} / ` : ""}${drawing.model}. Pick a chat model to chat again.`
+              : current && value
+                ? `${current.name} / ${value.model}`
+                : undefined
+          }
         >
           {/* A brief ring whenever the model changes, so a switch (picked, or another session's model) is noticed. */}
           <AnimatePresence initial={false}>
-            {!reduceMotion && value && (
+            {!reduceMotion && shown && (
               <motion.span
-                key={`${value.providerId}/${value.model}`}
+                key={shown.key}
                 aria-hidden
                 className="pointer-events-none absolute -inset-0.5 rounded-full border-2 border-brand"
                 initial={{ opacity: 0.8, scale: 1 }}
@@ -202,20 +236,20 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
           </AnimatePresence>
           <AnimatePresence mode="wait" initial={false}>
             <motion.span
-              key={value ? `${value.providerId}/${value.model}` : "none"}
+              key={shown?.key ?? "none"}
               initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: -6 }}
               transition={{ duration: 0.18 }}
               className="flex min-w-0 items-center gap-1.5"
             >
-              {value ? (
+              {shown ? (
                 <>
-                  <Logo className="size-3.5" src={currentLogo} />
-                  <span className="truncate">{label}</span>
-                  {current && (
+                  {drawing ? <ImageIcon className="size-3.5 shrink-0" /> : <Logo className="size-3.5" src={shown.logo} />}
+                  <span className="truncate">{shown.label}</span>
+                  {shown.provider && (
                     // By the space it has, not the window: a composer in a side panel is narrow in a wide window.
-                    <span className="hidden truncate font-normal text-muted-foreground @md:inline">· {current.name}</span>
+                    <span className="hidden truncate font-normal text-muted-foreground @md:inline">· {shown.provider}</span>
                   )}
                 </>
               ) : (
@@ -263,7 +297,7 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
             <ModelSelectorGroup>
               {shortList.map(({ provider, model }) => {
                 const target = { providerId: provider.id, model: model.id };
-                const selected = value?.providerId === provider.id && value.model === model.id;
+                const selected = !drawing && value?.providerId === provider.id && value.model === model.id;
                 const problem = modelProblem(health, target);
                 const hint = modelHint(model.id, isLocalProvider(provider.baseUrl));
                 return (
@@ -340,7 +374,7 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
                     )}
                     {!folded &&
                       models.map((m) => {
-                        const selected = value?.providerId === provider.id && value.model === m.id;
+                        const selected = !drawing && value?.providerId === provider.id && value.model === m.id;
                         const problem = modelProblem(health, { providerId: provider.id, model: m.id });
                         const name = friendlyName(m.id, m.displayName);
                         return (
@@ -381,12 +415,12 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel }:
                   <span className="flex items-center gap-1.5">
                     <ImageIcon className="size-3" />
                     Image models
-                    <span className="ml-auto font-normal opacity-70">the chat model writes the prompt, this one draws it</span>
+                    <span className="ml-auto font-normal opacity-70">draws every message in this chat</span>
                   </span>
                 }
               >
                 {images.map(({ provider, id, displayName }) => {
-                  const selected = imageNow?.providerId === provider.id && imageNow.model === id;
+                  const selected = !!drawing && imageNow?.providerId === provider.id && imageNow.model === id;
                   return (
                     <ModelSelectorItem
                       key={`image/${provider.id}/${id}`}

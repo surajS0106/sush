@@ -16,13 +16,16 @@ import {
   defaultImageModel,
   drawsImages,
   IMAGES_OFF_ID,
+  QUALITY_LABELS,
+  qualityLevels,
   setImageSettings,
+  takesQuality,
   useActiveImageSettings,
   useImageSettings,
 } from "@/lib/images";
 import { providerLogo } from "@/lib/logos";
 import { friendlyName, isImageOnlyModel } from "@/lib/model-names";
-import { api, type ModelInfo, type ProviderView } from "@/lib/tauri";
+import { api, type ImageQuality, type ModelInfo, type ProviderView } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
 
 const AUTO = "auto";
@@ -31,10 +34,14 @@ const PROVIDER_HINT = "Where image prompts go. Automatic uses the first of your 
 const API_HINT =
   "The images endpoint for OpenAI, Azure Foundry, xAI and Ollama's image models. Chat with image output for OpenRouter's image models.";
 
+const QUALITY_HINT =
+  "How much detail gpt-image draws, such as textures and small lettering. Lower is faster and cheaper; Auto lets the model decide.";
+
+
 const modelHint = (imageApi: string) =>
   imageApi === "chat-modalities"
     ? "An image-output model, such as google/gemini-2.5-flash-image on OpenRouter."
-    : "An image model such as gpt-image-1 or grok-imagine-image. On Azure Foundry, use your deployment name.";
+    : "An image model such as gpt-image-2.6-flare or grok-imagine-image. On Azure Foundry, use your deployment name.";
 
 export function ImagesSection({ providers }: { providers: ProviderView[] }) {
   const settings = useImageSettings();
@@ -117,7 +124,7 @@ export function ImagesSection({ providers }: { providers: ProviderView[] }) {
                 className="w-full sm:w-64"
                 list={listId}
                 value={settings.model}
-                placeholder={settings.api === "chat-modalities" ? "google/gemini-2.5-flash-image" : "gpt-image-1"}
+                placeholder={settings.api === "chat-modalities" ? "google/gemini-2.5-flash-image" : "gpt-image-2.6-flare"}
                 onChange={(e) => setImageSettings({ model: e.target.value })}
                 spellCheck={false}
               />
@@ -142,6 +149,20 @@ export function ImagesSection({ providers }: { providers: ProviderView[] }) {
             </Setting>
           </>
         )}
+        {!off && active && takesQuality(active.model) && (
+          <Setting title="Quality" description={QUALITY_HINT}>
+            <DropdownMenu
+              label="Image quality"
+              align="end"
+              variant="field"
+              className="w-full sm:w-64"
+              // A level the model doesn't offer (after switching to an older one) is sent as Auto.
+              value={settings.quality && qualityLevels(active.model).includes(settings.quality) ? settings.quality : "auto"}
+              onChange={(v) => setImageSettings({ quality: v as ImageQuality })}
+              items={qualityLevels(active.model).map((q) => ({ value: q, ...QUALITY_LABELS[q] }))}
+            />
+          </Setting>
+        )}
       </Group>
 
       {!off && (
@@ -149,8 +170,9 @@ export function ImagesSection({ providers }: { providers: ProviderView[] }) {
           <Tip icon={<MessageSquareIcon />} title="Just ask">
             Say “draw a lighthouse at dusk” in any chat, with any model, and the picture appears in the reply.
           </Tip>
-          <Tip icon={<PlusIcon />} title="Image chip">
-            Pick Create image from the + menu and every message you send is drawn, until you remove the chip.
+          <Tip icon={<PlusIcon />} title="Image chats">
+            Pick an image model in the model picker, or Create image from the + menu, and every message in that chat
+            goes straight to it, until you pick a chat model again.
           </Tip>
           <Tip icon={<ReceiptIcon />} title="Billing">
             Each image is billed by {activeProvider?.name ?? "the image provider"}, separately from the chat model.

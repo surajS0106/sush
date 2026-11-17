@@ -1113,6 +1113,11 @@ export interface RunConfig {
   expansions: Record<string, string>;
   /** Shell commands the button that started this run already approved; exactly these run without asking. */
   approved?: string[];
+  /**
+   * A tool call made for the user's message in place of asking the model (image mode): the reply is just
+   * that call, marked `direct`, and the run ends with its result (`sush_core::agent::run::RunConfig::direct`).
+   */
+  direct?: { name: string; input: unknown };
 }
 
 export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
@@ -1136,12 +1141,24 @@ export interface YammerStatus {
 /** How a provider makes images: OpenAI-style `/images/generations`, or chat completions asking for image output (OpenRouter). */
 export type ImageApi = "images" | "chat-modalities";
 export type ImageAspect = "square" | "landscape" | "portrait";
+/** gpt-image's `quality` (`sush_core::imagegen::Quality`); `xhigh` and `max` need gpt-image-2.6 or later. */
+export type ImageQuality = "auto" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface GeneratedImage {
   /** The blob URL the image is served on. */
   url: string;
   mediaType: string;
   revisedPrompt: string | null;
+  /** Tokens billed, when the provider says (OpenAI's gpt-image). */
+  usage?: ImageUsage | null;
+}
+
+/** gpt-image's `usage`, split the way it's priced (`sush_core::imagegen::ImageUsage`). */
+export interface ImageUsage {
+  inputTextTokens: number;
+  inputImageTokens: number;
+  outputImageTokens: number;
+  outputTextTokens: number;
 }
 
 export type TravelMode = "driving" | "walking" | "bicycling" | "transit";
@@ -1616,8 +1633,16 @@ export const api = {
     invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),
   transcribe: (providerId: string, model: string, api: TranscribeApi, audioBase64Wav: string) =>
     invoke<string>("transcribe", { providerId, model, api, audioBase64Wav }),
-  imageGenerate: (providerId: string, model: string, api: ImageApi, prompt: string, aspect: ImageAspect | null) =>
-    invoke<GeneratedImage>("image_generate", { providerId, model, api, prompt, aspect }),
+  /** `onPartial` gets the rough versions gpt-image streams on the way, as `data:` URLs. */
+  imageGenerate: (
+    providerId: string,
+    model: string,
+    api: ImageApi,
+    prompt: string,
+    aspect: ImageAspect | null,
+    quality: ImageQuality | null,
+    onPartial: Channel<string>,
+  ) => invoke<GeneratedImage>("image_generate", { providerId, model, api, prompt, aspect, quality, onPartial }),
   mapsKeyStatus: () => invoke<boolean>("maps_key_status"),
   /** Saves the key and tries it; returns what's wrong with it, if anything. */
   mapsKeySet: (key: string) => invoke<string[]>("maps_key_set", { key }),

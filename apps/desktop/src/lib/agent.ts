@@ -518,7 +518,7 @@ export function runTools(specs: ToolSpec[], defer?: { mentioned: ReadonlySet<str
 }
 
 /** Run a memory, chats, skill, artifact, image, map, flights, weather or topic tool. Never throws; failures become error results the model can read. */
-export async function runTool(name: string, input: unknown, threadId?: string): Promise<ToolResult> {
+export async function runTool(name: string, input: unknown, threadId?: string, callId?: string): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   try {
     if (name === MEMORY_WRITE) {
@@ -562,7 +562,7 @@ export async function runTool(name: string, input: unknown, threadId?: string): 
       const n = (args.slides as unknown[]).length;
       return { output: `Showed "${args.title}" (${n} ${n === 1 ? "slide" : "slides"}) to the user in the slides panel.` };
     }
-    if (name === IMAGE_GENERATE) return runImageGenerate(args);
+    if (name === IMAGE_GENERATE) return runImageGenerate(args, callId);
     if (name === MAP_SHOW) return runMapShow(args);
     if (name === FLIGHTS_SEARCH) return runFlightsSearch(args);
     if (name === WEATHER_SHOW) return runWeatherShow(args);

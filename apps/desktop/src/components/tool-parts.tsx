@@ -82,7 +82,9 @@ import { brandLogo, connectorIcon, placesOrder } from "@/lib/connector-catalog";
 import { isSwiggyOrder, parseSwiggyCard, swiggyService } from "@/lib/swiggy";
 import type { FlightsOutput } from "@/lib/flights";
 import { parseCommits, parsePullRequest } from "@/lib/github";
-import { saveImage, type ImageOutput } from "@/lib/images";
+import { ImageLightbox } from "@/components/image-lightbox";
+import { formatUsd } from "@/lib/pricing";
+import { saveImage, useImagePreview, type ImageOutput } from "@/lib/images";
 import { allowTool } from "@/lib/library";
 import type { LocationOutput } from "@/lib/location";
 import type { MapOutput } from "@/lib/maps";
@@ -232,9 +234,14 @@ function AskUserPart({ part, canAnswer, onResult }: ToolPartProps) {
 // --- images ------------------------------------------------------------------------
 
 function ImagePart({ part }: { part: DynamicToolUIPart }) {
+  // The rough versions gpt-image streams while it draws, sharper each time: Sushi paints them on the TV.
+  const preview = useImagePreview(part.toolCallId);
   if (part.state === "input-streaming" || part.state === "input-available") {
     return (
-      <ImageTV caption={<LoadingState label="Generating your image" />} />
+      <ImageTV
+        preview={preview}
+        caption={<LoadingState label={preview ? "Painting your image" : "Generating your image"} />}
+      />
     );
   }
   if (part.state === "output-error") {
@@ -252,6 +259,13 @@ function ImagePart({ part }: { part: DynamicToolUIPart }) {
     );
   }
   const output = part.output as ImageOutput;
+  const card = output.cardOnly;
+  const cost = card?.costUsd === undefined ? undefined : card.costUsd === 0 ? "Free" : formatUsd(card.costUsd);
+  // "OpenAI · gpt-image-2.6-sunburst · $0.041"
+  const drawnBy = card?.model ? [card.provider, card.model, cost].filter(Boolean).join(" · ") : undefined;
+  const tokens = card?.usage
+    ? `${card.usage.inputTextTokens + card.usage.inputImageTokens} input · ${card.usage.outputImageTokens + card.usage.outputTextTokens} output tokens`
+    : undefined;
   const save = () =>
     saveImage(output).then(
       (saved) => saved && toast.success("Image saved"),
@@ -259,7 +273,17 @@ function ImagePart({ part }: { part: DynamicToolUIPart }) {
     );
   return (
     <figure className="group/image relative max-w-md">
-      <Image src={output.url} mediaType={output.mediaType} alt={output.prompt} className="border" />
+      <ImageLightbox
+        src={output.url}
+        alt={output.prompt}
+        caption={output.revisedPrompt ?? output.prompt}
+        detail={drawnBy}
+        onSave={save}
+      >
+        <button type="button" aria-label="Open image" title="Open image" className="block w-full cursor-zoom-in rounded-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+          <Image src={output.url} mediaType={output.mediaType} alt={output.prompt} className="border" />
+        </button>
+      </ImageLightbox>
       <button
         type="button"
         onClick={save}
@@ -272,10 +296,12 @@ function ImagePart({ part }: { part: DynamicToolUIPart }) {
       <figcaption className="mt-1.5 line-clamp-2 text-xs text-muted-foreground" title={output.revisedPrompt ?? output.prompt}>
         {output.revisedPrompt ?? output.prompt}
       </figcaption>
-      {output.cardOnly?.model && (
-        <p className="mt-0.5 truncate text-xs text-muted-foreground/70" title="The model that drew this image">
-          {output.cardOnly.provider ? `${output.cardOnly.provider} · ` : ""}
-          {output.cardOnly.model}
+      {drawnBy && (
+        <p
+          className="mt-0.5 truncate text-xs text-muted-foreground/70"
+          title={cost && tokens ? `The model that drew this image, and what it cost: ${tokens}` : "The model that drew this image"}
+        >
+          {drawnBy}
         </p>
       )}
     </figure>

@@ -65,6 +65,9 @@ pub const RESUMED: &str = "resumed";
 /// Metadata key on a reply: who answered its tool calls in a shared session,
 /// by call id (`{ by, decision, at }`). Only answers that carry an author are recorded.
 pub const ANSWERS: &str = "sushAnswers";
+/// Metadata key on a reply made of a [`RunConfig::direct`] call: no model wrote it,
+/// and no model step follows its result.
+pub const DIRECT: &str = "direct";
 /// The result of a tool call that `Inbox::Interrupt` cut short.
 pub const INTERRUPTED: &str = "Interrupted: the user sent a message.";
 /// The result of a call left waiting when a pause let messages join (`Inbox::Pause`).
@@ -116,6 +119,20 @@ pub struct RunConfig {
     /// (the branch card's Delete branch): exactly these run without asking again.
     #[serde(default)]
     pub approved: Vec<String>,
+    /// A tool call to make for the user's message in place of asking the model
+    /// (the composer's image mode: the image model gets the words as typed).
+    /// Used once, only when the thread ends in a user message; the reply is
+    /// that one call, marked [`DIRECT`], and it ends when the call has its result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direct: Option<DirectCall>,
+}
+
+/// See [`RunConfig::direct`]. The tool must be among the config's tools.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectCall {
+    pub name: String,
+    pub input: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -272,11 +289,16 @@ pub async fn run(
             }
             false
         }
+        // Only a message the user sent (or one a regenerate answers again) gets a direct call.
         RunAction::Respond { call_id, response, by } => {
+            r.config.direct = None;
             r.answers.push_back((call_id, response, by));
             true
         }
-        RunAction::Resume => r.prepare_resume(),
+        RunAction::Resume => {
+            r.config.direct = None;
+            r.prepare_resume()
+        }
     };
     // The UI starts each run from exactly what the run sees.
     host.emit(RunEvent::Op(Op::Reset { messages: r.messages.clone() }));
@@ -439,6 +461,12 @@ impl Runner<'_> {
                 let resolved = self.resolve(inbox).await;
                 self.host.save(&self.messages).await;
                 match resolved {
+                    // A direct call's reply ends with its result, unless the user said more meanwhile.
+                    Resolved::Done if self.is_direct_reply() => {
+                        if self.finished(inbox, false) {
+                            return Ok(());
+                        }
+                    }
                     Resolved::Done => {}
                     Resolved::Paused => {
                         self.end_paused(inbox);
@@ -453,32 +481,80 @@ impl Runner<'_> {
                 return Ok(());
             }
             self.join_steers(inbox);
-            let Some(calls) = self.step(inbox).await? else { return Ok(()) };
+            let calls = match self.take_direct() {
+                Some(call) => {
+                    if self.cancel.is_cancelled() {
+                        return Ok(());
+                    }
+                    self.direct_step(call);
+                    1
+                }
+                None => match self.step(inbox).await? {
+                    Some(calls) => calls,
+                    None => return Ok(()),
+                },
+            };
             self.host.save(&self.messages).await;
             resolve_first = calls > 0;
             if resolve_first {
                 continue;
             }
-            // The model is done, unless the user said more meanwhile. The inbox
-            // closes before the last look so nothing can arrive unseen after it;
-            // the host starts a new run for anything sent later.
-            self.drain(inbox);
-            // Or its to-do list still has items left: send it back to them, once a turn.
-            // Before the inbox closes, since the run carries on.
-            if self.steers.is_empty() && !self.pause && !self.cancel.is_cancelled() && super::plan::applies(&self.config.tools) {
-                if let Some(message) = super::plan::check(&self.messages) {
-                    self.op(Op::Push { message });
-                    continue;
-                }
-            }
-            if self.steers.is_empty() {
-                inbox.close();
-                self.drain(inbox);
-            }
-            if self.steers.is_empty() || self.cancel.is_cancelled() {
+            if self.finished(inbox, true) {
                 return Ok(());
             }
         }
+    }
+
+    /// The reply is done: whether the run ends, or carries on because the user
+    /// said more meanwhile (or, with `plan`, the model's to-do list has items
+    /// left). The inbox closes before the last look so nothing can arrive
+    /// unseen after it; the host starts a new run for anything sent later.
+    fn finished(&mut self, inbox: &mut mpsc::UnboundedReceiver<Inbox>, plan: bool) -> bool {
+        self.drain(inbox);
+        // To-do items left: send the model back to them, once a turn.
+        // Before the inbox closes, since the run carries on.
+        if plan && self.steers.is_empty() && !self.pause && !self.cancel.is_cancelled() && super::plan::applies(&self.config.tools) {
+            if let Some(message) = super::plan::check(&self.messages) {
+                self.op(Op::Push { message });
+                return false;
+            }
+        }
+        if self.steers.is_empty() {
+            inbox.close();
+            self.drain(inbox);
+        }
+        self.steers.is_empty() || self.cancel.is_cancelled()
+    }
+
+    /// The config's direct call, used up, when the thread ends in a user message for it to answer.
+    fn take_direct(&mut self) -> Option<DirectCall> {
+        let call = self.config.direct.take()?;
+        (self.messages.last().and_then(ui::role) == Some("user")).then_some(call)
+    }
+
+    /// Whether the last message is a reply made of a direct call.
+    fn is_direct_reply(&self) -> bool {
+        self.messages
+            .last()
+            .filter(|m| ui::role(m) == Some("assistant"))
+            .and_then(|m| m.pointer(&format!("/metadata/{DIRECT}")))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    /// Start a reply that is just `call`, for `resolve` to run, with no model request.
+    fn direct_step(&mut self, call: DirectCall) {
+        self.status(RunStatus::Streaming, None);
+        let at = now_ms();
+        let metadata = json!({ "createdAt": at, DIRECT: true });
+        self.op(Op::Push { message: json!({ "id": ui::new_id(), "role": "assistant", "parts": [], "metadata": metadata }) });
+        self.op(Op::PushPart { part: json!({ "type": "step-start", "at": at }) });
+        self.op(Op::PushPart {
+            part: json!({
+                "type": "dynamic-tool", "toolName": call.name, "toolCallId": format!("direct-{}", ui::new_id()),
+                "state": "input-available", "input": call.input,
+            }),
+        });
     }
 
     /// Stop at a step boundary for `Inbox::Pause`: messages sent meanwhile join
@@ -942,6 +1018,50 @@ mod tests {
         assert!(matches!(second.messages[1].parts[1], crate::Part::ToolResult { .. }));
         assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
         assert!(*host.saves.lock().unwrap() >= 2);
+    }
+
+    #[tokio::test]
+    async fn a_direct_call_runs_without_the_model_and_ends_with_its_result() {
+        let host = FakeHost::new(vec![]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let direct = DirectCall { name: "auto_tool".into(), input: json!({ "prompt": "a cat" }) };
+        let config = RunConfig { direct: Some(direct), ..config() };
+        let messages = run(&*host, vec![], user("a cat"), config, &mut rx, &CancellationToken::new()).await;
+
+        assert!(host.requests.lock().unwrap().is_empty());
+        assert_eq!(*host.executed.lock().unwrap(), ["auto_tool"]);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["metadata"][DIRECT], true);
+        let parts = ui::parts(&messages[1]);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[1]["input"]["prompt"], "a cat");
+        assert_eq!(parts[1]["output"], "ran auto_tool");
+        assert_eq!(host.statuses().last(), Some(&RunStatus::Ready));
+    }
+
+    #[tokio::test]
+    async fn a_direct_call_answers_a_regenerate_but_not_a_resume() {
+        let host = FakeHost::new(vec![vec![text("again")]]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let thread = vec![
+            json!({ "id": "u", "role": "user", "parts": [{ "type": "text", "text": "hi" }] }),
+            json!({ "id": "a", "role": "assistant", "parts": [{ "type": "text", "text": "hello" }] }),
+        ];
+        let direct = DirectCall { name: "auto_tool".into(), input: json!({}) };
+        let config = RunConfig { direct: Some(direct), ..config() };
+        // A regenerate drops the reply first, so the thread ends in the user message again.
+        let messages = run(&*host, thread.clone(), RunAction::Regenerate { message_id: None }, config.clone(), &mut rx, &CancellationToken::new()).await;
+        assert_eq!(*host.executed.lock().unwrap(), ["auto_tool"]);
+        assert!(host.requests.lock().unwrap().is_empty());
+        assert_eq!(messages.len(), 2);
+        // A resume of an ordinary reply doesn't turn into the direct call.
+        let host = FakeHost::new(vec![vec![text("again")]]);
+        let (_tx, mut rx) = mpsc::unbounded_channel();
+        let mut paused = thread;
+        paused[1]["metadata"] = json!({ PAUSED: true });
+        run(&*host, paused, RunAction::Resume, config, &mut rx, &CancellationToken::new()).await;
+        assert!(host.executed.lock().unwrap().is_empty());
+        assert_eq!(host.requests.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

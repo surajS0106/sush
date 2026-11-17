@@ -39,6 +39,7 @@ import { applyDoc, applyDocGone } from "@/lib/docs";
 import { applyNotebook, applyNotebookGone, isNotebookThread } from "@/lib/notebooks";
 import { applyReport, isReportThread, reportForThread, reportRunTools } from "@/lib/reports";
 import { expandSlash } from "@/lib/skills";
+import { directImageCall } from "@/lib/images";
 import {
   applySaved,
   createStore,
@@ -194,7 +195,7 @@ function onFrame(frame: RunFrame) {
       setToolRunning(frame.callId, frame.running);
       break;
     case "client-tool":
-      void runTool(frame.name, frame.input, frame.threadId).then((result) =>
+      void runTool(frame.name, frame.input, frame.threadId, frame.callId).then((result) =>
         api.toolResult(frame.callId, result).catch((e) => console.error("Could not return a tool result", e)),
       );
       break;
@@ -460,7 +461,15 @@ async function start(id: string, action: RunAction, messages: SushUIMessage[], a
   if (!thread) return;
   try {
     const base = runConfig(id, messages);
-    const config = adjust ? adjust(base) : base;
+    let config = adjust ? adjust(base) : base;
+    // A message sent in an image chat goes straight to the image model, as typed. A regenerate that
+    // asks for a change goes through the chat model, which reads the change.
+    // (A send's or steer's `messages` already end with the message sent.)
+    const asksChange = config.expansions !== base.expansions;
+    const answering =
+      action.type === "send" || action.type === "steer" ? messages : action.type === "regenerate" && !asksChange ? untilReply(messages, action.messageId) : null;
+    const direct = answering && directImageCall(answering);
+    if (direct) config = { ...config, direct };
     // Past the budget's limit, new requests wait; finishing a turn that's waiting on a tool call doesn't.
     const blocked = action.type === "respond" ? null : budgetBlock(config.providerId);
     if (blocked) throw new Error(blocked);
@@ -474,6 +483,13 @@ async function start(id: string, action: RunAction, messages: SushUIMessage[], a
     if (action.type === "steer") toast.error("Couldn’t send that message", { description: errorMessage(e) });
     else setView(id, (v) => ({ ...v, status: "error", error: errorMessage(e) }));
   }
+}
+
+/** The thread as a regenerate leaves it: up to the user message the reply answered. */
+function untilReply(messages: SushUIMessage[], messageId: string | null): SushUIMessage[] {
+  const at = messageId ? messages.findIndex((m) => m.id === messageId) : messages.findLastIndex((m) => m.role === "assistant");
+  if (at < 0) return messages;
+  return messages[at].role === "assistant" ? messages.slice(0, at) : messages.slice(0, at + 1);
 }
 
 const current = (id: string) => views.get().get(id)?.messages ?? saved(id).messages;

@@ -28,28 +28,37 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Docs you edit together with Sush, your Yammer meetings in chat, and pictures in any conversation.";
+export const UNRELEASED_SUMMARY = "Image chats: pick an image model and get just the picture, faster, sharpening as it draws.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
-  { kind: "improved", text: "Pictures Sush makes now say which model drew them, under the caption." },
-  { kind: "new", text: "OpenDyslexic is now a chat font, in Settings → General → Chat font. Its weighted letter shapes can make reading easier with dyslexia." },
-  { kind: "new", title: "Docs", text: "Ask for a plan, guide, write-up or playbook and Sush writes it as a doc that opens beside the chat. Edit it like Notion: type / for headings, to-dos, tables, quotes and diagrams, drag blocks by their handle, and select text to format it or ask Sush about it. Every change is kept as a version you can look back at or restore, and Sush sees your edits before it revises. Docs can hold flow charts: Sush draws them where a picture explains better, and the toolbar at the bottom of a doc draws one from the section you're in, or adds a table, checklist or toggle. Click the little Sushi beside the line you're on for three suggestions to improve it, and pick one to put it in. Share copies it so it pastes formatted into Notion, Google Docs or an email, or downloads it as Word, a web page or Markdown. All your docs are on the new Docs page." },
-  { kind: "new", title: "Your Yammer meetings", text: "If you use Yammer for meeting notes, Sush can now read your meetings: ask what was decided last week, what you promised someone, or for a follow-up email from yesterday's call, and Sush finds the meeting and answers from its notes and transcript. It's added under Connectors as Yammer once Yammer is up to date, reads your meetings on this computer without asking each time, and never changes them. Turn it off there whenever you like." },
-  { kind: "new", text: "Ask in Sush on a Yammer meeting opens a new chat here, ready to ask about that meeting." },
-  { kind: "new", title: "Meeting recipes", text: "With Yammer connected, six meeting recipes arrive as skills: /meeting-promises (what you said you'd do), /weekly-meeting-recap, /meeting-follow-up-email, /coach-me-on-a-call, /decision-log and /customer-pain-points. Answers link the meetings they draw on, and clicking one opens it in Yammer." },
-  { kind: "new", title: "After a meeting", text: "Workflows can now start when a Yammer meeting ends and its notes are written. The new Follow up after a meeting template pulls out your action items, drafts the follow-up email and puts it on your Board." },
-  { kind: "improved", text: "The Meeting prep automation template now brings in what you last discussed with each attendee, from your Yammer meetings when Yammer is connected." },
-  { kind: "improved", title: "Sushi TV", text: "While an image is being made, Sushi switches on an old wood-grain TV and paints you a picture. There may be something else on another channel." },
-  { kind: "improved", text: "Notebooks are now called Binders. Everything in them stays as it was." },
-  { kind: "improved", title: "Image models in the model picker", text: "The model picker lists image models in their own group at the bottom. Pick one and it draws your pictures, and the Image chip turns on (hover it to see which model). A chat that was set to an image model switches to your usual chat model and keeps that one for pictures, instead of failing." },
-  { kind: "new", title: "Create image", text: "Pick Create image from the + menu and an Image chip appears in the composer: everything you send is drawn as a picture until you remove it. Without the chip, asking for a picture draws it straight away, with no questions or planning first." },
-  { kind: "improved", title: "Settings → Images", text: "Shows at a glance whether images are on and which model draws them, tags the providers that can make images, and explains the ways to ask for one." },
-  { kind: "improved", title: "Images in any chat", text: "Ask for a picture in any chat and it appears right in the conversation, whichever model you're chatting with. Sush now picks an image model by itself from the providers you've added (OpenAI, xAI or OpenRouter), so there's nothing to set up. Settings → Images still lets you choose a different one, or turn it off. Image-only models no longer appear in the chat model list, since they can't chat." },
+  { kind: "improved", title: "Faster pictures", text: "Pick an image model in the model picker and the chat becomes an image chat: every message goes straight to the image model and the reply is just the picture, with no chat model writing a prompt first or a sentence after, until you pick a chat model again. Follow-ups like \"add snow\" change the last picture. Each picture shows what it cost, and clicking one opens it full size. OpenAI's image models now send a rough version that sharpens while they draw, and come back as smaller JPEGs. Choose how much detail they draw, from Low (fastest) to Max, beside the model picker in an image chat or in Settings → Images." },
+  { kind: "improved", title: "Sushi TV", text: "With OpenAI's image models, Sushi's TV now paints the real picture as its rough versions arrive." },
 ];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.11.0",
+    date: "2026-11-17",
+    summary: "Docs you edit together with Sush, your Yammer meetings in chat, and pictures in any conversation.",
+    changes: [
+      { kind: "improved", text: "Pictures Sush makes now say which model drew them, under the caption." },
+      { kind: "new", text: "OpenDyslexic is now a chat font, in Settings → General → Chat font. Its weighted letter shapes can make reading easier with dyslexia." },
+      { kind: "new", title: "Docs", text: "Ask for a plan, guide, write-up or playbook and Sush writes it as a doc that opens beside the chat. Edit it like Notion: type / for headings, to-dos, tables, quotes and diagrams, drag blocks by their handle, and select text to format it or ask Sush about it. Every change is kept as a version you can look back at or restore, and Sush sees your edits before it revises. Docs can hold flow charts: Sush draws them where a picture explains better, and the toolbar at the bottom of a doc draws one from the section you're in, or adds a table, checklist or toggle. Click the little Sushi beside the line you're on for three suggestions to improve it, and pick one to put it in. Share copies it so it pastes formatted into Notion, Google Docs or an email, or downloads it as Word, a web page or Markdown. All your docs are on the new Docs page." },
+      { kind: "new", title: "Your Yammer meetings", text: "If you use Yammer for meeting notes, Sush can now read your meetings: ask what was decided last week, what you promised someone, or for a follow-up email from yesterday's call, and Sush finds the meeting and answers from its notes and transcript. It's added under Connectors as Yammer once Yammer is up to date, reads your meetings on this computer without asking each time, and never changes them. Turn it off there whenever you like." },
+      { kind: "new", text: "Ask in Sush on a Yammer meeting opens a new chat here, ready to ask about that meeting." },
+      { kind: "new", title: "Meeting recipes", text: "With Yammer connected, six meeting recipes arrive as skills: /meeting-promises (what you said you'd do), /weekly-meeting-recap, /meeting-follow-up-email, /coach-me-on-a-call, /decision-log and /customer-pain-points. Answers link the meetings they draw on, and clicking one opens it in Yammer." },
+      { kind: "new", title: "After a meeting", text: "Workflows can now start when a Yammer meeting ends and its notes are written. The new Follow up after a meeting template pulls out your action items, drafts the follow-up email and puts it on your Board." },
+      { kind: "improved", text: "The Meeting prep automation template now brings in what you last discussed with each attendee, from your Yammer meetings when Yammer is connected." },
+      { kind: "improved", title: "Sushi TV", text: "While an image is being made, Sushi switches on an old wood-grain TV and paints you a picture. There may be something else on another channel." },
+      { kind: "improved", text: "Notebooks are now called Binders. Everything in them stays as it was." },
+      { kind: "improved", title: "Image models in the model picker", text: "The model picker lists image models in their own group at the bottom. Pick one and it draws your pictures, and the Image chip turns on (hover it to see which model). A chat that was set to an image model switches to your usual chat model and keeps that one for pictures, instead of failing." },
+      { kind: "new", title: "Create image", text: "Pick Create image from the + menu and an Image chip appears in the composer: everything you send is drawn as a picture until you remove it. Without the chip, asking for a picture draws it straight away, with no questions or planning first." },
+      { kind: "improved", title: "Settings → Images", text: "Shows at a glance whether images are on and which model draws them, tags the providers that can make images, and explains the ways to ask for one." },
+      { kind: "improved", title: "Images in any chat", text: "Ask for a picture in any chat and it appears right in the conversation, whichever model you're chatting with. Sush now picks an image model by itself from the providers you've added (OpenAI, xAI or OpenRouter), so there's nothing to set up. Settings → Images still lets you choose a different one, or turn it off. Image-only models no longer appear in the chat model list, since they can't chat." },
+    ],
+  },
   {
     version: "2.10.0",
     date: "2026-11-16",
