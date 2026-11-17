@@ -28,16 +28,23 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Image chats: pick an image model and get just the picture, faster, sharpening as it draws.";
+export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
-  { kind: "improved", title: "Faster pictures", text: "Pick an image model in the model picker and the chat becomes an image chat: every message goes straight to the image model and the reply is just the picture, with no chat model writing a prompt first or a sentence after, until you pick a chat model again. Follow-ups like \"add snow\" change the last picture. Each picture shows what it cost, and clicking one opens it full size. OpenAI's image models now send a rough version that sharpens while they draw, and come back as smaller JPEGs. Choose how much detail they draw, from Low (fastest) to Max, beside the model picker in an image chat or in Settings → Images." },
-  { kind: "improved", title: "Sushi TV", text: "With OpenAI's image models, Sushi's TV now paints the real picture as its rough versions arrive." },
 ];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.12.0",
+    date: "2026-11-17",
+    summary: "Image chats: pick an image model and get just the picture, faster, sharpening as it draws.",
+    changes: [
+      { kind: "improved", title: "Faster pictures", text: "Pick an image model in the model picker and the chat becomes an image chat: every message goes straight to the image model and the reply is just the picture, with no chat model writing a prompt first or a sentence after, until you pick a chat model again. Follow-ups like \"add snow\" change the last picture. Each picture shows what it cost, and clicking one opens it full size. OpenAI's image models now send a rough version that sharpens while they draw, and come back as smaller JPEGs. Choose how much detail they draw, from Low (fastest) to Max, beside the model picker in an image chat or in Settings → Images." },
+      { kind: "improved", title: "Sushi TV", text: "With OpenAI's image models, Sushi's TV now paints the real picture as its rough versions arrive." },
+    ],
+  },
   {
     version: "2.11.0",
     date: "2026-11-17",
