@@ -28,7 +28,7 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Citations in Binder answers work again.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
