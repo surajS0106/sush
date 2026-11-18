@@ -28,19 +28,25 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Edit Word files right from the chat, and talk with Sushi in voice mode.";
+export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [
-  { kind: "improved", text: "Voice mode has an input sensitivity setting, like Discord's: turn off Automatic in Settings → Voice mode and drag the line above your room's noise, so it stops cutting in while you talk." },
-  { kind: "new", text: "Voice mode can show Sushi instead of the orb: it talks along with the answer, leans in while you speak and ponders while it thinks. Pick it in Settings → Voice mode → In a call." },
-  { kind: "fixed", text: "Attached Word, PowerPoint and Excel files now reach the model: Sush reads their text, headings, lists and tables, so you can ask about them." },
-  { kind: "new", title: "Edit Word files", text: "Click an attached Word file to see it beside the chat, page by page, laid out exactly as Word prints it (using Microsoft Word, or LibreOffice, on your computer). Ask for changes, like adding a new job to your resume, and Sush edits the file itself, keeping its fonts, bullets and layout. Each change is a new version: pick any version from the menu at the top of the panel, and download the one you want." },
-  { kind: "fixed", text: "When Sush asks you a question, picking an option no longer sends your answer straight away. Change your pick or add a note, then press Send (or Continue)." },
-];
+export const UNRELEASED: Change[] = [];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.14.0",
+    date: "2026-11-19",
+    summary: "Edit Word files right from the chat, and talk with Sushi in voice mode.",
+    changes: [
+      { kind: "improved", text: "Voice mode has an input sensitivity setting, like Discord's: turn off Automatic in Settings → Voice mode and drag the line above your room's noise, so it stops cutting in while you talk." },
+      { kind: "new", text: "Voice mode can show Sushi instead of the orb: it talks along with the answer, leans in while you speak and ponders while it thinks. Pick it in Settings → Voice mode → In a call." },
+      { kind: "fixed", text: "Attached Word, PowerPoint and Excel files now reach the model: Sush reads their text, headings, lists and tables, so you can ask about them." },
+      { kind: "new", title: "Edit Word files", text: "Click an attached Word file to see it beside the chat, page by page, laid out exactly as Word prints it (using Microsoft Word, or LibreOffice, on your computer). Ask for changes, like adding a new job to your resume, and Sush edits the file itself, keeping its fonts, bullets and layout. Each change is a new version: pick any version from the menu at the top of the panel, and download the one you want." },
+      { kind: "fixed", text: "When Sush asks you a question, picking an option no longer sends your answer straight away. Change your pick or add a note, then press Send (or Continue)." },
+    ],
+  },
   {
     version: "2.13.0",
     date: "2026-11-19",
