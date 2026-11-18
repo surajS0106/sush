@@ -58,16 +58,19 @@ claude -p --input-format stream-json --output-format stream-json --verbose
 - Effort goes to the CLI as `--effort` for Claude, or `effort` on `turn/start` for Codex. Neither CLI can switch thinking off: it decides when to think, so the composer offers effort levels only (`capsFor` in `lib/reasoning.ts`).
 - Each reply records the model the CLI actually ran (`message.model`), not the alias picked.
 
+**Reports and notebooks:** these need Sush's own tools (`report_findings`, `wiki_write_page`, `git_diff`, the notebook's source tools, `studio_save`, and a pull request review's connector tools). `src-tauri/src/engine_bridge.rs` serves them as an MCP server: streamable HTTP with JSON replies only, on 127.0.0.1, started on first use. Each run registers its tools under a random bearer token for as long as it runs, and a call runs through that run's `RunHost::execute`, as on Sush's loop. Requests carrying an `Origin` are refused. The CLI gets the server via `--mcp-config` (Claude) or `config.mcp_servers.sush` on `thread/start` (Codex), and the session's instructions via `--append-system-prompt` or `developerInstructions`, plus `engines::BRIDGE_NOTE`. Bridge tools show as Sush's own cards (`mcp__sush__<tool>` and Codex's `sush` server are unprefixed). Those that never ask on Sush's loop are allowed at once; the rest ask on their card. These sessions are locked (`Context::locked`): a report runs read-only in its folder, a notebook or Studio output in an empty folder of its own. Claude runs in `default` mode, not `plan` (which would hold the bridge back), and any other permission prompt is refused without asking. Codex gets a `read-only` sandbox, and its approval requests are declined. **The Codex side (`config`, `developerInstructions`, `ephemeral`) hasn't been checked against a live Codex.**
+
 **Sessions:** each reply records the CLI's session id (`metadata.engineSession`), and the next message resumes it. A regenerate, an edited message, or replies from another model in between start a new session, with the earlier conversation quoted as text.
 
 **Cards:** CLI tools map to Sush's cards where one fits: `Bash` becomes `shell_run`, `Edit` becomes `fs_edit`, `TodoWrite` becomes `todo_write`, and Codex's `commandExecution` and `fileChange` map the same way. Anything else shows as `claude-code__<tool>` or `codex__<tool>`. Commands are marked `unsandboxed` because they run under the CLI's rules, not Sush's sandbox. That also stops shared-session guests from approving them.
 
 ## Limits
 
-- Cowork only: the engine needs a folder. Reports, notebooks, incognito chats and one-shot calls (memory, compaction) stay on Sush's own models.
+- A Cowork session runs the engine in its folder. A plain chat runs it in an empty folder of the chat's own (`engine-chats/<thread>` in the app data dir, removed with the chat), with edits and commands asking first; the UI notes this under the composer. One-shot calls (memory, compaction, titles) stay on Sush's own models.
+- Incognito chats run with `--no-session-persistence` (Claude) or `ephemeral: true` on `thread/start` (Codex), so the CLI keeps no record. Nothing can be resumed, so every turn starts a new session with the conversation quoted as text (`Context::ephemeral`).
 - Sush doesn't checkpoint an engine's edits, so Undo on a turn has nothing to restore. Use git, or the CLI's own rewind.
 - Attachments other than folders aren't passed on yet. The prompt notes them instead.
-- Sush's memory, skills, connectors and system prompt aren't given to the engine. It uses its own (CLAUDE.md, AGENTS.md, its MCP config).
+- Sush's memory, skills, connectors and system prompt aren't given to the engine in chats and Cowork. It uses its own (CLAUDE.md, AGENTS.md, its MCP config). Reports and notebooks get their own instructions and tools through the bridge.
 
 ## Trying it
 

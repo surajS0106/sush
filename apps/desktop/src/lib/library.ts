@@ -379,6 +379,7 @@ export type SettingsSection =
   | "providers"
   | "usage"
   | "speech"
+  | "voice"
   | "images"
   | "maps"
   | "flights"

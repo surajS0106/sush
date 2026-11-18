@@ -287,8 +287,8 @@ function ProviderForm({ initial, isNew, onSaved, onDeleted }: ProviderFormProps)
         {!isNew ? (
           <Button
             type="button"
-            variant="ghost"
-            className="h-10 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            variant="destructive"
+            className="h-10"
             disabled={busy}
             onClick={remove}
           >

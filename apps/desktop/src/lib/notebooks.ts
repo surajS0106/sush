@@ -50,6 +50,7 @@ export const applyNotebook = upsert;
 export const applyNotebookGone = remove;
 
 export const useNotebooks = () => useSyncExternalStore(notebooks.subscribe, notebooks.get);
+export const getNotebooks = () => notebooks.get();
 export const getNotebook = (id: string) => notebooks.get().find((n) => n.id === id);
 
 const threadSets = new WeakMap<Notebook[], ReadonlySet<string>>();

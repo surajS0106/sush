@@ -144,7 +144,8 @@ function cronDays(field: string): number[] | null {
   return out;
 }
 
-function parseSchedule(i: Record<string, unknown>): Schedule | string {
+/** A schedule from frequency, time and days, read as leniently as `automation_save` does; a string says what is wrong. */
+export function parseSchedule(i: Record<string, unknown>): Schedule | string {
   // Models also send the whole schedule as `schedule` or `cron`.
   const text = [i.frequency, i.schedule, i.cron, i.repeat].map(str).filter(Boolean).join(" ");
   if (!text) return '`frequency` is missing (one of manual, hourly, daily, weekdays, weekly)';

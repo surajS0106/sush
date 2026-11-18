@@ -78,7 +78,7 @@ const plural = (n: number, one: string, many: string) => (n === 1 ? one : `${n} 
 
 /** "Read 3 files, searched twice and ran a command". */
 export function activitySummary(parts: Part[]): { text: string; failed: number } {
-  const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, plan: 0, browser: 0, sources: 0, crm: 0, other: 0 };
+  const count = { read: 0, search: 0, edit: 0, command: 0, commit: 0, merge: 0, branch: 0, memory: 0, chats: 0, skill: 0, plan: 0, browser: 0, sources: 0, board: 0, app: 0, crm: 0, other: 0 };
   let failed = 0;
   for (const p of parts) {
     if (p.type !== "dynamic-tool" || p.toolName === TOOLS_LOAD) continue;
@@ -99,6 +99,8 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
       else if (kind === "browser") count.browser++;
       else if (kind === "notebook") count.sources++;
       else if (kind === "todos") count.plan++;
+      else if (kind === "board") count.board++;
+      else if (kind === "app") count.app++;
       else if (kind === "crm") count.crm++;
       else count.other++;
     }
@@ -117,6 +119,8 @@ export function activitySummary(parts: Part[]): { text: string; failed: number }
     count.skill && `used ${plural(count.skill, "a skill", "skills")}`,
     count.browser && "used the browser",
     count.sources && `searched the sources${count.sources > 1 ? ` ${count.sources} times` : ""}`,
+    count.board && "worked on the Board",
+    count.app && `used ${plural(count.app, "an app tool", "app tools")}`,
     count.crm && "worked in the CRM",
     count.other && `used ${plural(count.other, "a tool", "tools")}`,
   ].filter((s): s is string => !!s);

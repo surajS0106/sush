@@ -13,20 +13,21 @@
 //! - Permission prompts (`--permission-prompt-tool stdio`) arrive as
 //!   `can_use_tool` control requests, which the call's card answers.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Duration;
 
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::{claude_tool, effort, effort_str, prompt_text, Context, EngineModel, Ending, Kind, Proc, Thread};
+use super::{claude_tool, effort, effort_str, prompt_text, Context, EngineModel, Ending, Kind, Proc, Thread, CLAUDE_BRIDGE_PREFIX};
 use crate::agent::run::{Author, Inbox, ToolResponse, INTERRUPTED};
 use crate::workspace::{Access, EditApproval};
 
 const ASK_IN_REPLY: &str =
     "Sush can't show this question. Ask it in your reply instead, then end your turn so the user can answer.";
 const READ_ONLY: &str = "This folder is read-only in Sush, so nothing can be changed. Give your plan in your reply instead.";
+const LOCKED: &str = "Not available in this session: you can read, and call the tools of the \"sush\" MCP server. Nothing can be changed or run.";
 
 #[derive(Clone, Copy)]
 enum Block {
@@ -54,6 +55,10 @@ struct Claude {
     interrupted: bool,
     error: Option<String>,
     read_only: bool,
+    /// Reports and notebooks (`Context::locked`): every prompt but the bridge's is refused.
+    locked: bool,
+    /// Bridge tools that run without asking, by the name Claude Code gives them.
+    auto: HashSet<String>,
     seq: u64,
 }
 
@@ -65,7 +70,9 @@ pub(super) async fn drive(
     inbox: &mut mpsc::UnboundedReceiver<Inbox>,
     cancel: &CancellationToken,
 ) -> Result<Ending, String> {
+    // A locked session reads and calls Sush's tools; plan mode would hold those back too.
     let mode = match (ctx.access, ctx.approval) {
+        _ if ctx.locked => "default",
         (Access::ReadOnly, _) => "plan",
         (_, EditApproval::AutoEdits) => "acceptEdits",
         (_, EditApproval::Ask) => "default",
@@ -95,6 +102,15 @@ pub(super) async fn drive(
     if let Some(id) = &session {
         args.extend(["--resume".to_string(), id.clone()]);
     }
+    if let Some(system) = ctx.system.as_ref().filter(|s| !s.trim().is_empty()) {
+        args.extend(["--append-system-prompt".to_string(), system.clone()]);
+    }
+    if let Some(config) = ctx.claude_mcp_config() {
+        args.extend(["--mcp-config".to_string(), config]);
+    }
+    if ctx.ephemeral {
+        args.push("--no-session-persistence".to_string());
+    }
     let mut c = Claude {
         proc: Proc::spawn(Kind::ClaudeCode, &args, &ctx.cwd)?,
         echoes: VecDeque::new(),
@@ -107,6 +123,8 @@ pub(super) async fn drive(
         interrupted: false,
         error: None,
         read_only: ctx.access == Access::ReadOnly,
+        locked: ctx.locked,
+        auto: ctx.bridge.iter().flat_map(|b| b.auto.iter().map(|n| format!("{CLAUDE_BRIDGE_PREFIX}{n}"))).collect(),
         seq: 0,
     };
     let result = c.go(t, &prompt, inbox, cancel).await;
@@ -412,8 +430,15 @@ impl Claude {
         if tool == "AskUserQuestion" {
             return self.reply(&request_id, json!({ "behavior": "deny", "message": ASK_IN_REPLY })).await;
         }
-        if tool == "ExitPlanMode" && self.read_only {
+        if tool == "ExitPlanMode" && self.read_only && !self.locked {
             return self.reply(&request_id, json!({ "behavior": "deny", "message": READ_ONLY })).await;
+        }
+        // Sush's own tools that never ask on its loop don't ask here either.
+        if self.auto.contains(tool) {
+            return self.reply(&request_id, json!({ "behavior": "allow", "updatedInput": input })).await;
+        }
+        if self.locked && !tool.starts_with(CLAUDE_BRIDGE_PREFIX) {
+            return self.reply(&request_id, json!({ "behavior": "deny", "message": LOCKED })).await;
         }
         if !t.has_call(&id) {
             let (name, shown) = claude_tool(tool, &input, &t.cwd);

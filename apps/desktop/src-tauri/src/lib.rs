@@ -6,6 +6,7 @@ mod connector_auth;
 mod connectors;
 mod crm;
 mod docs;
+mod engine_bridge;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
@@ -29,6 +30,7 @@ mod state;
 mod store;
 mod terminal;
 mod topic;
+mod voice;
 mod web;
 mod weather;
 mod whisper;
@@ -83,6 +85,7 @@ pub fn run() {
             });
             app.manage(whisper::Whisper::default());
             app.manage(browser::Browser::default());
+            app.manage(voice::VoiceSessions::default());
             #[cfg(not(debug_assertions))]
             {
                 let server = auth_server::AuthServer::default();
@@ -265,6 +268,17 @@ pub fn run() {
             connector_auth::connector_save_secrets,
             speech::transcribe,
             speech::tts_speak,
+            voice::voice_keys,
+            voice::voice_key_set,
+            voice::voice_key_delete,
+            voice::voice_catalog,
+            voice::voice_speak,
+            voice::voice_transcribe,
+            voice::voice_think,
+            voice::voice_realtime_start,
+            voice::voice_realtime_audio,
+            voice::voice_realtime_interrupt,
+            voice::voice_realtime_end,
             images::image_generate,
             maps::maps_key_status,
             maps::maps_key_set,

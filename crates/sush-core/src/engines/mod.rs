@@ -300,13 +300,59 @@ pub struct Context {
     pub access: Access,
     pub approval: EditApproval,
     pub commands: Commands,
+    /// Sush's instructions for this session (a report's or a notebook's),
+    /// added to the CLI's own system prompt.
+    pub system: Option<String>,
+    /// Sush's own tools for this session, which the CLI reaches over MCP.
+    pub bridge: Option<Bridge>,
+    /// Incognito: the CLI keeps no record of the session, so every turn
+    /// starts afresh with the conversation so far as text.
+    pub ephemeral: bool,
+    /// Reports and notebooks: the CLI only reads and calls Sush's tools.
+    /// Anything else it asks for is refused without asking the user.
+    pub locked: bool,
 }
+
+/// Sush's tools as an MCP server on this machine (the app's `engine_bridge`):
+/// streamable HTTP at `url`, with `token` as the bearer for this run only.
+#[derive(Debug, Clone)]
+pub struct Bridge {
+    pub url: String,
+    pub token: String,
+    /// Tools that run without asking on Sush's own loop, so they do here too.
+    pub auto: HashSet<String>,
+}
+
+/// The bridge's MCP server name, as both CLIs prefix its tools.
+pub const BRIDGE_SERVER: &str = "sush";
+/// How Claude Code names the bridge's tools: `mcp__sush__<tool>`.
+pub(crate) const CLAUDE_BRIDGE_PREFIX: &str = "mcp__sush__";
+
+/// Added to Sush's instructions when the CLI reaches its tools over the bridge.
+pub const BRIDGE_NOTE: &str = "The Sush tools these instructions name (and only those) are available to you as tools of the MCP server \"sush\" \
+(in Claude Code, `mcp__sush__<name>`). Call them by that name.";
 
 impl Context {
     pub fn new(workspace: &Workspace) -> Self {
         // CLIs written in Node don't take Windows' `\\?\` form of a path.
         let root = workspace.root.strip_prefix(r"\\?\").unwrap_or(&workspace.root);
-        Context { cwd: PathBuf::from(root), access: workspace.access, approval: workspace.approval, commands: workspace.commands }
+        Context {
+            cwd: PathBuf::from(root),
+            access: workspace.access,
+            approval: workspace.approval,
+            commands: workspace.commands,
+            system: None,
+            bridge: None,
+            ephemeral: false,
+            locked: false,
+        }
+    }
+
+    /// The MCP config Claude Code takes as `--mcp-config` (a JSON string).
+    pub(crate) fn claude_mcp_config(&self) -> Option<String> {
+        let b = self.bridge.as_ref()?;
+        let server = json!({ "type": "http", "url": b.url, "headers": { "Authorization": format!("Bearer {}", b.token) } });
+        Some(json!({ "mcpServers": { BRIDGE_SERVER: server } }).to_string())
     }
 }
 
@@ -387,7 +433,7 @@ pub async fn run(
     }
 
     let last = t.messages.len() - 1;
-    let session = if fresh { None } else { resumable_session(kind, &t.messages[..last]) };
+    let session = if fresh || ctx.ephemeral { None } else { resumable_session(kind, &t.messages[..last]) };
     let mut prompt = prompt_text(&t.messages[last], &config.expansions);
     if session.is_none() {
         if let Some(history) = history(&t.messages[..last]) {
@@ -549,6 +595,10 @@ pub(crate) fn relative(path: Option<&str>, cwd: &Path) -> Value {
 
 /// One of Claude Code's tools as the card Sush shows for it.
 pub(crate) fn claude_tool(name: &str, input: &Value, cwd: &Path) -> (String, Value) {
+    // Sush's own tools over the bridge show as on Sush's loop.
+    if let Some(own) = name.strip_prefix(CLAUDE_BRIDGE_PREFIX) {
+        return (own.to_string(), input.clone());
+    }
     let path = |key: &str| relative(input.get(key).and_then(Value::as_str), cwd);
     let s = |key: &str| input.get(key).cloned().unwrap_or(Value::Null);
     let (name, input) = match name {

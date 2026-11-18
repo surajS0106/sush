@@ -53,6 +53,7 @@ export async function initReports() {
 export const applyReport = upsert;
 
 export const useReports = () => useSyncExternalStore(reports.subscribe, reports.get);
+export const getReports = () => reports.get();
 
 const threadSets = new WeakMap<Report[], ReadonlySet<string>>();
 

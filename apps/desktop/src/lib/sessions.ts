@@ -48,6 +48,7 @@ import {
   getSubagentThread,
   getTarget,
   subagentThreadIds,
+  saveMessages,
   showMessages,
   subscribeConversations,
   threadMeta,
@@ -531,6 +532,17 @@ export function sendMessage(id: string, text: string, files: FileUIPart[], instr
     return;
   }
   send(id, [...(queues.get().get(id) ?? NONE), sent]);
+}
+
+/**
+ * Add a voice conversation's finished turns to the thread, as if they had been
+ * typed and answered, so the chat carries on from them in text or by voice.
+ */
+export function appendTurns(id: string, turns: SushUIMessage[]) {
+  if (turns.length === 0 || isSharedThread(id)) return;
+  const next = [...current(id), ...turns];
+  setView(id, (v) => ({ ...v, messages: next }));
+  saveMessages(id, next);
 }
 
 /**

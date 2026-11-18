@@ -749,9 +749,11 @@ body.doc-table-dragging, body.doc-table-dragging * { cursor: grabbing !important
 .doc-editor [data-content-type="table"] .tableWrapper { padding-left: 14px; }
 .doc-editor .bn-block-content[data-content-type="table"] { font-size: 14px; line-height: 1.5; }
 .doc-editor .bn-block-content[data-content-type="quote"] { border-left-color: var(--foreground); }
-/* Code blocks: BlockNote paints them near-black in both themes. Here they're a creamy
-   off-white in light mode and the theme's muted surface in dark mode. */
-.doc-editor { --doc-code-bg: #fffefb; --doc-code-border: #efebe3; }
+/* Code blocks: BlockNote paints them near-black in both themes. Here they're a flat, borderless
+   fill like Notion's in light mode: a near-neutral grey with only a trace of the page's hue
+   (a warm grey read as beige, the theme's muted read as blue-green), and the muted surface in
+   dark mode. */
+.doc-editor { --doc-code-bg: oklch(0.966 0.002 190); --doc-code-border: transparent; }
 /* Dark: just above the page (three parts page to one part muted), so the block reads as a
    deep well rather than a grey slab; the border keeps its edge. */
 .dark .doc-editor { --doc-code-bg: color-mix(in oklch, var(--background) 75%, var(--muted)); --doc-code-border: var(--border); }
@@ -838,3 +840,18 @@ button.doc-code-lang:hover, .doc-code-copy:hover { background: var(--accent); co
 .dgm-items { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 10px; }
 .dgm-chip { max-width: 100%; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; }
 .dgm-edge-label { position: absolute; font-size: 11px; color: var(--muted-foreground); white-space: nowrap; pointer-events: none; }
+
+/* Voice orbs (components/glass-orb.tsx): a slow bob, and a reflection that fades as the orb rises. */
+@keyframes orb-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7%); }
+}
+@keyframes orb-reflect {
+  0%, 100% { opacity: 0.35; transform: translateX(-50%) scaleX(1); }
+  50% { opacity: 0.2; transform: translateX(-50%) scaleX(0.88); }
+}
+.orb-float { animation: orb-float 4.2s ease-in-out infinite; }
+.orb-reflect { animation: orb-reflect 4.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .orb-float, .orb-reflect { animation: none; }
+}

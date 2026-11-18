@@ -39,6 +39,7 @@ pub async fn thread_delete(app: tauri::AppHandle, state: State<'_, AppState>, id
     // A run still going would save the thread again; so would its sub-agents'.
     state.runs.stop_with_agents(&id).await;
     state.runs.forget(&id);
+    crate::runs::forget_chat_folder(&app, &id);
     let store = state.store.clone();
     blocking(move || Ok(store.delete_thread(&id)?)).await
 }

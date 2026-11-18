@@ -58,6 +58,9 @@ function match(table: [RegExp, string][], ...haystacks: string[]) {
   return undefined;
 }
 
+/** A bundled logo by its file name (`openai`, `xai`, `elevenlabs`). */
+export const logoBySlug = (slug: string): string | undefined => LOGOS[slug];
+
 export function providerLogo(provider: { id: string; name: string; baseUrl: string }) {
   return match(PROVIDERS, provider.id, provider.name, provider.baseUrl);
 }

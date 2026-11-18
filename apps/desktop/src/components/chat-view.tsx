@@ -8,6 +8,7 @@ import {
   FolderKanbanIcon,
   GhostIcon,
   HistoryIcon,
+  InfoIcon,
   NotebookPenIcon,
   PauseIcon,
   PencilIcon,
@@ -27,6 +28,8 @@ import {
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import { Message, MessageAction, MessageActions, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { VoiceDock, VoiceLines } from "@/components/voice-mode";
+import { useVoiceOpen } from "@/lib/voice-mode";
 import { usePromptInputController, type PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Greeting } from "@/components/greeting";
@@ -107,7 +110,7 @@ import { saveReplyToNote } from "@/lib/notebook-studio";
 import { forkConversation, setConversationWorkspace, setTarget, type Conversation as StoredConversation } from "@/lib/store";
 import { InstamartThread, instamartThread } from "@/lib/instamart-cart";
 import { canWrite, mayAnswer, safeImage, useShare, WatchingHost, type Watching } from "@/lib/share";
-import { errorMessage, isEngine, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
+import { ENGINE_IDS, errorMessage, isEngine, type RunStatus, type ShareView, type Workspace } from "@/lib/tauri";
 import { storeAttachments, type ModelTarget, type SushUIMessage } from "@/lib/transport";
 import { formatTokens, formatTokensExact } from "@/lib/usage";
 import { cn } from "@/lib/utils";
@@ -336,12 +339,16 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // An incognito chat's composer has a dashed outline, as in a private window.
   // In someone's shared session, a driver or collaborator writes to the host;
   // a viewer sees whose session it is instead.
+  // Voice mode runs inside the chat: its dock takes the composer's place.
+  const voiceOn = useVoiceOpen() === id && !watching;
   const composer = watching ? (
     // Sushi stands on a guest's composer too, acting out the host's run.
     <div className="relative">
       <Mascot busy={busy} stage={busy ? replyStage(status, messages) : undefined} draft="" className="absolute right-10 bottom-[calc(100%+var(--tray-lift,0px))] z-10 -mb-px transition-[bottom] duration-300 ease-out" />
       {canWrite(watching.role) && watching.status === "live" ? <GuestComposer share={watching} status={runStatus} /> : <WatchingBar share={watching} />}
     </div>
+  ) : voiceOn ? (
+    <VoiceDock conversationId={id} target={target} />
   ) : (
     <div className={cn(incognito && "[&_[data-slot=input-group]]:border-dashed [&_[data-slot=input-group]]:border-foreground/30")}>
       <Composer
@@ -357,6 +364,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
         conversationId={id}
         workspaceId={workspaceId}
       />
+      {!workspaceId && isEngine(target?.providerId) && !isNotebookThread(id) && <EngineChatNotice providerId={target!.providerId} incognito={incognito} />}
     </div>
   );
 
@@ -381,7 +389,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     );
   }
 
-  if (messages.length === 0) {
+  // A call started from an empty chat shows its lines in the transcript layout below.
+  if (messages.length === 0 && !voiceOn) {
     const connect = (
       <div className={cn("flex flex-col gap-3", workspaceId ? "items-start" : "mb-7 items-center text-center")}>
         <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight">
@@ -519,6 +528,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               })()}
             />
           ))}
+          <VoiceLines threadId={id} />
           {resumable && (
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <PauseIcon className="size-3.5" />
@@ -1059,6 +1069,7 @@ const ChatMessage = memo(function ChatMessage({
             onResult={(result) => onToolResult(part.toolCallId, result)}
             onApprove={() => onApprove(part.toolCallId)}
             answer={message.metadata?.sushAnswers?.[part.toolCallId]}
+            threadId={threadId}
           />
         );
       case "data-web":
@@ -1264,5 +1275,25 @@ function MessageStats({ model, logo, inputTokens, outputTokens, cachedTokens, co
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * Under the composer when Claude Code or Codex answers a plain chat: there it
+ * works in an empty folder of the chat's own (`chat_folder` in `runs.rs`), not
+ * the user's project, and without Sush's tools. In an incognito chat it keeps
+ * no record of its own (`Context::ephemeral`).
+ */
+function EngineChatNotice({ providerId, incognito }: { providerId: string; incognito: boolean }) {
+  const name = providerId === ENGINE_IDS.codex ? "Codex" : "Claude Code";
+  return (
+    <p role="status" className="mt-2 flex items-start gap-1.5 px-3 text-xs text-pretty text-muted-foreground">
+      <InfoIcon className="mt-px size-3.5 shrink-0" />
+      <span>
+        In a chat, {name} works in an empty scratch folder and asks before any edit or command. It doesn’t use Sush’s memory, connectors or web
+        search. To work on your project’s files, switch to Cowork.
+        {incognito && ` ${name} keeps no record of this chat either, so each reply rereads the conversation so far.`}
+      </span>
+    </p>
   );
 }

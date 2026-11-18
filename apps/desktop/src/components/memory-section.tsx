@@ -74,7 +74,7 @@ export function MemorySection() {
             title="Import memory from other AI providers"
             description="Bring context from another assistant. You'll get a prompt to run there, then paste its reply here."
           >
-            <Button variant="secondary" size="sm" onClick={() => setImporting(true)}>
+            <Button variant="outline" size="sm" onClick={() => setImporting(true)}>
               Start import
             </Button>
           </Setting>
@@ -165,9 +165,8 @@ function DeleteAll() {
   return (
     <div className="flex items-center gap-2">
       <Button
-        variant="ghost"
+        variant="destructive"
         size="sm"
-        className="text-destructive hover:text-destructive"
         onClick={() => {
           if (!confirming) return setConfirming(true);
           clearMemory();
@@ -247,8 +246,7 @@ function MemoryEditor({ editing, onClose }: { editing: Editing; onClose: () => v
       <div className="flex justify-between gap-2 border-t py-3 pr-6 pl-8">
         {existing ? (
           <Button
-            variant="ghost"
-            className="text-destructive hover:text-destructive"
+            variant="destructive"
             onClick={() => {
               deleteMemory(existing.path);
               onClose();

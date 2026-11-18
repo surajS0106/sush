@@ -19,7 +19,7 @@ use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use super::{effort, effort_str, prompt_text, relative, Context, EngineModel, Ending, Kind, Proc, Thread};
+use super::{effort, effort_str, prompt_text, relative, Context, EngineModel, Ending, Kind, Proc, Thread, BRIDGE_SERVER};
 use crate::agent::run::{Author, Inbox, ToolResponse, INTERRUPTED};
 use crate::workspace::{tools as ws_tools, Access, Commands, EditApproval};
 
@@ -47,6 +47,8 @@ struct Codex {
     turn_over: bool,
     plans: u64,
     error: Option<String>,
+    /// Reports and notebooks (`Context::locked`): commands and edits are declined without asking.
+    locked: bool,
 }
 
 pub(super) async fn drive(
@@ -71,6 +73,7 @@ pub(super) async fn drive(
         turn_over: false,
         plans: 0,
         error: None,
+        locked: ctx.locked,
     };
     let result = tokio::select! {
         biased;
@@ -236,6 +239,18 @@ impl Codex {
         params.insert("sandbox".into(), json!(sandbox));
         if !t.model.is_empty() && t.model != "default" {
             params.insert("model".into(), json!(t.model));
+        }
+        if let Some(system) = ctx.system.as_ref().filter(|s| !s.trim().is_empty()) {
+            params.insert("developerInstructions".into(), json!(system));
+        }
+        if let Some(b) = &ctx.bridge {
+            // Config overrides for this session only: the bridge as a streamable HTTP server.
+            let server = json!({ "url": b.url, "http_headers": { "Authorization": format!("Bearer {}", b.token) } });
+            params.insert("config".into(), json!({ "mcp_servers": { BRIDGE_SERVER: server } }));
+        }
+        if ctx.ephemeral {
+            // Incognito: Codex keeps no rollout of the session.
+            params.insert("ephemeral".into(), json!(true));
         }
         let resumed = match &session {
             Some(id) => {
@@ -406,6 +421,9 @@ impl Codex {
                 return self.proc.send(&json!({ "id": rpc_id, "error": error })).await;
             }
         };
+        if self.locked {
+            return self.decide(&Pending { rpc_id, v1 }, false).await;
+        }
         if !t.has_call(&call) {
             if method.contains("ommand") {
                 let command = command_text(p.get("command").unwrap_or(&Value::Null));
@@ -541,7 +559,11 @@ impl Codex {
             }
             "mcpToolCall" => {
                 if !t.has_call(&id) {
-                    let name = format!("{}{}.{}", Kind::Codex.tool_prefix(), s(item, "server"), s(item, "tool"));
+                    // Sush's own tools over the bridge show as on Sush's loop.
+                    let name = match s(item, "server") {
+                        BRIDGE_SERVER => s(item, "tool").to_string(),
+                        server => format!("{}{server}.{}", Kind::Codex.tool_prefix(), s(item, "tool")),
+                    };
                     t.tool_ready(&id, &name, item.get("arguments").cloned().unwrap_or_else(|| json!({})));
                 }
                 if done {

@@ -273,6 +273,27 @@ export async function saveForAnotherWindow(id: string) {
 }
 
 /** A fresh incognito chat. */
+/**
+ * Add messages made outside a run (a voice conversation's turns) and write the
+ * thread through. An untitled chat is named after its first words.
+ */
+export function saveMessages(id: string, messages: SushUIMessage[]) {
+  const next = update(id, (c) => {
+    const first = c.title === "New chat" ? firstWords(messages) : null;
+    return { ...c, messages, updatedAt: Date.now(), ...(first ? { title: first } : {}) };
+  });
+  if (!next) return;
+  share({ type: "upsert", conversation: next });
+  if (!next.incognito) persist(() => api.threadSave(meta(next), next.messages));
+}
+
+function firstWords(messages: SushUIMessage[]): string | null {
+  const user = messages.find((m) => m.role === "user");
+  const text = user?.parts.flatMap((p) => (p.type === "text" ? [p.text] : [])).join(" ").trim();
+  if (!text) return null;
+  return text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text;
+}
+
 export const createIncognitoConversation = () => createConversation(undefined, "New chat", { incognito: true });
 
 /** Replace one conversation in memory; returns the new value, or null if it's gone. */

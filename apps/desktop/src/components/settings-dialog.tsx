@@ -3,6 +3,7 @@
 
 import { ConfettiIcon } from "@phosphor-icons/react";
 import {
+  AudioLinesIcon,
   BlocksIcon,
   BrainIcon,
   CircleUserIcon,
@@ -41,6 +42,7 @@ import { SearchSection } from "@/components/search-section";
 import { SharingSection } from "@/components/sharing-section";
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { SpeechSection } from "@/components/speech-section";
+import { VoiceSection } from "@/components/voice-section";
 import { SushiSection } from "@/components/sushi-section";
 import { UsageSection } from "@/components/usage-section";
 import { Button } from "@/components/ui/button";
@@ -86,6 +88,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
       { id: "search", label: "Search", icon: GlobeIcon, keywords: "web search internet browse fetch pages research ollama api key sources citations" },
       { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
+      { id: "voice", label: "Voice mode", icon: AudioLinesIcon, keywords: "voice mode conversation talk hands-free realtime openai grok xai sarvam elevenlabs voices male female speak" },
       { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
       { id: "maps", label: "Maps", icon: MapIcon, keywords: "google directions route location address home api key travel" },
       { id: "flights", label: "Flights", icon: PlaneIcon, keywords: "flight fares booking airline ticket ignav api key travel" },
@@ -213,6 +216,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
           {state?.section === "usage" && <UsageSection providers={providers} />}
           {state?.section === "search" && <SearchSection />}
           {state?.section === "speech" && <SpeechSection providers={providers} />}
+          {state?.section === "voice" && <VoiceSection />}
           {state?.section === "images" && <ImagesSection providers={providers} />}
           {state?.section === "maps" && <MapsSection />}
           {state?.section === "flights" && <FlightsSection />}

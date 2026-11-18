@@ -48,7 +48,7 @@ use sush_core::reports::{self, Report, ReportStatus, Role};
 use sush_core::share::policy as share_policy;
 use sush_core::store::ThreadMeta;
 use sush_core::workspace::sandbox::SandboxStatus;
-use sush_core::workspace::{git, tools as ws_tools, Access, Workspace, WorkspaceFs};
+use sush_core::workspace::{git, tools as ws_tools, Access, Commands, EditApproval, Workspace, WorkspaceFs};
 use sush_core::ChatRequest;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State, Window};
@@ -58,6 +58,7 @@ use tokio_util::sync::CancellationToken;
 use crate::browser::Browser;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
+use crate::engine_bridge;
 use crate::store::blocking;
 use crate::workspaces::{self, UndoResult};
 use crate::{commands, connectors};
@@ -878,9 +879,15 @@ async fn start(
     let ui_config = config.clone();
     // Claude Code or Codex instead of Sush's own loop (`sush_core::engines`).
     let engine = engines::Kind::from_provider(&config.provider_id);
-    let (config, cowork, report, studio) = match engine {
-        Some(kind) => prepare_engine(&state, &thread, config, kind).await?,
-        None => prepare(&state, &thread, config).await?,
+    let (config, cowork, report, studio, engine) = match engine {
+        Some(kind) => {
+            let (config, cowork, report, studio, prep) = prepare_engine(app, &state, &thread, config, kind).await?;
+            (config, cowork, report, studio, Some(prep))
+        }
+        None => {
+            let (config, cowork, report, studio) = prepare(&state, &thread, config).await?;
+            (config, cowork, report, studio, None)
+        }
     };
     loop {
         let existing = runs.live.lock().unwrap().get(&thread.id).cloned();
@@ -950,10 +957,24 @@ async fn start(
     let host = Host { app: app.clone(), thread_id: thread.id.clone(), live: live.clone() };
     tauri::async_runtime::spawn(async move {
         let cancel = host.live.cancel.clone();
-        let engine = engine.zip(host.live.cowork.as_ref()).map(|(kind, cowork)| (kind, engines::Context::new(&cowork.workspace.lock().unwrap())));
         match engine {
-            Some((kind, ctx)) => {
-                engines::run(&host, kind, messages, action, config, ctx, &mut inbox_rx, &cancel).await;
+            Some(EnginePrep { kind, mut ctx, tools }) => {
+                // Sush's own tools (a report's, a notebook's) reach the CLI over the bridge while it runs.
+                let mut bridge = Ok(None);
+                if !tools.is_empty() {
+                    let auto = tools.iter().filter(|t| t.approval == Approval::Auto).map(|t| t.spec.name.clone()).collect();
+                    let runner: Arc<dyn RunHost> = Arc::new(Host { app: host.app.clone(), thread_id: host.thread_id.clone(), live: host.live.clone() });
+                    bridge = engine_bridge::register(runner, tools, cancel.clone()).await.map(|reg| {
+                        ctx.bridge = Some(engines::Bridge { url: reg.url(), token: reg.token.clone(), auto });
+                        Some(reg)
+                    });
+                }
+                match bridge {
+                    Ok(_registration) => {
+                        engines::run(&host, kind, messages, action, config, ctx, &mut inbox_rx, &cancel).await;
+                    }
+                    Err(error) => host.emit(RunEvent::Status { status: RunStatus::Error, error: Some(error) }),
+                }
             }
             None => {
                 agent::run(&host, messages, action, config, &mut inbox_rx, &cancel).await;
@@ -1029,18 +1050,7 @@ async fn prepare(
     .await?;
     let (studio, notebook) = notebook;
     if let Some((notebook, note)) = studio {
-        let mut config = notebook_config(state, config, &notebook, false);
-        let section = notebooks::studio_section(note.kind);
-        config.system = Some(format!("{}\n\n---\n\n{section}", config.system.unwrap_or_default()));
-        if note.kind.interactive() {
-            config.tools.push(RunTool {
-                spec: notebooks::studio_save_spec(note.kind),
-                exec: ToolExec::Notebook,
-                approval: Approval::Auto,
-                deferred: false,
-            });
-        }
-        return Ok((config, None, None, Some(note.id)));
+        return Ok((studio_config(state, config, &notebook, &note), None, None, Some(note.id)));
     }
     if let Some(notebook) = notebook {
         return Ok((notebook_config(state, config, &notebook, true), None, None, None));
@@ -1086,42 +1096,136 @@ async fn prepare(
     Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None, None))
 }
 
-/// The config for a session an outside engine runs (`sush_core::engines`). It
-/// needs a Cowork folder, and brings its own tools and instructions, so the
-/// UI's are dropped; reports and notebooks stay on Sush's own loop.
+/// What an outside engine's run needs beyond its config: the CLI, the folder
+/// and settings it works with, and the Sush tools it reaches over the bridge.
+struct EnginePrep {
+    kind: engines::Kind,
+    ctx: engines::Context,
+    tools: Vec<RunTool>,
+}
+
+/// Told to an engine running a report, besides the report's own instructions.
+const ENGINE_REPORT_NOTE: &str = "Read the folder with your own read-only tools (read, search, list files). \
+Don't change anything and don't run commands: for what changed, use the git_diff tool.";
+/// Told to an engine answering from a notebook.
+const ENGINE_NOTEBOOK_NOTE: &str = "Your working folder is empty and not the user's: everything you answer from comes through these tools. \
+Don't change anything and don't run commands.";
+
+/// The config for a session an outside engine runs (`sush_core::engines`),
+/// and what the engine needs (`EnginePrep`). The CLI brings its own tools and
+/// system prompt; the UI's are dropped, except where Sush's own work needs its tools:
+/// - a report runs in its folder, read-only, with its tools (`report_config`)
+///   and instructions;
+/// - a notebook chat or a Studio output runs in an empty folder of its own
+///   with the notebook's tools and instructions (`notebook_config`);
+/// both of those are locked: the CLI reads and calls those tools, nothing else.
+/// - a Cowork session works in its folder, a plain chat in an empty folder of
+///   its own (`chat_folder`), where every edit and command asks first;
+/// - an incognito chat leaves no record in the CLI (`Context::ephemeral`).
 async fn prepare_engine(
+    app: &AppHandle,
     state: &AppState,
     thread: &ThreadMeta,
     mut config: RunConfig,
     kind: engines::Kind,
-) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>, Option<String>)> {
-    let name = kind.name();
-    if thread.incognito {
-        return Err(AppError::Invalid(format!("{name} can't run an incognito chat. Pick another model for it.")));
-    }
+) -> AppResult<(RunConfig, Option<Cowork>, Option<ReportRun>, Option<String>, EnginePrep)> {
     let store = state.store.clone();
-    let (id, claimed) = (thread.id.clone(), thread.workspace_id.clone());
-    let (workspace, special) = blocking(move || {
+    let (id, claimed, incognito) = (thread.id.clone(), thread.workspace_id.clone(), thread.incognito);
+    let (workspace, report, (studio, notebook)) = blocking(move || {
+        // An incognito chat is never stored, so it has none of these.
+        if incognito {
+            return Ok((None, None, (None, None)));
+        }
         let workspace_id = store.thread_workspace(&id)?.or(claimed);
         let workspace = match workspace_id {
             Some(w) => store.workspace(&w)?,
             None => None,
         };
-        let special = store.report_for_thread(&id)?.is_some() || store.notebook_for_thread(&id)?.is_some() || store.studio_for_thread(&id)?.is_some();
-        Ok((workspace, special))
+        Ok((workspace, store.report_for_thread(&id)?, (store.studio_for_thread(&id)?, store.notebook_for_thread(&id)?)))
     })
     .await?;
-    if special {
-        return Err(AppError::Invalid(format!("Reports and notebooks run on Sush's own agent, not {name}. Pick another model for this.")));
+    let locked = |cwd: std::path::PathBuf, access: Access, system: String, tools: Vec<RunTool>| EnginePrep {
+        kind,
+        ctx: engines::Context {
+            cwd,
+            access,
+            approval: EditApproval::Ask,
+            commands: Commands::Sandbox,
+            system: Some(format!("{system}\n\n---\n\n{}", engines::BRIDGE_NOTE)),
+            bridge: None,
+            ephemeral: false,
+            locked: true,
+        },
+        tools,
+    };
+
+    if let Some((notebook, note)) = studio {
+        let mut config = studio_config(state, config, &notebook, &note);
+        let (system, tools) = (config.system.take().unwrap_or_default(), std::mem::take(&mut config.tools));
+        let prep = locked(chat_folder(app, &thread.id)?, Access::ReadOnly, format!("{system}\n\n{ENGINE_NOTEBOOK_NOTE}"), tools);
+        return Ok((config, None, None, Some(note.id), prep));
     }
-    let workspace = workspace.ok_or_else(|| {
-        AppError::Invalid(format!("{name} works in a folder. Switch this session to Cowork and pick a folder, or choose another model."))
-    })?;
-    let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
-    let sandbox = state.sandbox.status().await;
+    if let Some(notebook) = notebook {
+        let mut config = notebook_config(state, config, &notebook, true);
+        let (system, tools) = (config.system.take().unwrap_or_default(), std::mem::take(&mut config.tools));
+        let prep = locked(chat_folder(app, &thread.id)?, Access::ReadOnly, format!("{system}\n\n{ENGINE_NOTEBOOK_NOTE}"), tools);
+        return Ok((config, None, None, None, prep));
+    }
+    if let Some(report) = report {
+        let workspace = workspace.ok_or_else(|| AppError::Invalid("This report's folder was removed, so it can't run.".into()))?;
+        let role = report.role_of(&thread.id).unwrap_or(Role::Ask);
+        // The report's own instructions, without the section on Sush's file tools: the CLI reads with its own.
+        let system = format!("{}\n\n{ENGINE_REPORT_NOTE}", reports::system_prompt(&report, role, &workspace.name));
+        let (mut config, cowork) = report_config(config, &report, role, workspace)?;
+        config.system = None;
+        let tools: Vec<RunTool> = std::mem::take(&mut config.tools).into_iter().filter(|t| !matches!(t.exec, ToolExec::Workspace)).collect();
+        let cwd = engines::Context::new(&cowork.workspace.lock().unwrap()).cwd;
+        let prep = locked(cwd, Access::ReadOnly, system, tools);
+        return Ok((config, Some(cowork), Some(ReportRun { report, role }), None, prep));
+    }
+
     config.tools.clear();
     config.system = None;
-    Ok((config, Some(Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }), None, None))
+    let Some(workspace) = workspace else {
+        let cwd = chat_folder(app, &thread.id)?;
+        let ctx = engines::Context {
+            cwd,
+            access: Access::WorkspaceWrite,
+            approval: EditApproval::Ask,
+            commands: Commands::Sandbox,
+            system: None,
+            bridge: None,
+            ephemeral: thread.incognito,
+            locked: false,
+        };
+        return Ok((config, None, None, None, EnginePrep { kind, ctx, tools: Vec::new() }));
+    };
+    let fs = WorkspaceFs::open(Path::new(&workspace.root)).map_err(AppError::Invalid)?;
+    let sandbox = state.sandbox.status().await;
+    let ctx = engines::Context::new(&workspace);
+    let cowork = Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox };
+    Ok((config, Some(cowork), None, None, EnginePrep { kind, ctx, tools: Vec::new() }))
+}
+
+/// The folder an outside engine works in for a plain chat: `engine-chats/<thread>`
+/// in the app data dir, empty to begin with, removed with the chat (`forget_chat_folder`).
+fn chat_folder(app: &AppHandle, thread_id: &str) -> AppResult<std::path::PathBuf> {
+    let dir = chat_folder_path(app, thread_id)?;
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
+fn chat_folder_path(app: &AppHandle, thread_id: &str) -> AppResult<std::path::PathBuf> {
+    let name: String = thread_id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+    let data = crate::paths::data_dir(app).map_err(|e| AppError::Invalid(e.to_string()))?;
+    Ok(data.join("engine-chats").join(name))
+}
+
+/// Remove a deleted chat's engine folder, if it had one.
+pub fn forget_chat_folder(app: &AppHandle, thread_id: &str) {
+    if let Ok(dir) = chat_folder_path(app, thread_id) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 /// A session's run can start sub-agents; a sub-agent's gets their instructions instead.
@@ -1160,6 +1264,18 @@ fn report_config(mut config: RunConfig, report: &Report, role: Role, mut workspa
         reports::specs(report, role).into_iter().map(|spec| RunTool { spec, exec: ToolExec::Report, approval: Approval::Auto, deferred: false }),
     );
     Ok((config, Cowork { workspace: Mutex::new(workspace), fs: Arc::new(fs), sandbox }))
+}
+
+/// A Studio output's config: its notebook's, plus how to write that kind of
+/// output and, for an interactive one, the tool that hands it over.
+fn studio_config(state: &AppState, config: RunConfig, notebook: &Notebook, note: &notebooks::Note) -> RunConfig {
+    let mut config = notebook_config(state, config, notebook, false);
+    let section = notebooks::studio_section(note.kind);
+    config.system = Some(format!("{}\n\n---\n\n{section}", config.system.unwrap_or_default()));
+    if note.kind.interactive() {
+        config.tools.push(RunTool { spec: notebooks::studio_save_spec(note.kind), exec: ToolExec::Notebook, approval: Approval::Auto, deferred: false });
+    }
+    config
 }
 
 /// A notebook chat's config: the source tools and instructions in place of the

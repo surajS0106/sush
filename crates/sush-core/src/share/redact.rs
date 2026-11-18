@@ -36,11 +36,27 @@ pub const SOURCE_TEXT: &str = "[hidden from guests: source text]";
 const PRIVATE_TOOLS: [&str; 9] =
     ["memory_write", "memory_delete", "memory_save", "chats_search", "chat_read", "location_get", "map_show", "flights_search", "weather_show"];
 
-/// The host's CRM (`crm_search`, `crm_write`…, its customers and deals) and
-/// workflows (`workflow_list`, `workflow_run`) are theirs alone.
+/// The host's CRM (`crm_search`, `crm_write`…, its customers and deals),
+/// Board (`board_search`, `board_write`, their own tasks) and workflows
+/// (`workflow_list`, `workflow_run`) are theirs alone.
 fn is_crm_or_workflow_tool(name: &str) -> bool {
-    name.starts_with("crm_") || name.starts_with("workflow_")
+    name.starts_with("crm_") || name.starts_with("board_") || name.starts_with("workflow_")
 }
+
+/// The host's automations, projects, binders (their sources' text) and
+/// security reviews, code reviews and wikis (`apps/desktop/src/lib/app-tools.ts`).
+const APP_TOOLS: [&str; 10] = [
+    "automation_list",
+    "automation_manage",
+    "project_list",
+    "project_manage",
+    "binder_list",
+    "binder_search",
+    "binder_add",
+    "reports_list",
+    "reports_read",
+    "reports_start",
+];
 
 /// Swiggy's Food and Instamart tools (`swiggy__…`, `instamart__…`, from the
 /// connector's name) hold the host's addresses, phone number, cart and orders.
@@ -97,7 +113,7 @@ pub fn part(part: &Value) -> Value {
     }
     let mut out = part.clone();
     let name = part.get("toolName").and_then(Value::as_str).unwrap_or_default();
-    if PRIVATE_TOOLS.contains(&name) || is_delivery_tool(name) || is_crm_or_workflow_tool(name) {
+    if PRIVATE_TOOLS.contains(&name) || APP_TOOLS.contains(&name) || is_delivery_tool(name) || is_crm_or_workflow_tool(name) {
         out["input"] = json!({ "title": PRIVATE, "query": PRIVATE });
         if out.get("output").is_some() {
             out["output"] = json!(PRIVATE);
@@ -243,6 +259,14 @@ mod tests {
         assert_eq!(p["output"], PRIVATE);
         assert_eq!(p["input"]["query"], PRIVATE);
         let p = part(&tool("workflow_run", json!({ "name": "Welcome", "input": "Northwind" }), json!("Started")));
+        assert_eq!(p["output"], PRIVATE);
+        let p = part(&tool("board_write", json!({ "tasks": [{ "title": "Call the landlord" }] }), json!("Done")));
+        assert_eq!(p["output"], PRIVATE);
+        assert!(p["input"].get("tasks").is_none());
+        let p = part(&tool("binder_search", json!({ "binder": "Thesis", "query": "results" }), json!("{\"passages\":[]}")));
+        assert_eq!(p["output"], PRIVATE);
+        assert_eq!(p["input"]["query"], PRIVATE);
+        let p = part(&tool("reports_read", json!({ "report": "r1" }), json!("{\"findings\":[]}")));
         assert_eq!(p["output"], PRIVATE);
     }
 

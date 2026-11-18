@@ -17,7 +17,8 @@ export interface Project {
 const projects = createStore<Project[]>("sush.projects", []);
 
 export const useProjects = () => useSyncExternalStore(projects.subscribe, projects.get);
-export const getProject = (id: string | undefined) => (id ? projects.get().find((p) => p.id === id) : undefined);
+export const getProjects = () => projects.get();
+export const getProject =(id: string | undefined) => (id ? projects.get().find((p) => p.id === id) : undefined);
 
 export function createProject(name: string, instructions = ""): Project {
   const project: Project = { id: crypto.randomUUID(), name: name.trim() || "Untitled project", instructions, createdAt: Date.now() };

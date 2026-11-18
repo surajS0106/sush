@@ -78,6 +78,7 @@ try {
 }
 
 export const useTasks = () => useSyncExternalStore(tasks.subscribe, tasks.get);
+export const getTasks = () => tasks.get();
 export const getTask = (id: string) => tasks.get().find((t) => t.id === id);
 export const useBoardView = () => useSyncExternalStore(view.subscribe, view.get);
 export const setBoardView = (patch: Partial<BoardView>) => view.set((v) => ({ ...v, ...patch }));

@@ -1125,6 +1125,48 @@ export type StreamFrame = { type: "event"; event: ChatEvent } | { type: "end" };
 /** How a provider transcribes: OpenAI-style `/audio/transcriptions`, or Ollama chat with an audio-capable model. */
 export type TranscribeApi = "transcriptions" | "ollama-chat";
 
+// --- voice mode (`sush_core::voice`, `src-tauri/src/voice.rs`) ---
+
+export type VoiceProvider = "openai" | "xai" | "sarvam" | "elevenlabs";
+export type VoiceGender = "female" | "male" | "neutral";
+export interface VoiceInfo {
+  id: string;
+  name: string;
+  gender: VoiceGender;
+  description: string;
+}
+export interface VoiceModel {
+  id: string;
+  name: string;
+  description: string;
+}
+export interface VoiceCatalog {
+  models: VoiceModel[];
+  voices: VoiceInfo[];
+}
+/** base64 audio to decode with `decodeAudioData`. */
+export interface SpokenAudio {
+  data: string;
+  mime: string;
+}
+export interface VoiceTranscript {
+  text: string;
+  language: string | null;
+}
+/** A realtime conversation's events (`sush_core::voice::VoiceEvent`). */
+export type VoiceEvent =
+  | { type: "ready" }
+  | { type: "speech-started" }
+  /** `itemId` is where the user's words will be transcribed; empty when the server doesn't say. */
+  | { type: "speech-stopped"; itemId: string }
+  | { type: "user-transcript"; itemId: string; text: string; done: boolean }
+  /** 24 kHz 16-bit mono PCM, base64. */
+  | { type: "audio"; itemId: string; data: string }
+  | { type: "assistant-transcript"; itemId: string; text: string; done: boolean }
+  | { type: "response-done"; status: string }
+  | { type: "error"; message: string }
+  | { type: "closed"; reason: string | null };
+
 /** What a `sush://` link asks for (`src-tauri/src/deep_link.rs`). */
 export type LinkRequest = { kind: "ask-meeting"; meeting: number; title: string };
 
@@ -1633,6 +1675,24 @@ export const api = {
     invoke<void>("connector_save_secrets", { id, url, token: secrets.token ?? null, clientSecret: secrets.clientSecret ?? null }),
   transcribe: (providerId: string, model: string, api: TranscribeApi, audioBase64Wav: string) =>
     invoke<string>("transcribe", { providerId, model, api, audioBase64Wav }),
+  /** Voice mode: which providers have a key, and the keys themselves (kept in the keyring). */
+  voiceKeys: () => invoke<VoiceProvider[]>("voice_keys"),
+  voiceKeySet: (provider: VoiceProvider, key: string) => invoke<void>("voice_key_set", { provider, key }),
+  voiceKeyDelete: (provider: VoiceProvider) => invoke<void>("voice_key_delete", { provider }),
+  voiceCatalog: (provider: VoiceProvider) => invoke<VoiceCatalog>("voice_catalog", { provider }),
+  voiceSpeak: (provider: VoiceProvider, model: string, voice: string, text: string, language: string | null) =>
+    invoke<SpokenAudio>("voice_speak", { provider, model, voice, text, language }),
+  voiceTranscribe: (provider: VoiceProvider, audioBase64Wav: string, language: string | null) =>
+    invoke<VoiceTranscript>("voice_transcribe", { provider, audioBase64Wav, language }),
+  /** A turn's answer: Sarvam's own model when `providerId` is null, else a chat provider. Cancel with `cancelStream`. */
+  voiceThink: (streamId: string, providerId: string | null, request: ChatRequest, onEvent: Channel<StreamFrame>) =>
+    invoke<void>("voice_think", { streamId, providerId, request, onEvent }),
+  voiceRealtimeStart: (sessionId: string, provider: VoiceProvider, model: string, voice: string, instructions: string, onEvent: Channel<VoiceEvent>) =>
+    invoke<void>("voice_realtime_start", { sessionId, provider, model, voice, instructions, onEvent }),
+  voiceRealtimeAudio: (sessionId: string, audio: string) => invoke<void>("voice_realtime_audio", { sessionId, audio }),
+  voiceRealtimeInterrupt: (sessionId: string, itemId: string | null, audioEndMs: number) =>
+    invoke<void>("voice_realtime_interrupt", { sessionId, itemId, audioEndMs }),
+  voiceRealtimeEnd: (sessionId: string) => invoke<void>("voice_realtime_end", { sessionId }),
   /** `onPartial` gets the rough versions gpt-image streams on the way, as `data:` URLs. */
   imageGenerate: (
     providerId: string,

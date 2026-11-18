@@ -28,15 +28,28 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Citations in Binder answers work again.";
+export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
-  { kind: "fixed", text: "Citations in Binder answers show as numbered markers again, instead of \"cite [blocked]\". Links to Yammer meetings in answers work again too." },
+  { kind: "new", text: "Voice mode: talk with Sush hands-free. With nothing typed, the button by the composer starts a conversation; speak, interrupt whenever you like, and the conversation lands in the chat when you hang up. Bring your own OpenAI, xAI, Sarvam or ElevenLabs key in Settings → Voice mode, then pick a model and a voice: filter by female, male or neutral, and hear each one first." },
+  { kind: "new", text: "Sush can now work with the rest of the app from any chat: list, pause, run or reschedule your automations; create projects and file the chat in one; search your binders and add links or notes to them; and start a security review, code review or wiki, then talk through its findings. Anything that changes something shows you a card to approve first." },
+  { kind: "new", text: "Ask Sush to add, change or tidy up tasks on your Board: \"add a high-priority task to renew my passport\", \"mark the invoice task done\", \"what's on my plate?\". You see each change and approve it, unless you've picked Auto." },
+  { kind: "new", text: "Claude Code and Codex can answer plain chats too, not just Cowork sessions. In a chat they work in an empty folder of their own and ask before any edit or command; a note under the composer says so." },
+  { kind: "new", text: "Security reviews, code reviews, wikis, notebook chats and Studio outputs can run on Claude Code or Codex. They get the same tools Sush's own agent uses there, and only read." },
+  { kind: "new", text: "Incognito chats work with Claude Code and Codex, which keep no record of them." },
 ];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.12.2",
+    date: "2026-11-18",
+    summary: "Citations in Binder answers work again.",
+    changes: [
+      { kind: "fixed", text: "Citations in Binder answers show as numbered markers again, instead of \"cite [blocked]\". Links to Yammer meetings in answers work again too." },
+    ],
+  },
   {
     version: "2.12.1",
     date: "2026-11-17",

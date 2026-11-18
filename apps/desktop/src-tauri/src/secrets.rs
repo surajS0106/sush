@@ -247,3 +247,20 @@ pub fn connector_delete(id: &str) -> AppResult<()> {
     }
     remove(&connector_name(id, None))
 }
+
+/// The user's own keys for voice mode's providers (`voice.rs`): `openai`, `xai`, `sarvam`, `elevenlabs`.
+fn voice_key_name(provider: &str) -> String {
+    format!("voice:{provider}")
+}
+
+pub fn voice_key_get(provider: &str) -> AppResult<Option<String>> {
+    read(&voice_key_name(provider))
+}
+
+pub fn voice_key_set(provider: &str, value: &str) -> AppResult<()> {
+    write(&voice_key_name(provider), value)
+}
+
+pub fn voice_key_delete(provider: &str) -> AppResult<()> {
+    remove(&voice_key_name(provider))
+}

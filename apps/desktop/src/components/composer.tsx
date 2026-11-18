@@ -1,5 +1,5 @@
 import type { ChatStatus } from "ai";
-import { ArrowUpIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
+import { ArrowUpIcon, AudioLinesIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -28,6 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { YammerSetupDialog } from "@/components/yammer-setup-dialog";
 import { useDictation } from "@/hooks/use-dictation";
+import { openVoice } from "@/lib/voice-mode";
 import type { ProviderModels } from "@/hooks/use-providers";
 import { ImageQualityPicker } from "@/components/image-quality-picker";
 import { canGenerateImages, defaultImageApi, setImageChat, setImageSettings, useActiveImageSettings, useImageChat, useImagesReady } from "@/lib/images";
@@ -141,6 +142,8 @@ export function Composer({
   const imagesReady = useImagesReady();
   const imageMode = (conversationId ? storedImageMode : localImageMode) && imagesReady && !notebook;
   const imageModel = useActiveImageSettings();
+  // Like ChatGPT: with nothing to send, the send button starts a voice conversation instead.
+  const offerVoice = !!conversationId && !busy && !canSend && !imageMode && !notebook && !dictating;
   const turnOnImages = useCallback(() => setImageMode(true), [setImageMode]);
   // Picking a chat model ends drawing: the chat talks again.
   const pickChatModel = useCallback(
@@ -399,6 +402,24 @@ export function Composer({
                     transition={{ duration: 1.1, repeat: Infinity, ease: "easeOut" }}
                   />
                 )}
+                {offerVoice ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <motion.button
+                        type="button"
+                        aria-label="Start voice mode"
+                        onClick={() => openVoice(conversationId!)}
+                        initial={reduceMotion ? { opacity: 0 } : { opacity: 0, scale: 0.6 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        transition={{ duration: 0.18, ease: EASE_OUT }}
+                        className="flex size-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-85"
+                      >
+                        <AudioLinesIcon className="size-4" />
+                      </motion.button>
+                    </TooltipTrigger>
+                    <TooltipContent>Voice mode</TooltipContent>
+                  </Tooltip>
+                ) : (
                 <PromptInputSubmit
                   status={steering ? "ready" : status}
                   onStop={onStop}
@@ -431,6 +452,7 @@ export function Composer({
                     </motion.span>
                   </AnimatePresence>
                 </PromptInputSubmit>
+                )}
               </div>
             </div>
           </PromptInputFooter>

@@ -19,7 +19,7 @@ export function setupIssue(p: ProviderView): string | undefined {
 
 /**
  * Claude Code or Codex as a picker entry: the user's own CLI, signed in with its own
- * login (`sush_core::engines`). Not a provider in Settings; it only runs Cowork sessions.
+ * login (`sush_core::engines`). Not a provider in Settings; it only runs sessions (a plain chat in a scratch folder of its own).
  */
 function engineEntry(engine: EngineView): ProviderModels {
   const provider: ProviderView = {

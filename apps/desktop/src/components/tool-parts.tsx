@@ -37,6 +37,8 @@ import {
 import { useContext, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
+import { AppToolPart } from "@/components/app-tool-part";
+import { BoardToolPart } from "@/components/board-tool-part";
 import { CrmToolPart } from "@/components/crm-tool-part";
 import { WorkflowToolPart } from "@/components/workflow-tool-part";
 import { Image } from "@/components/ai-elements/image";
@@ -108,12 +110,14 @@ interface ToolPartProps {
   onApprove: () => void;
   /** In a shared session: who answered this call (`metadata.sushAnswers` on its message). */
   answer?: ToolAnswer;
+  /** The chat the call is in, for tools that act on it (filing it in a project). */
+  threadId?: string;
 }
 
 export type ToolAnswer = NonNullable<SushMetadata["sushAnswers"]>[string];
 
 /** Calls that wait for whoever runs the session (an approval, an answer). */
-const ASKS = new Set(["ask-user", "skill-save", "automation-save", "location", "workspace", "browser", "connector", "crm", "workflow"]);
+const ASKS = new Set(["ask-user", "skill-save", "automation-save", "location", "workspace", "browser", "connector", "board", "app", "crm", "workflow"]);
 
 const ANSWERED = { approve: "Approved", deny: "Denied", answer: "Answered" } as const;
 
@@ -180,6 +184,10 @@ function ToolCard(props: ToolPartProps) {
       return <TodoPart part={props.part} />;
     case "notebook":
       return <NotebookToolPart part={props.part} />;
+    case "board":
+      return <BoardToolPart part={props.part} canAnswer={props.canAnswer} onResult={props.onResult} running={running} />;
+    case "app":
+      return <AppToolPart part={props.part} threadId={props.threadId} canAnswer={props.canAnswer} onResult={props.onResult} running={running} />;
     case "crm":
       return <CrmToolPart part={props.part} canAnswer={props.canAnswer} onResult={props.onResult} running={running} />;
     case "workflow":

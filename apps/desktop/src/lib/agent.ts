@@ -21,6 +21,9 @@
 //   topic_lookup    runs immediately: the chat shows photos and articles about a subject (topic.ts)
 //   todo_write      runs immediately: the chat shows the plan as a checklist (todos.ts)
 //   location_get    reads the device's position, after the user agrees in its card (location.ts)
+//   automation_list/_manage, project_*, binder_*, reports_*
+//                   the app's features: reads run at once, changes ask with a card (app-tools.ts)
+//   board_*         the user's Board tasks: search runs at once, writes ask with a card (board-tools.ts)
 //   crm_*           the user's CRM: reads run at once, writes ask with a card (crm-tools.ts)
 //   workflow_*      list workflows at once; start one after the user approves (workflow-tools.ts)
 //   spawn_agent     offered and run by Rust: a sub-agent on a thread of its own (components/subagents.tsx)
@@ -28,10 +31,12 @@
 
 import { useSyncExternalStore } from "react";
 
+import { APP_TOOL_NAMES, appToolSpecs, isAppRead, runAppTool } from "@/lib/app-tools";
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { DOC_TOOL_NAMES, docTools, runDocTool } from "@/lib/docs";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
+import { BOARD_SEARCH, BOARD_TOOL_NAMES, BOARD_WRITE, boardSearchTool, boardWriteTool, runBoardTool } from "@/lib/board-tools";
 import { placesOrder } from "@/lib/connector-catalog";
 import {
   CRM_LOG,
@@ -338,6 +343,10 @@ export function buildContext({
     topicTool,
     ...(web ? [webSearchTool, webFetchTool] : []),
     locationTool,
+    // The Board is stored, so an incognito chat doesn't get it.
+    ...(incognito ? [] : [boardSearchTool, boardWriteTool]),
+    // Automations, projects, binders and reports: stored, so not in an incognito chat either.
+    ...(incognito ? [] : appToolSpecs()),
     crmSearchTool,
     crmReadTool,
     crmWriteTool,
@@ -380,6 +389,8 @@ export type ToolKind =
   | "connector"
   | "tools-load"
   | "notebook"
+  | "board"
+  | "app"
   | "crm"
   | "workflow"
   | "unknown";
@@ -417,7 +428,7 @@ export const TOOLS_LOAD = "tools_load";
  * user @-mentioned the connector in the conversation.
  */
 // image_generate is always offered (not here) so "draw me…" starts drawing on the first step.
-const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN]);
+const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, BOARD_SEARCH, BOARD_WRITE, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN, ...APP_TOOL_NAMES]);
 
 /** The CRM tools, offered from the start where the CRM is the subject (its page, an @crm message). */
 export const CRM_UNDEFERRED: ReadonlySet<string> = new Set([CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG]);
@@ -450,6 +461,8 @@ export function toolKind(name: string): ToolKind {
   if (name === LOCATION_GET) return "location";
   if (name === TODO_WRITE) return "todos";
   if (name === SOURCE_SEARCH || name === SOURCE_READ) return "notebook";
+  if (BOARD_TOOL_NAMES.has(name)) return "board";
+  if (APP_TOOL_NAMES.has(name)) return "app";
   if (CRM_TOOL_NAMES.has(name)) return "crm";
   if (WORKFLOW_TOOL_NAMES.has(name)) return "workflow";
   if (findConnectorTool(name)) return "connector";
@@ -475,6 +488,10 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
   if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "doc" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
+  // Changes to the Board show what they'll do and ask, unless the user picked Auto.
+  // Automations, projects, binders, reports: reads at once, changes ask unless the user picked Auto.
+  if (kind === "app") return isAppRead(name) || library.prefs().permissionMode === "auto";
+  if (kind === "board") return name === BOARD_SEARCH || library.prefs().permissionMode === "auto";
   // Changes to the CRM show what they'll do and ask, unless the user picked Auto.
   if (kind === "crm") return !CRM_WRITES.has(name) || library.prefs().permissionMode === "auto";
   // Starting a workflow can change things; it asks, unless the user picked Auto.
@@ -570,6 +587,8 @@ export async function runTool(name: string, input: unknown, threadId?: string, c
     if (name === WEB_SEARCH) return runWebSearch(args);
     if (name === WEB_FETCH) return runWebFetch(args);
     if (name === TODO_WRITE) return runTodoWrite(args);
+    if (BOARD_TOOL_NAMES.has(name)) return runBoardTool(name, args);
+    if (APP_TOOL_NAMES.has(name)) return runAppTool(name, args, { threadId });
     if (CRM_TOOL_NAMES.has(name)) return runCrmTool(name, args);
     if (WORKFLOW_TOOL_NAMES.has(name)) return runWorkflowTool(name, args);
     return { errorText: `Unknown tool ${name}. It may belong to a connector that was turned off.` };

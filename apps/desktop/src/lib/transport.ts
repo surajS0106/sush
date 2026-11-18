@@ -46,6 +46,8 @@ export interface SushMetadata {
    * message on (`sush_core::agent::ui::to_core`), with its text in place of what came before.
    */
   compaction?: { tokensBefore?: number; model?: string; createdAt?: number };
+  /** On a turn spoken in voice mode (`lib/voice-session.ts`): who voiced the reply, and in which voice. */
+  voice?: { provider: string; voice: string };
   /** In a shared session, on a message someone else wrote (set by the host, never by the sender). */
   author?: ShareAuthor;
   /** On a collaborator's suggestion: who sent it on. */
