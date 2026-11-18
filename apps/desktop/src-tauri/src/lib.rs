@@ -247,6 +247,8 @@ pub fn run() {
             store::image_fetch,
             store::image_search,
             store::blob_data_url,
+            store::docx_edit,
+            store::docx_pdf,
             store::chats_search,
             store::memory_list,
             store::memory_write,

@@ -1,5 +1,5 @@
 // Voice mode, inside the chat. Starting it swaps the composer for the voice
-// dock: the voice's glass orb floating above a bar with the status, mute and
+// dock: the voice's glass orb (or Sushi, `voice-sushi.tsx`) floating above a bar with the status, mute and
 // end. What's said appears in the chat as it happens (`VoiceLines`, after the
 // thread's messages), the answer's words as they're heard. When the call ends
 // its turns become the chat's own messages, and the chat carries on from them.
@@ -12,6 +12,7 @@ import { Message, MessageContent } from "@/components/ai-elements/message";
 import { GlassOrb } from "@/components/glass-orb";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { VoiceSushi } from "@/components/voice-sushi";
 import { openSettings } from "@/lib/library";
 import { threadMessages } from "@/lib/sessions";
 import type { ModelTarget } from "@/lib/transport";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 import {
   activeProvider,
   closeVoice,
+  gateFor,
   modelFor,
   providerInfo,
   useVoiceCatalog,
@@ -70,6 +72,7 @@ export function VoiceDock({ conversationId, target }: { conversationId: string; 
   const voice = provider ? voiceFor(settings, provider) : "";
   const brain = provider === "elevenlabs" || (provider === "sarvam" && settings.sarvamBrain === "chat") ? target : null;
   const whispers = settings.whispers !== false;
+  const gate = gateFor(settings);
   useEffect(() => {
     if (!provider) return;
     const conv = new VoiceConversation({
@@ -81,6 +84,7 @@ export function VoiceDock({ conversationId, target }: { conversationId: string; 
       history: threadMessages(conversationId),
       brain,
       whispers,
+      gate,
     });
     setConversation(conv);
     setLive({ threadId: conversationId, conversation: conv });
@@ -91,7 +95,7 @@ export function VoiceDock({ conversationId, target }: { conversationId: string; 
       conv.end();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the call keeps the settings it started with
-  }, [provider, model, voice, whispers, conversationId, attempt]);
+  }, [provider, model, voice, whispers, gate, conversationId, attempt]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -114,7 +118,13 @@ export function VoiceDock({ conversationId, target }: { conversationId: string; 
       {keys === null ? null : !provider ? (
         <NoKey />
       ) : conversation ? (
-        <Call conversation={conversation} provider={provider} voiceId={voice} onRetry={() => setAttempt((a) => a + 1)} />
+        <Call
+          conversation={conversation}
+          provider={provider}
+          voiceId={voice}
+          sushi={settings.figure === "sushi"}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
       ) : null}
     </motion.div>
   );
@@ -136,11 +146,13 @@ function Call({
   conversation,
   provider,
   voiceId,
+  sushi,
   onRetry,
 }: {
   conversation: VoiceConversation;
   provider: NonNullable<ReturnType<typeof activeProvider>>;
   voiceId: string;
+  sushi: boolean;
   onRetry: () => void;
 }) {
   const state = useSyncExternalStore(conversation.subscribe, () => conversation.state);
@@ -163,7 +175,11 @@ function Call({
     <>
       <div className="relative flex w-full justify-center">
         {!failed && <Notice message={state.error} />}
-        <Orb conversation={conversation} seed={voiceId} status={state.status} muted={state.muted} />
+        {sushi ? (
+          <VoiceSushi conversation={conversation} seed={voiceId} status={state.status} muted={state.muted} />
+        ) : (
+          <Orb conversation={conversation} seed={voiceId} status={state.status} muted={state.muted} />
+        )}
       </div>
       <div className="mt-6 flex h-14 w-full items-center gap-2 rounded-[28px] border bg-background/80 pr-2 pl-5 shadow-sm backdrop-blur-md dark:bg-white/[0.04]">
         <div className="flex min-w-0 flex-1 items-baseline gap-2 text-sm">

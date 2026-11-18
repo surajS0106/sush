@@ -21,6 +21,12 @@ export interface Mic {
   stop(): void;
 }
 
+/** Input sensitivity in dBFS (Settings → Voice mode), as the RMS level the gate opens at. */
+export const dbToRms = (db: number) => Math.pow(10, db / 20);
+export const rmsToDb = (r: number) => (r > 0 ? 20 * Math.log10(r) : -Infinity);
+/** How long the gate stays open once the voice drops below it, so word endings and short pauses aren't cut. */
+const GATE_HOLD_MS = 450;
+
 /** Speech is lifted toward this loudness (RMS)... */
 const BOOST_TARGET = 0.05;
 /** ...by at most this much, so a whisper becomes ordinary speech and hiss stays hiss. */
@@ -53,10 +59,13 @@ class QuietBoost {
  * Open the microphone; `onChunk` gets each chunk with its loudness, except while muted.
  * With `whispers`, quiet speech is lifted first (`QuietBoost`), so a whisper is heard like a normal voice;
  * `raw` is the chunk's loudness before that, for telling the user from the answer's echo.
+ * With a `gate` (an RMS level; 0 is none, the automatic default), anything quieter is silence: the
+ * chunk is zeroed before the boost and every detector, held open a moment after the voice drops
+ * below it, and `open` says whether it got through.
  */
 export async function openMic(
-  onChunk: (samples: Float32Array, loudness: number, raw: number) => void,
-  { whispers = false } = {},
+  onChunk: (samples: Float32Array, loudness: number, raw: number, open: boolean) => void,
+  { whispers = false, gate = 0 } = {},
 ): Promise<Mic> {
   const stream = await navigator.mediaDevices.getUserMedia({
     // Echo cancellation keeps the model's own voice out of the mic, so it doesn't interrupt itself.
@@ -68,6 +77,7 @@ export async function openMic(
   const processor = ctx.createScriptProcessor(CHUNK, 1, 1);
   let muted = false;
   let level = 0;
+  let openUntil = 0;
   const boost = whispers ? new QuietBoost() : null;
   processor.onaudioprocess = (e) => {
     if (muted) {
@@ -76,10 +86,17 @@ export async function openMic(
     }
     const samples = new Float32Array(e.inputBuffer.getChannelData(0));
     const raw = rms(samples);
-    boost?.apply(samples);
-    const loud = boost ? rms(samples) : raw;
+    let open = true;
+    if (gate > 0) {
+      const now = performance.now();
+      if (raw >= gate) openUntil = now + GATE_HOLD_MS;
+      else if (now > openUntil) open = false;
+    }
+    if (!open) samples.fill(0);
+    else boost?.apply(samples);
+    const loud = !open ? 0 : boost ? rms(samples) : raw;
     level = Math.max(loud, level * 0.7);
-    onChunk(samples, loud, raw);
+    onChunk(samples, loud, raw, open);
   };
   source.connect(processor);
   processor.connect(ctx.destination);
@@ -328,8 +345,11 @@ export class BargeIn {
   private run = 0;
   private lastOut = 0;
 
-  /** Feed a chunk: the mic's raw loudness and the output's. True once the user is talking over the answer. */
-  push(mic: number, out: number, playing: boolean): boolean {
+  /**
+   * Feed a chunk: the mic's raw loudness and the output's. True once the user is talking over the answer.
+   * A chunk the input gate shut (`open` false) still teaches the echo, but never counts as the user.
+   */
+  push(mic: number, out: number, playing: boolean, open = true): boolean {
     if (!playing) {
       this.floor = mic < this.floor ? this.floor * 0.8 + mic * 0.2 : this.floor * 0.99 + mic * 0.01;
       this.run = 0;
@@ -344,7 +364,7 @@ export class BargeIn {
       this.leak = ratio < this.leak ? this.leak * 0.7 + ratio * 0.3 : this.leak * 0.995 + ratio * 0.005;
     }
     const expected = this.leak * heard + this.floor;
-    const talking = mic > Math.max(this.floor * 3, expected * 2.5);
+    const talking = open && mic > Math.max(this.floor * 3, expected * 2.5);
     this.run = talking ? this.run + 1 : 0;
     if (this.run < 2) return false;
     this.run = 0;

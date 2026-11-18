@@ -46,7 +46,7 @@ import { Logo } from "@/components/model-picker";
 import { ModelPicker } from "@/components/model-picker";
 import { ReadAloudAction, ResponseMenu } from "@/components/response-menu";
 import { AgentTeam, SubagentReport, withTeams } from "@/components/subagents";
-import { FileChip, ToolPart, WebActivityPart } from "@/components/tool-parts";
+import { ToolPart, WebActivityPart } from "@/components/tool-parts";
 import { ControlBanner } from "@/components/control-banner";
 import { FileChanges } from "@/components/file-changes";
 import { SessionOptions } from "@/components/session-options";
@@ -82,6 +82,8 @@ import { mentionSegments } from "@/lib/mentions";
 import { parseSlash } from "@/lib/skills";
 import { autoOpenDeck, deckViews, SLIDES_WRITE, useDeckPanel, type Decks } from "@/lib/slides";
 import { autoOpenDoc, DOC_WRITE, docCalls, useDocPanel, type DocCalls } from "@/lib/docs";
+import { autoOpenFile, DOCX_EDIT, fileVersions, isWordFile, useFilePanel, type FileVersions } from "@/lib/files";
+import { FileAttachment, FileEditCard, FilePanel } from "@/components/file-panel";
 import { formatCost, isLocalUrl } from "@/lib/pricing";
 import { useProjects } from "@/lib/projects";
 import {
@@ -221,7 +223,22 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   // The panel follows the call it was opened from: that call's doc id settles once its `id` has streamed in.
   const panelCall = docPanel?.callId ? docs.byCall.get(docPanel.callId) : undefined;
   const openDocId = panelCall?.docId ?? docPanel?.docId;
-  const panel = docPanel && openDocId ? (
+  // Word files: an attachment and the versions `docx_edit` makes of it, opened beside the chat.
+  const wordFiles = useMemo(() => fileVersions(messages), [messages]);
+  useEffect(() => {
+    for (const m of messages) {
+      for (const p of m.parts) {
+        if (p.type !== "dynamic-tool" || p.toolName !== DOCX_EDIT) continue;
+        const finished = p.state === "output-available" || p.state === "output-error";
+        autoOpenFile(id, p.toolCallId, finished, wordFiles.byCall.get(p.toolCallId));
+      }
+    }
+  }, [id, messages, wordFiles]);
+  const filePanel = useFilePanel(id);
+  const openFileVersions = filePanel ? wordFiles.byName.get(filePanel.key) : undefined;
+  const panel = filePanel && openFileVersions ? (
+    <FilePanel threadId={id} versions={openFileVersions} />
+  ) : docPanel && openDocId ? (
     <DocPanel threadId={id} docId={openDocId} call={docs.latest.get(openDocId) ?? panelCall} />
   ) : openDeck ? (
     <SlidesPanel threadId={id} deck={openDeck} busy={busy} />
@@ -230,7 +247,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   ) : watching ? (
     <SharedPanel share={watching} changed={changedPaths} />
   ) : null;
-  const hideChat = docPanel ? docPanel.expanded : !!openDeck && !!deckPanel?.expanded;
+  const hideChat = filePanel && openFileVersions ? filePanel.expanded : docPanel ? docPanel.expanded : !!openDeck && !!deckPanel?.expanded;
 
   const submit = (msg: PromptInputMessage, opts?: { image?: boolean }) => {
     if (!msg.text.trim() && msg.files.length === 0) return;
@@ -520,6 +537,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
               threadId={id}
               decks={decks}
               docs={docs}
+              files={wordFiles}
               workspaceId={workspaceId}
               branchCall={branchCall?.messageId === message.id ? branchCall.part.toolCallId : undefined}
               fileTurn={(() => {
@@ -796,6 +814,7 @@ interface ChatMessageProps {
   threadId: string;
   decks: Decks;
   docs: DocCalls;
+  files: FileVersions;
   workspaceId?: string;
   /** Cowork: the turn whose changed files show under this, its last reply. */
   fileTurn?: string;
@@ -825,11 +844,13 @@ function sameMessageProps(a: ChatMessageProps, b: ChatMessageProps) {
     a.branchCall === b.branchCall &&
     !a.onRestore === !b.onRestore;
   if (!same) return false;
-  // Artifact and deck views are built from the whole thread; only their own cards read them.
+  // Artifact, deck, doc and file views are built from the whole thread; only their own cards read them.
   const usesViews = b.message.parts.some(
-    (p) => p.type === "dynamic-tool" && (p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE || p.toolName === DOC_WRITE),
+    (p) =>
+      (p.type === "dynamic-tool" && (p.toolName === ARTIFACT_WRITE || p.toolName === SLIDES_WRITE || p.toolName === DOC_WRITE || p.toolName === DOCX_EDIT)) ||
+      (p.type === "file" && isWordFile(p.mediaType, p.filename)),
   );
-  return !usesViews || (a.artifacts === b.artifacts && a.decks === b.decks && a.docs === b.docs);
+  return !usesViews || (a.artifacts === b.artifacts && a.decks === b.decks && a.docs === b.docs && a.files === b.files);
 }
 
 /** True once a tool call has its result and the model hasn't replied to it yet. */
@@ -952,6 +973,7 @@ const ChatMessage = memo(function ChatMessage({
   threadId,
   decks,
   docs,
+  files,
   workspaceId,
   fileTurn,
   branchCall,
@@ -1057,6 +1079,9 @@ const ChatMessage = memo(function ChatMessage({
         if (part.toolName === DOC_WRITE) {
           return <DocCard key={key} threadId={threadId} part={part} call={docs.byCall.get(part.toolCallId)} />;
         }
+        if (part.toolName === DOCX_EDIT) {
+          return <FileEditCard key={key} threadId={threadId} part={part} version={files.byCall.get(part.toolCallId)} />;
+        }
         if (part.toolName === SLIDES_WRITE) {
           const view = decks.byCall.get(part.toolCallId);
           return <DeckCard key={key} threadId={threadId} part={part} view={view} latest={view && decks.byId.get(view.id)} />;
@@ -1099,7 +1124,12 @@ const ChatMessage = memo(function ChatMessage({
           />
         ) : (
           <div key={key} className="flex justify-end">
-            <FileChip name={part.filename ?? "attachment"} mediaType={part.mediaType} />
+            <FileAttachment
+              threadId={threadId}
+              name={part.filename ?? "attachment"}
+              mediaType={part.mediaType}
+              version={files.byPart.get(`${message.id}:${i}`)}
+            />
           </div>
         );
       }

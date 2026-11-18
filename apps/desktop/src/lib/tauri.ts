@@ -1469,6 +1469,16 @@ export const api = {
   blobPut: (dataUrl: string) => invoke<string>("blob_put", { dataUrl }),
   /** A stored blob's bytes as a `data:` URL. */
   blobDataUrl: (url: string) => invoke<string>("blob_data_url", { url }),
+  /**
+   * Edit a Word document (`source`: a blob or `data:` URL) into a new stored version, keeping its formatting.
+   * `edits` are `sush_core::office::edit::Edit`s, passed on as the model wrote them; Rust checks them.
+   */
+  docxEdit: (source: string, edits: unknown[]) => invoke<{ url: string; text: string }>("docx_edit", { source, edits }),
+  /**
+   * A Word document laid out as a PDF by Word or LibreOffice, for an exact preview: the PDF's blob URL,
+   * or `noEngine` when neither is installed, or the `error` the one tried gave.
+   */
+  docxPdf: (source: string) => invoke<{ url: string | null; noEngine: boolean; error: string | null }>("docx_pdf", { source }),
   /** Downloads an https image into the blob store and returns its blob URL. */
   imageFetch: (url: string) => invoke<string>("image_fetch", { url }),
   /** Finds a picture of `query` on Wikipedia / Wikimedia Commons, stores it and returns its blob URL. */

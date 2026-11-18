@@ -41,6 +41,8 @@ export interface VoiceOptions {
   brain: ModelTarget | null;
   /** Lift quiet speech, so a whisper is heard. */
   whispers: boolean;
+  /** The input gate, an RMS level: quieter sound is silence. 0 leaves it to the detectors (automatic). */
+  gate: number;
 }
 
 const BASE_INSTRUCTIONS = `You are Sush, talking with the user out loud in a hands-free voice conversation.
@@ -287,15 +289,15 @@ export class VoiceConversation {
     // so its detector can miss a "stop". This one, here, listens for the user over the answer and cuts at once.
     const bargeIn = new BargeIn();
     this.mic = await openMic(
-      (samples, _loud, raw) => {
+      (samples, _loud, raw, open) => {
         void api.voiceRealtimeAudio(this.sessionId, pcm16Base64(samples)).catch(() => {});
         const playing = this.player.playing();
-        if (!this.state.muted && bargeIn.push(raw, this.player.outputRms(), playing) && playing) {
+        if (!this.state.muted && bargeIn.push(raw, this.player.outputRms(), playing, open) && playing) {
           this.cutRealtime();
           this.set({ status: "hearing" });
         }
       },
-      { whispers: this.opts.whispers },
+      { whispers: this.opts.whispers, gate: this.opts.gate },
     );
     if (this.ended) this.mic.stop();
     this.mic.setMuted(this.state.muted);
@@ -447,16 +449,16 @@ export class VoiceConversation {
     // Talking over the answer is caught here, against the answer's echo; the turn detector then hears the rest.
     const bargeIn = new BargeIn();
     this.mic = await openMic(
-      (samples, loud, raw) => {
+      (samples, loud, raw, open) => {
         const playing = this.player.playing();
-        if (bargeIn.push(raw, this.player.outputRms(), playing) && playing) {
+        if (bargeIn.push(raw, this.player.outputRms(), playing, open) && playing) {
           this.cutTurn();
           // Out of "speaking", so the turn detector listens at its everyday threshold for the rest of their words.
           this.set({ status: "listening" });
         }
         this.turns?.push(samples, loud, this.state.status === "speaking" || this.player.playing());
       },
-      { whispers: this.opts.whispers },
+      { whispers: this.opts.whispers, gate: this.opts.gate },
     );
     if (this.ended) return this.mic.stop();
     this.mic.setMuted(this.state.muted);

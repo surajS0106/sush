@@ -4783,6 +4783,7 @@ dependencies = [
  "url",
  "windows-sys 0.61.2",
  "x25519-dalek",
+ "zip",
 ]
 
 [[package]]
@@ -6931,6 +6932,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23f17fbc870bfac28c6228aed7d6e6df352e26bf7015c4313727e16a7a01ce5e"
 dependencies = [
  "crc32fast",
+ "flate2",
  "getrandom 0.4.3",
  "indexmap 2.14.2",
  "libc",

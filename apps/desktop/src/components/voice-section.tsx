@@ -18,9 +18,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { logoBySlug } from "@/lib/logos";
 import { api, errorMessage, type VoiceGender, type VoiceInfo, type VoiceProvider } from "@/lib/tauri";
 import { cn } from "@/lib/utils";
-import { Player } from "@/lib/voice-audio";
+import { dbToRms, openMic, Player, rmsToDb, type Mic } from "@/lib/voice-audio";
 import {
   activeProvider,
+  DEFAULT_GATE_DB,
   forgetCatalog,
   modelFor,
   providerInfo,
@@ -121,6 +122,33 @@ export function VoiceSection() {
               aria-label="Pick up whispers"
             />
           </Setting>
+          <Setting
+            title="Input sensitivity"
+            description="Automatic adapts to the room. Set it yourself if background noise keeps cutting in: anything quieter than the line is ignored."
+          >
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              Automatic
+              <Switch
+                checked={!settings.manualGate}
+                onCheckedChange={(auto) => setVoiceModeSettings({ manualGate: !auto })}
+                aria-label="Set input sensitivity automatically"
+              />
+            </label>
+          </Setting>
+          {settings.manualGate && (
+            <SensitivityMeter db={settings.gateDb ?? DEFAULT_GATE_DB} onChange={(gateDb) => setVoiceModeSettings({ gateDb })} />
+          )}
+          <Setting title="In a call" description="What floats above the call's bar: the voice's glass orb, or Sushi talking along with it.">
+            <Segmented
+              label="In a call"
+              value={settings.figure ?? "orb"}
+              onChange={(figure) => setVoiceModeSettings({ figure })}
+              options={[
+                { value: "orb", label: "Orb" },
+                { value: "sushi", label: "Sushi" },
+              ]}
+            />
+          </Setting>
           <div className="flex flex-col gap-2 py-3">
             <div>
               <p className="text-sm font-medium">Personality</p>
@@ -140,6 +168,87 @@ export function VoiceSection() {
 
       {provider && <VoicePicker provider={provider} voices={catalog?.voices ?? null} />}
     </Page>
+  );
+}
+
+const METER_MIN = -80;
+const METER_MAX = -10;
+const meterPct = (db: number) => Math.max(0, Math.min(100, ((db - METER_MIN) / (METER_MAX - METER_MIN)) * 100));
+
+/**
+ * The input gate, set by hand: the mic's live level along a bar, with the gate
+ * as a handle on it (Discord's input sensitivity). The level shows green past
+ * the handle, where the call would hear it. The mic is open only while this shows.
+ */
+function SensitivityMeter({ db, onChange }: { db: number; onChange: (db: number) => void }) {
+  const fill = useRef<HTMLDivElement>(null);
+  const level = useRef(0);
+  const gate = useRef(db);
+  gate.current = db;
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mic: Mic | null = null;
+    let stopped = false;
+    let frame = 0;
+    openMic((_s, _loud, raw) => {
+      // Rise at once, fall slowly, like a peak meter.
+      level.current = Math.max(raw, level.current * 0.85);
+    })
+      .then((m) => {
+        if (stopped) m.stop();
+        else mic = m;
+      })
+      .catch(() => setError("Allow the microphone to see your level."));
+    const draw = () => {
+      const el = fill.current;
+      if (el) {
+        const now = rmsToDb(level.current);
+        el.style.width = `${meterPct(now)}%`;
+        el.dataset.open = String(level.current >= dbToRms(gate.current));
+      }
+      frame = requestAnimationFrame(draw);
+    };
+    frame = requestAnimationFrame(draw);
+    return () => {
+      stopped = true;
+      cancelAnimationFrame(frame);
+      mic?.stop();
+    };
+  }, []);
+
+  return (
+    <div className="pb-3">
+      <div className="relative h-7">
+        <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 overflow-hidden rounded-full bg-muted">
+          <div
+            ref={fill}
+            className="h-full rounded-full bg-amber-500/70 transition-[width] duration-75 data-[open=true]:bg-emerald-500"
+            style={{ width: 0 }}
+          />
+        </div>
+        <input
+          type="range"
+          min={METER_MIN}
+          max={METER_MAX}
+          step={1}
+          value={db}
+          onChange={(e) => onChange(Number(e.target.value))}
+          aria-label="Input sensitivity"
+          aria-valuetext={`${db} dB`}
+          className="peer absolute inset-0 w-full cursor-pointer opacity-0"
+        />
+        <span
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 h-6 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground shadow-sm ring-offset-2 ring-offset-background peer-focus-visible:ring-2 peer-focus-visible:ring-ring/60"
+          style={{ left: `${meterPct(db)}%` }}
+        />
+      </div>
+      <div className="mt-1 flex justify-between text-xs text-muted-foreground">
+        <span>{error ?? "Talk normally: your voice should reach past the line, and the room shouldn't."}</span>
+        <span className="tabular-nums">{db} dB</span>
+      </div>
+    </div>
   );
 }
 

@@ -35,6 +35,7 @@ import { APP_TOOL_NAMES, appToolSpecs, isAppRead, runAppTool } from "@/lib/app-t
 import { ARTIFACT_WRITE, artifactTool, validateArtifact } from "@/lib/artifacts";
 import { ASK_USER, askUserTool } from "@/lib/ask-user";
 import { DOC_TOOL_NAMES, docTools, runDocTool } from "@/lib/docs";
+import { DOCX_EDIT, docxEditTool, runDocxEdit } from "@/lib/files";
 import { AUTOMATION_SAVE, automationSaveTool } from "@/lib/automation-save";
 import { BOARD_SEARCH, BOARD_TOOL_NAMES, BOARD_WRITE, boardSearchTool, boardWriteTool, runBoardTool } from "@/lib/board-tools";
 import { placesOrder } from "@/lib/connector-catalog";
@@ -335,6 +336,7 @@ export function buildContext({
     artifactTool,
     // Docs are stored, so an incognito chat doesn't get them.
     ...(incognito ? [] : docTools),
+    docxEditTool,
     slidesTool,
     ...(images ? [imageTool] : []),
     mapTool,
@@ -375,6 +377,7 @@ export type ToolKind =
   | "automation-save"
   | "artifact"
   | "doc"
+  | "file"
   | "image"
   | "map"
   | "flights"
@@ -428,7 +431,7 @@ export const TOOLS_LOAD = "tools_load";
  * user @-mentioned the connector in the conversation.
  */
 // image_generate is always offered (not here) so "draw me…" starts drawing on the first step.
-const DEFERRED = new Set([SLIDES_WRITE, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, BOARD_SEARCH, BOARD_WRITE, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN, ...APP_TOOL_NAMES]);
+const DEFERRED = new Set([SLIDES_WRITE, DOCX_EDIT, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, BOARD_SEARCH, BOARD_WRITE, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN, ...APP_TOOL_NAMES]);
 
 /** The CRM tools, offered from the start where the CRM is the subject (its page, an @crm message). */
 export const CRM_UNDEFERRED: ReadonlySet<string> = new Set([CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG]);
@@ -452,6 +455,7 @@ export function toolKind(name: string): ToolKind {
   if (name === AUTOMATION_SAVE) return "automation-save";
   if (name === ARTIFACT_WRITE || name === SLIDES_WRITE) return "artifact";
   if (DOC_TOOL_NAMES.has(name)) return "doc";
+  if (name === DOCX_EDIT) return "file";
   if (name === IMAGE_GENERATE) return "image";
   if (name === MAP_SHOW) return "map";
   if (name === FLIGHTS_SEARCH) return "flights";
@@ -487,7 +491,7 @@ export function looksUnsafe(t: ConnectorTool): boolean {
 /** Whether a call can run without the user approving it first. */
 export function runsWithoutApproval(name: string): boolean {
   const kind = toolKind(name);
-  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "doc" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
+  if (kind === "memory" || kind === "chats" || kind === "skill" || kind === "artifact" || kind === "doc" || kind === "file" || kind === "image" || kind === "map" || kind === "flights" || kind === "weather" || kind === "topic" || kind === "web" || kind === "todos") return true;
   // Changes to the Board show what they'll do and ask, unless the user picked Auto.
   // Automations, projects, binders, reports: reads at once, changes ask unless the user picked Auto.
   if (kind === "app") return isAppRead(name) || library.prefs().permissionMode === "auto";
@@ -573,6 +577,8 @@ export async function runTool(name: string, input: unknown, threadId?: string, c
       return invalid ? { errorText: invalid } : { output: `Showed ${args.filename} to the user as an artifact.` };
     }
     if (DOC_TOOL_NAMES.has(name)) return runDocTool(name, input, threadId);
+    // Makes a new version and leaves the old ones, so it needs no approval.
+    if (name === DOCX_EDIT) return runDocxEdit(input, threadId);
     if (name === SLIDES_WRITE) {
       const invalid = validateSlides(args);
       if (invalid) return { errorText: invalid };

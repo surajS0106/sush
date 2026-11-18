@@ -4,8 +4,8 @@
 // One question at a time. The stack slides vertically as you move between
 // questions (the card's height animates to fit), the step counter rolls like an
 // odometer, and the footer uses pill actions: a quiet Skip and a dark Continue.
-// Single-choice answers auto-advance; multi-select waits, and so do dates
-// (`date-question.tsx`), since a range takes more than one press.
+// Picking an option only selects it: the card moves on when you press Continue
+// (Send on the last question) or Enter, never by itself.
 
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CornerDownLeftIcon, XIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
@@ -105,7 +105,6 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
   const [noEnd, setNoEnd] = useState<Record<number, boolean>>({});
   const [travel, setTravel] = useState<Record<number, TravelDetails>>({});
 
-  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
   const measured = useRef(false);
   const [viewportH, setViewportH] = useState<number | undefined>(undefined);
@@ -160,25 +159,9 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
     return () => observer.disconnect();
   }, [qi, ready]);
 
-  useEffect(
-    () => () => {
-      if (advanceTimer.current) clearTimeout(advanceTimer.current);
-    },
-    [],
-  );
-
-  const goTo = (next: number) => {
-    if (advanceTimer.current) clearTimeout(advanceTimer.current);
-    setQi(Math.min(Math.max(next, 0), questions.length - 1));
-  };
-
-  // Read the latest answers even when called from the auto-advance timer.
-  const latest = useRef({ answers, custom, dates, noEnd, travel });
-  latest.current = { answers, custom, dates, noEnd, travel };
+  const goTo = (next: number) => setQi(Math.min(Math.max(next, 0), questions.length - 1));
 
   const send = () => {
-    if (advanceTimer.current) clearTimeout(advanceTimer.current);
-    const { answers, custom, dates, noEnd, travel } = latest.current;
     onSubmit(
       questions.map((q, i) => {
         const range = dates[i];
@@ -214,11 +197,7 @@ export function AskUserCard({ questions, onSubmit, onDismiss }: AskUserCardProps
           : [...picked, index];
       return { ...current, [qi]: next };
     });
-    if (!multi) {
-      setCustom((current) => ({ ...current, [qi]: "" }));
-      if (advanceTimer.current) clearTimeout(advanceTimer.current);
-      advanceTimer.current = setTimeout(advance, 480);
-    }
+    if (!multi) setCustom((current) => ({ ...current, [qi]: "" }));
   };
 
   return (

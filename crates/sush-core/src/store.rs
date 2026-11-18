@@ -921,7 +921,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn decode_data_url(url: &str) -> Option<(String, Vec<u8>)> {
+pub fn decode_data_url(url: &str) -> Option<(String, Vec<u8>)> {
     let rest = url.strip_prefix("data:")?;
     let (head, data) = rest.split_once(',')?;
     let media_type = head.strip_suffix(";base64")?;

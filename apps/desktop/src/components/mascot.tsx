@@ -187,7 +187,7 @@ const EYE_ROLL: Look[] = [
 /** Points round an ellipse for the stars circling its head. */
 const ORBIT = Array.from({ length: 13 }, (_, i) => (i / 12) * Math.PI * 2);
 
-type Run = { x: number; y: number; w: number; fill: string };
+export type Run = { x: number; y: number; w: number; fill: string };
 
 /** Horizontal runs of one colour, so each row is a few rects rather than sixteen. */
 function runs(rows: string[], colors = COLORS, y0 = 0) {
@@ -206,7 +206,7 @@ function runs(rows: string[], colors = COLORS, y0 = 0) {
 }
 
 /** Everything the mascot needs to draw one character. Eyes are 2×2 and drawn on top of the body. */
-interface Character {
+export interface Character {
   width: number;
   height: number;
   /** CSS px per sprite pixel. */
@@ -299,7 +299,7 @@ function avatarCharacter(avatar: AvatarDef): Character {
 
 const characters = new Map<string, Character>([[DEFAULT_MASCOT, SUSHI]]);
 
-function characterFor(key: string): Character {
+export function characterFor(key: string): Character {
   let c = characters.get(key);
   if (!c) {
     const avatar = AVATARS.find((a) => a.key === key);
@@ -347,7 +347,7 @@ function glassesOf(c: Character) {
   return g;
 }
 
-function Pixels({ runs }: { runs: Run[] }) {
+export function Pixels({ runs }: { runs: Run[] }) {
   return runs.map((r, i) => <rect key={i} x={r.x} y={r.y} width={r.w} height={1} fill={r.fill} />);
 }
 

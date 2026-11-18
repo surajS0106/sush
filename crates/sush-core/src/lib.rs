@@ -16,6 +16,7 @@ pub mod mcp;
 pub mod memory;
 pub mod message;
 pub mod notebooks;
+pub mod office;
 pub mod provider;
 pub mod providers;
 pub mod reports;

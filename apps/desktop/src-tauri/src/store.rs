@@ -70,6 +70,80 @@ pub async fn blob_data_url(state: State<'_, AppState>, url: String) -> AppResult
     Ok(format!("data:{media_type};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
+/// A Word document after `docx_edit`: the new version's blob URL, and its text for the model.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocxEdited {
+    url: String,
+    text: String,
+}
+
+/// Apply edits to a Word document, a stored blob or a `data:` URL (an attachment), keeping its
+/// formatting, and store the result as a new blob. The source is left as it was, so every version
+/// stays available.
+#[tauri::command]
+pub async fn docx_edit(state: State<'_, AppState>, source: String, edits: Vec<sush_core::office::edit::Edit>) -> AppResult<DocxEdited> {
+    use sush_core::office;
+    let store = state.store.clone();
+    blocking(move || {
+        let bytes = match sush_core::store::blob_sha(&source) {
+            Some(sha) => store.blob(sha)?.ok_or_else(|| AppError::NotFound("That version of the file is no longer stored.".into()))?.1,
+            None => sush_core::store::decode_data_url(&source).ok_or_else(|| AppError::Invalid("The file's data was malformed.".into()))?.1,
+        };
+        let edited = office::edit::edit_docx(&bytes, &edits).map_err(AppError::Invalid)?;
+        let text = office::extract(office::Kind::Word, &edited).unwrap_or_default();
+        let url = store.put_blob(office::DOCX_MEDIA_TYPE, &edited)?;
+        Ok(DocxEdited { url, text })
+    })
+    .await
+}
+
+/// A Word document's pages as a PDF, for its preview: the PDF's blob URL, or why there's none.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocxPdf {
+    url: Option<String>,
+    /// Neither Word nor LibreOffice is installed, so the UI draws an approximation.
+    no_engine: bool,
+    error: Option<String>,
+}
+
+/// PDFs already made this session, by the document's blob URL. Versions never change, so these
+/// stay right; a restart converts again.
+static PDFS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = std::sync::LazyLock::new(Default::default);
+/// One conversion at a time: each starts Word or LibreOffice.
+static CONVERTING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Lay a Word document (a blob or `data:` URL) out as a PDF with Word or LibreOffice
+/// (`sush_core::office::render`), so the panel shows the pages exactly as Word would.
+#[tauri::command]
+pub async fn docx_pdf(state: State<'_, AppState>, source: String) -> AppResult<DocxPdf> {
+    use sush_core::office::{self, render};
+    let store = state.store.clone();
+    blocking(move || {
+        let bytes = match sush_core::store::blob_sha(&source) {
+            Some(sha) => store.blob(sha)?.ok_or_else(|| AppError::NotFound("That version of the file is no longer stored.".into()))?.1,
+            None => sush_core::store::decode_data_url(&source).ok_or_else(|| AppError::Invalid("The file's data was malformed.".into()))?.1,
+        };
+        // Content-addressed, so the same document gets the same key however it was attached.
+        let key = store.put_blob(office::DOCX_MEDIA_TYPE, &bytes)?;
+        let _turn = CONVERTING.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(url) = PDFS.lock().unwrap().get(&key) {
+            return Ok(DocxPdf { url: Some(url.clone()), no_engine: false, error: None });
+        }
+        match render::docx_to_pdf(&bytes) {
+            Ok(pdf) => {
+                let url = store.put_blob("application/pdf", &pdf)?;
+                PDFS.lock().unwrap().insert(key, url.clone());
+                Ok(DocxPdf { url: Some(url), no_engine: false, error: None })
+            }
+            Err(render::RenderError::NoEngine) => Ok(DocxPdf { url: None, no_engine: true, error: None }),
+            Err(e) => Ok(DocxPdf { url: None, no_engine: false, error: Some(e.to_string()) }),
+        }
+    })
+    .await
+}
+
 /// Largest image `image_fetch` will download.
 const MAX_IMAGE_BYTES: usize = 15 * 1024 * 1024;
 

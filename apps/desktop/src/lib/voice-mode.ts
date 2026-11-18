@@ -5,6 +5,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
+import { dbToRms } from "@/lib/voice-audio";
 import { api, type VoiceCatalog, type VoiceProvider } from "@/lib/tauri";
 
 export interface VoiceProviderInfo {
@@ -70,7 +71,19 @@ export interface VoiceModeSettings {
   personality: string;
   /** Lift quiet speech so a whisper is heard. Missing (older settings) counts as on. */
   whispers?: boolean;
+  /** What stands above the bar in a call: the voice's glass orb, or Sushi. Missing (older settings) is the orb. */
+  figure?: VoiceFigure;
+  /** Input sensitivity set by hand (a gate at `gateDb`) instead of automatically. Missing is automatic. */
+  manualGate?: boolean;
+  /** The gate, in dBFS: sound quieter than this never reaches the call. */
+  gateDb?: number;
 }
+
+export const DEFAULT_GATE_DB = -50;
+/** The gate the call uses, as an RMS level; 0 when sensitivity is automatic. */
+export const gateFor = (s: VoiceModeSettings) => (s.manualGate ? dbToRms(s.gateDb ?? DEFAULT_GATE_DB) : 0);
+
+export type VoiceFigure = "orb" | "sushi";
 
 const settings = createStore<VoiceModeSettings>("sush.voice-mode", {
   provider: null,
@@ -79,6 +92,7 @@ const settings = createStore<VoiceModeSettings>("sush.voice-mode", {
   sarvamBrain: "sarvam",
   personality: "",
   whispers: true,
+  figure: "orb",
 });
 
 export const useVoiceModeSettings = () => useSyncExternalStore(settings.subscribe, settings.get);

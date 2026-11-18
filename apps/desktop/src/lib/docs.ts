@@ -13,6 +13,8 @@ import { useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { DIAGRAM_GUIDE } from "@/lib/diagram";
+// Only called, never read at load, so these modules importing each other is fine.
+import { closeFile } from "@/lib/files";
 import { closeDeck } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type Doc, type ToolSpec } from "@/lib/tauri";
@@ -320,6 +322,7 @@ function setPanel(threadId: string, state: DocPanelState | null) {
 /** Show a doc beside the chat, in place of an open deck. */
 export function openDoc(threadId: string, id: string, callId?: string) {
   closeDeck(threadId);
+  closeFile(threadId);
   setPanel(threadId, { docId: id, callId, expanded: panels.get().get(threadId)?.expanded ?? false });
 }
 export const closeDoc = (threadId: string) => setPanel(threadId, null);

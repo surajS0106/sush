@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::message::{ChatEvent, Message, Part, Role};
+use crate::office;
 use crate::store::blob_sha;
 
 /// Result given for a tool call the user moved on from; providers reject a call without one.
@@ -539,6 +540,9 @@ fn file_part(url: &str, media_type: &str, filename: Option<&str>) -> Option<Part
     if media_type == "application/pdf" {
         return Some(Part::Document { media_type: data_type.into(), data: data.into(), name: Some(name) });
     }
+    if let Some(kind) = office::kind(media_type, filename) {
+        return Some(Part::Text { text: office_text(kind, &name, data) });
+    }
     let text = if is_text_type(media_type) { decode_text(data) } else { None };
     let Some(text) = text else {
         let kind = if media_type.is_empty() { "unknown type" } else { media_type };
@@ -548,6 +552,27 @@ fn file_part(url: &str, media_type: &str, filename: Option<&str>) -> Option<Part
         return Some(Part::Text { text });
     }
     Some(Part::Text { text: format!("<file name=\"{name}\">\n{text}\n</file>") })
+}
+
+/// An Office attachment converted to text. Models can't read the files themselves, nor send one
+/// back, so a Word file comes with how to change it: `docx_edit`, which edits the file itself
+/// into a new version the user sees beside the chat (`office::edit`).
+fn office_text(kind: office::Kind, name: &str, base64: &str) -> String {
+    let label = kind.label();
+    let text = base64::engine::general_purpose::STANDARD.decode(base64).ok().and_then(|bytes| office::extract(kind, &bytes));
+    let Some(text) = text else {
+        return format!("[Attached {name} ({label}): its text couldn't be read. It may be empty, password-protected or damaged.]");
+    };
+    let mut out = format!("<file name=\"{name}\" type=\"{label}, converted to text\">\n{text}\n</file>");
+    if kind == office::Kind::Word {
+        out.push_str(&format!(
+            "\n[To change this document, call docx_edit with file \"{name}\" (load it with tools_load first if it isn't \
+             offered). It edits the Word file itself, keeping its layout and formatting, and the user sees each new \
+             version beside the chat and can download it. Don't rewrite the document in your reply or as a doc unless \
+             the user asks for a new document.]"
+        ));
+    }
+    out
 }
 
 fn is_text_type(media_type: &str) -> bool {

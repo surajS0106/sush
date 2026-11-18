@@ -50,5 +50,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev pkg-config cmake libclang-dev
       - uses: dtolnay/rust-toolchain@stable
+      # whisper.cpp's CMakeCache in target/ records compiler paths; a new runner image (a new MSVC on
+      # Windows) must not reuse it, so the image is part of the cache key.
+      - name: Name the runner image
+        shell: bash
+        run: echo "RUNNER_IMAGE=${ImageOS:-$RUNNER_OS}-${ImageVersion:-none}" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ env.RUNNER_IMAGE }}
       - run: cargo test --workspace

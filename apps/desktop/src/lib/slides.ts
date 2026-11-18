@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 import { DEFAULT_THEME, isLayout, isTheme, LAYOUT_GUIDE, LAYOUTS, THEME_NAMES, themeCss, type Layout, type ThemeName } from "@/lib/slide-themes";
 // Only called, never read at load, so the two modules importing each other is fine.
 import { closeDoc } from "@/lib/docs";
+import { closeFile } from "@/lib/files";
 import { createStore } from "@/lib/store";
 import { api, type ToolSpec } from "@/lib/tauri";
 import type { SushUIMessage } from "@/lib/transport";
@@ -209,6 +210,7 @@ function setPanel(threadId: string, state: DeckPanelState | null) {
 /** Show a deck beside the chat, in place of an open doc. */
 export function openDeck(threadId: string, deckId: string, version: number | null = null) {
   closeDoc(threadId);
+  closeFile(threadId);
   setPanel(threadId, { deckId, version, expanded: panels.get().get(threadId)?.expanded ?? false });
 }
 export const closeDeck = (threadId: string) => setPanel(threadId, null);
