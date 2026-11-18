@@ -28,7 +28,9 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
+import type { Schema } from "hast-util-sanitize";
+import { defaultRehypePlugins, Streamdown } from "streamdown";
+import type { Pluggable } from "unified";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -323,6 +325,27 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
 const streamdownPlugins = { cjk, code, math, mermaid };
 
+// Streamdown's sanitize schema only keeps http(s)/mailto/tel hrefs, so the app's own link
+// schemes (`sushsrc:` passage citations, `yammer://` meetings) lost their href and
+// rehype-harden then rendered them as "[blocked]". Allow those two schemes; the
+// citation components decide what a click does, and harden still runs after.
+const APP_LINK_SCHEMES = ["sushsrc", "yammer"];
+const [sanitizePlugin, sanitizeSchema] = defaultRehypePlugins.sanitize as unknown as [Pluggable, Schema];
+const rehypePlugins = [
+  defaultRehypePlugins.raw,
+  [
+    sanitizePlugin,
+    {
+      ...sanitizeSchema,
+      protocols: {
+        ...sanitizeSchema.protocols,
+        href: [...(sanitizeSchema.protocols?.href ?? []), ...APP_LINK_SCHEMES],
+      },
+    },
+  ],
+  defaultRehypePlugins.harden,
+] as Pluggable[];
+
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
@@ -331,6 +354,7 @@ export const MessageResponse = memo(
         className
       )}
       plugins={streamdownPlugins}
+      rehypePlugins={rehypePlugins}
       {...props}
     />
   ),

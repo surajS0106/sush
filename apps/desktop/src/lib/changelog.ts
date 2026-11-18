@@ -32,6 +32,7 @@ export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
+  { kind: "fixed", text: "Citations in Binder answers show as numbered markers again, instead of \"cite [blocked]\". Links to Yammer meetings in answers work again too." },
 ];
 
 /** Released versions, newest first. */
