@@ -53,15 +53,19 @@ export async function checkForUpdate(quiet = false) {
 
 /**
  * One plain check, as Yammer does. Only a feed that answered badly (GitHub's brief 5xx) gets a second
- * quick try; a slow or unreachable feed fails at once rather than leaving "Checking…" up for a minute.
+ * quick try; an unreachable feed fails rather than leaving "Checking…" up for a minute. The timeout
+ * covers github.com's redirect plus the download from release-assets.githubusercontent.com, whose
+ * connect alone can take several seconds on some networks (7.5 s seen), so 10 s was too tight.
  */
+const CHECK_TIMEOUT_MS = 30_000;
+
 async function checkWithRetry(): Promise<Update | null> {
   try {
-    return await check({ timeout: 10_000 });
+    return await check({ timeout: CHECK_TIMEOUT_MS });
   } catch (e) {
     if (!/valid release JSON/i.test(e instanceof Error ? e.message : String(e))) throw e;
     await new Promise((r) => setTimeout(r, 1000));
-    return await check({ timeout: 10_000 });
+    return await check({ timeout: CHECK_TIMEOUT_MS });
   }
 }
 

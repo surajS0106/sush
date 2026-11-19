@@ -31,7 +31,9 @@ export interface Release {
 export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "fixed", text: "Checking for updates no longer fails with “Couldn't reach the update server” on networks where GitHub's downloads are slow to connect." },
+];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
