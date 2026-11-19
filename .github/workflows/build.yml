@@ -80,15 +80,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       # whisper.cpp's CMakeCache in target/ records compiler paths; a new runner image (a new MSVC on
-      # Windows) must not reuse it, so the image is part of the cache key.
+      # Windows) must not reuse it, so the image is part of the cache key. It goes in shared-key:
+      # rust-cache leaves `key` out of the cache key when shared-key is set.
       - name: Name the runner image
         shell: bash
         run: echo "RUNNER_IMAGE=${ImageOS:-$RUNNER_OS}-${ImageVersion:-none}" >> "$GITHUB_ENV"
       # Only main saves caches: every other ref (a tag's fallback build) can read main's.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: release-${{ matrix.target }}
-          key: ${{ env.RUNNER_IMAGE }}
+          shared-key: release-${{ matrix.target }}-${{ env.RUNNER_IMAGE }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # Bun's download cache (Windows spent over a minute in bun install).
       - uses: actions/cache@v4
