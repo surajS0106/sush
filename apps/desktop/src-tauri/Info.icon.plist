@@ -11,5 +11,9 @@
 	<string>Sush uses your location when you choose to share it with a chat, such as for directions.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Sush uses your location when you choose to share it with a chat, such as for directions.</string>
+	<!-- WebKit leaves navigator.mediaDevices undefined without it, so dictation
+	     and voice mode can't open the mic (src/lib/speech.ts, voice-audio.ts). -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sush uses the microphone for dictation and voice mode.</string>
 </dict>
 </plist>

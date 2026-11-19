@@ -97,9 +97,22 @@ export interface Recording {
   cancel(): void;
 }
 
+/**
+ * `navigator.mediaDevices.getUserMedia`, with a readable error where the webview doesn't offer it
+ * (on macOS, WebKit hides `mediaDevices` from an app without `NSMicrophoneUsageDescription`).
+ */
+export function getMicrophone(audio: MediaTrackConstraints): Promise<MediaStream> {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    return Promise.reject(new Error("The microphone isn't available in this window. Restart Sush and try again."));
+  }
+  return navigator.mediaDevices.getUserMedia({ audio });
+}
+
 export async function startRecording(): Promise<Recording> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+  const stream = await getMicrophone({
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
   });
   // The context resamples the mic to 16 kHz, which is what speech models expect.
   const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });

@@ -2,6 +2,8 @@
 // that queues the model's audio gaplessly and can stop dead when the user cuts
 // in, and a small voice-activity detector for the turn-by-turn providers.
 
+import { getMicrophone } from "@/lib/speech";
+
 /** Realtime voice APIs take and give 24 kHz 16-bit mono PCM. */
 export const VOICE_RATE = 24_000;
 /** One mic chunk: 2048 samples, about 85 ms. */
@@ -67,9 +69,12 @@ export async function openMic(
   onChunk: (samples: Float32Array, loudness: number, raw: number, open: boolean) => void,
   { whispers = false, gate = 0 } = {},
 ): Promise<Mic> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    // Echo cancellation keeps the model's own voice out of the mic, so it doesn't interrupt itself.
-    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+  // Echo cancellation keeps the model's own voice out of the mic, so it doesn't interrupt itself.
+  const stream = await getMicrophone({
+    channelCount: 1,
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
   });
   const ctx = new AudioContext({ sampleRate: VOICE_RATE });
   const source = ctx.createMediaStreamSource(stream);
