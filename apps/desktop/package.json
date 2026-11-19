@@ -2,7 +2,7 @@
   "name": "desktop",
   "private": true,
   "license": "MIT",
-  "version": "2.14.1",
+  "version": "2.15.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
