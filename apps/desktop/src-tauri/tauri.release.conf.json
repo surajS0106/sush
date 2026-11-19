@@ -13,7 +13,7 @@
     "externalBin": ["binaries/sush-auth"],
     "resources": { "../../viewer/dist/": "viewer/" },
     "windows": {
-      "nsis": { "compression": "zlib" }
+      "nsis": { "compression": "zlib", "installerHooks": "./windows/installer-hooks.nsh" }
     }
   }
 }

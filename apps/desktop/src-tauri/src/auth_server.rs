@@ -52,6 +52,22 @@ pub struct Dirs {
     pub viewer: Option<PathBuf>,
 }
 
+/// Kept in the app's resource table: stops the server when the table is cleared
+/// (`AppHandle::cleanup_before_exit`), which the updater does just before it
+/// starts the installer and exits, so the installer can replace `sush-auth.exe`.
+pub struct StopOnCleanup(pub tauri::AppHandle);
+
+impl tauri::Resource for StopOnCleanup {}
+
+impl Drop for StopOnCleanup {
+    fn drop(&mut self) {
+        use tauri::Manager;
+        if let Some(server) = self.0.try_state::<AuthServer>() {
+            server.stop();
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct AuthServer {
     child: Mutex<Option<Child>>,

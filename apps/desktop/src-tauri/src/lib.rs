@@ -95,6 +95,9 @@ pub fn run() {
                     viewer: app.path().resource_dir().ok().map(|d| d.join("viewer")),
                 })?;
                 app.manage(server);
+                // Installing an update on Windows exits through `std::process::exit` without
+                // `RunEvent::Exit`; the updater calls `cleanup_before_exit` first, which drops this.
+                app.resources_table().add(auth_server::StopOnCleanup(app.handle().clone()));
             }
             Ok(())
         })

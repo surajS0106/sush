@@ -28,10 +28,12 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Updating on Windows works first time again.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "fixed", text: "Updating on Windows no longer stops with “Error opening file for writing: sush-auth.exe”. Sush now closes its background sign-in server before the installer runs." },
+];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
