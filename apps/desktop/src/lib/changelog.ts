@@ -28,11 +28,12 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Updating on Windows works first time again.";
+export const UNRELEASED_SUMMARY = "Updating on Windows works first time again, and dictation and voice mode can use the mic on macOS.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
   { kind: "fixed", text: "Updating on Windows no longer stops with “Error opening file for writing: sush-auth.exe”. Sush now closes its background sign-in server before the installer runs." },
+  { kind: "fixed", text: "Dictation and voice mode on macOS can open the microphone again. Sush now asks for microphone access the first time you use them." },
 ];
 
 /** Released versions, newest first. */
