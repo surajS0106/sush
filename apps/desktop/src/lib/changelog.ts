@@ -28,15 +28,21 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Checking for updates works on slower networks.";
+export const UNRELEASED_SUMMARY = "";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [
-  { kind: "fixed", text: "Checking for updates no longer fails with “Couldn't reach the update server” on networks where GitHub's downloads are slow to connect." },
-];
+export const UNRELEASED: Change[] = [];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
+  {
+    version: "2.14.2",
+    date: "2026-11-20",
+    summary: "Checking for updates works on slower networks.",
+    changes: [
+      { kind: "fixed", text: "Checking for updates no longer fails with “Couldn't reach the update server” on networks where GitHub's downloads are slow to connect." },
+    ],
+  },
   {
     version: "2.14.1",
     date: "2026-11-19",
