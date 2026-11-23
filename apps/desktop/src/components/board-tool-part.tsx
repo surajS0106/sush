@@ -9,8 +9,17 @@ import { ToolResultRow } from "@/components/tool-approval-card";
 import { Button } from "@/components/ui/button";
 import { LoadingState } from "@/components/ui/loading-state";
 import { runsWithoutApproval, type ToolResult } from "@/lib/agent";
-import { getTasks, type Task } from "@/lib/board";
-import { applyBoardWrite, BOARD_SEARCH, planBoardWrite, TASK_FIELD_LABELS, taskFieldText, type PlannedTaskChange } from "@/lib/board-tools";
+import { focusTask, getTasks, useTasks, type Task } from "@/lib/board";
+import {
+  applyBoardWrite,
+  BOARD_SEARCH,
+  planBoardWrite,
+  TASK_FIELD_LABELS,
+  taskFieldText,
+  writtenTaskIds,
+  type PlannedTaskChange,
+} from "@/lib/board-tools";
+import { openBoard } from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { useWorkspaces } from "@/lib/workspaces";
 
@@ -54,11 +63,42 @@ export function BoardToolPart({
   }
 
   if (part.state === "input-streaming") return <LoadingState label="Drafting Board changes" />;
-  if (part.state === "output-available") return row("Updated your Board", false, String(part.output));
+  if (part.state === "output-available") return <UpdatedRow input={part.input} output={part.output} />;
   if (part.state === "output-error") return row(part.errorText === DISCARDED ? "Board changes discarded" : "Board not changed", part.errorText !== DISCARDED, part.errorText);
   if (running || runsWithoutApproval(part.toolName)) return <LoadingState label="Updating your Board" />;
   if (!canAnswer) return <p className="text-sm text-muted-foreground italic">Board wasn't changed</p>;
   return <WriteCard input={part.input} onResult={onResult} />;
+}
+
+/** "Updated your Board", with a link to the task it touched (still on the Board), or to the Board for several. */
+function UpdatedRow({ input, output }: { input: unknown; output: unknown }) {
+  const tasks = useTasks();
+  const ids = useMemo(() => writtenTaskIds(input, output), [input, output]);
+  const live = ids.filter((id) => tasks.some((t) => t.id === id));
+  const one = live.length === 1 ? live[0] : null;
+  return (
+    <ToolResultRow
+      detail={String(output)}
+      label={
+        <>
+          <KanbanIcon className="size-4 shrink-0" />
+          <span className="line-clamp-1 text-left">Updated your Board</span>
+        </>
+      }
+      action={
+        <button
+          type="button"
+          className="shrink-0 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          onClick={() => {
+            if (one) focusTask(one);
+            openBoard();
+          }}
+        >
+          {one ? "Open task" : "Open Board"}
+        </button>
+      }
+    />
+  );
 }
 
 function WriteCard({ input, onResult }: { input: unknown; onResult: (r: ToolResult) => void }) {

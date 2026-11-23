@@ -35,6 +35,7 @@ import {
 import { LoadingState } from "@/components/ui/loading-state";
 import { ResizeHandle } from "@/components/ui/resize-handle";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { stripProviderCitations } from "@/lib/citations";
 import {
   closeDoc,
   useDocs,
@@ -252,7 +253,7 @@ function DocReading({ title, icon, content, streaming }: { title: string; icon?:
     <div className="doc-gutter pb-24">
       {icon && <div className="mb-2 p-1 text-4xl leading-none">{icon}</div>}
       <h1 className="doc-title mb-6">{title}</h1>
-      {splitDiagrams(content).map((seg, i, all) =>
+      {splitDiagrams(stripProviderCitations(content)).map((seg, i, all) =>
         seg.kind === "text" ? (
           <MessageResponse key={i} className="doc-reading" isAnimating={streaming && i === all.length - 1}>
             {seg.text}

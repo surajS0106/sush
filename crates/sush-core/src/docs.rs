@@ -201,6 +201,7 @@ pub fn apply_tool(name: &str, thread_id: &str, existing: Option<Doc>, input: &Va
             check_size(&content)?;
             let note = str_field(input, "note").map(str::trim).filter(|n| !n.is_empty());
             let icon = clean_icon(str_field(input, "icon"));
+            let revised = existing.is_some();
             let doc = match existing {
                 None => Doc::new(doc_id(thread_id, &slug), slug, Some(thread_id.into()), title, icon, content, Author::Sush, note.unwrap_or("Created").into(), now),
                 Some(mut doc) => {
@@ -215,12 +216,15 @@ pub fn apply_tool(name: &str, thread_id: &str, existing: Option<Doc>, input: &Va
                     doc
                 }
             };
-            let output = format!(
+            let mut output = format!(
                 "Showed \"{}\" ({} words) to the user as a doc they can edit and share (v{}).",
                 doc.title,
                 doc.word_count(),
                 doc.versions.last().map_or(1, |v| v.number)
             );
+            if revised {
+                output.push_str(" Make any further changes with doc_edit, not by rewriting the whole doc.");
+            }
             Ok(ToolOutcome { doc: Some(doc), output })
         }
         DOC_READ => {
@@ -246,13 +250,15 @@ pub fn apply_tool(name: &str, thread_id: &str, existing: Option<Doc>, input: &Va
             for (i, e) in edits.iter().enumerate() {
                 let find = str_field(e, "find").filter(|f| !f.is_empty()).ok_or_else(|| format!("Edit {} has no `find` text.", i + 1))?;
                 let replace = str_field(e, "replace").unwrap_or("");
+                let all = e.get("all").and_then(Value::as_bool).unwrap_or(false);
                 match content.matches(find).count() {
+                    n if n >= 1 && all => content = content.replace(find, replace),
                     1 => content = content.replacen(find, replace, 1),
                     0 => {
                         let hint = if doc.rev != doc.seen_rev { " The user has edited the doc since you last saw it; call doc_read." } else { " Call doc_read to see the current text." };
                         return Err(format!("Edit {}: the `find` text isn't in the doc. No edits were made.{hint}", i + 1));
                     }
-                    n => return Err(format!("Edit {}: the `find` text is in the doc {n} times; include more of the surrounding text so it's unique. No edits were made.", i + 1)),
+                    n => return Err(format!("Edit {}: the `find` text is in the doc {n} times; include more of the surrounding text so it's unique, or set `all` to replace every one. No edits were made.", i + 1)),
                 }
             }
             check_size(&content)?;
@@ -451,6 +457,8 @@ mod tests {
         let done = edit(&doc, json!([{ "find": "alpha", "replace": "a" }, { "find": "gamma", "replace": "g" }])).unwrap().doc.unwrap();
         assert_eq!(done.content, "a beta beta g");
         assert_eq!(done.versions.len(), 2);
+        let every = edit(&doc, json!([{ "find": "beta", "replace": "b", "all": true }])).unwrap().doc.unwrap();
+        assert_eq!(every.content, "alpha b b gamma");
     }
 
     #[test]

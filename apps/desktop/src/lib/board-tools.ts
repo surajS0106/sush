@@ -225,6 +225,21 @@ export function applyBoardWrite(changes: PlannedTaskChange[]): Result {
   return { output: `Done: ${done.join("; ")}. The tasks are on the Board page.` };
 }
 
+/** The tasks a finished board_write added or changed (deleted ones left out), from its input and output. */
+export function writtenTaskIds(input: unknown, output: unknown): string[] {
+  const ids: string[] = [];
+  const items = (input as { tasks?: unknown })?.tasks;
+  if (Array.isArray(items)) {
+    for (const raw of items as Args[]) {
+      const id = str(raw?.id);
+      if (id && raw.delete !== true) ids.push(id);
+    }
+  }
+  // Added tasks get their ids on apply: `added "Title" (<id>, …`.
+  for (const m of String(output ?? "").matchAll(/added ".*?" \(([0-9a-f-]{36}),/g)) ids.push(m[1]);
+  return [...new Set(ids)];
+}
+
 /** Run a Board tool unasked: the search always, the write in Auto mode. Never throws. */
 export function runBoardTool(name: string, args: Args): Result {
   try {

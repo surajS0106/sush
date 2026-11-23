@@ -40,11 +40,14 @@ import {
   columnsFor,
   createTask,
   deleteTask,
+  focusTask,
+  getTask,
   moveTask,
   PRIORITIES,
   setBoardView,
   STATUSES,
   updateTask,
+  useBoardFocus,
   useBoardView,
   useTasks,
   type BoardSort,
@@ -87,6 +90,14 @@ export function BoardPage({
   const conversations = useConversations();
   const [query, setQuery] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
+  // A task asked for from elsewhere (a chat's Board card): open it, once.
+  const focused = useBoardFocus();
+  useEffect(() => {
+    if (!focused) return;
+    focusTask(null);
+    const task = getTask(focused);
+    if (task) setEditing({ task });
+  }, [focused]);
 
   const liveSessions = (t: Task) => t.sessionIds.filter((id) => conversations.some((c) => c.id === id && c.messages.length > 0));
   const folderName = (id: string | undefined) => (id ? workspaces.find((w) => w.id === id)?.name : undefined);

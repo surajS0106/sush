@@ -362,7 +362,33 @@ fn parse_args(args: &str) -> Value {
     if args.is_empty() {
         return json!({});
     }
-    serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.into()))
+    let mut input = serde_json::from_str(args).unwrap_or_else(|_| Value::String(args.into()));
+    strip_provider_citations_in(&mut input);
+    input
+}
+
+/// OpenAI models with the built-in web search write citations as private-use
+/// tokens (`\u{e200}cite\u{e202}turn12search0\u{e201}`) that point at results by an
+/// id only OpenAI's own app resolves, and that changes with every search. In a tool
+/// call's arguments (a doc, a file) they show as junk, and replayed to the model they
+/// read as broken citations it then keeps rewriting the whole doc to fix. Drop them.
+pub fn strip_provider_citations(s: &str) -> std::borrow::Cow<'_, str> {
+    static MARKER: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new("[ \t]?\u{e200}[^\u{e201}\n]*\u{e201}|[\u{e200}-\u{e202}]").unwrap());
+    MARKER.replace_all(s, "")
+}
+
+fn strip_provider_citations_in(v: &mut Value) {
+    match v {
+        Value::String(s) => {
+            if let std::borrow::Cow::Owned(clean) = strip_provider_citations(s) {
+                *s = clean;
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_provider_citations_in),
+        Value::Object(map) => map.values_mut().for_each(strip_provider_citations_in),
+        _ => {}
+    }
 }
 
 // --- citations ------------------------------------------------------------------------
@@ -643,6 +669,14 @@ mod tests {
         );
         assert_eq!(calls, vec![ToolCall { id: "c1".into(), name: "memory_write".into(), input: json!({ "path": "profile" }) }]);
         assert_eq!(unresolved_calls(&messages).len(), 1);
+    }
+
+    #[test]
+    fn provider_citation_tokens_are_dropped_from_tool_input() {
+        let args = r#"{"content":"Plus is $10. citeturn580928search0\n\n| a |","tags":["xciteturn1search2"]}"#;
+        let (_, calls) = run(vec![ChatEvent::ToolCallDelta { index: 0, id: Some("c1".into()), name: Some("doc_write".into()), args_delta: args.into() }]);
+        assert_eq!(calls[0].input, json!({ "content": "Plus is $10.\n\n| a |", "tags": ["x"] }));
+        assert_eq!(strip_provider_citations("plain"), "plain");
     }
 
     #[test]

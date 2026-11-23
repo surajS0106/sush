@@ -28,10 +28,13 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Jump from a chat straight to the Board task it changed, and cleaner docs from OpenAI models.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "improved", text: "When Sush adds or changes a task on your Board, “Open task” in the chat takes you straight to it." },
+  { kind: "fixed", text: "Docs written by OpenAI models no longer show stray citation codes like “citeturn0search0”, and Sush changes only the part of a doc that needs fixing instead of rewriting the whole thing." },
+];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [

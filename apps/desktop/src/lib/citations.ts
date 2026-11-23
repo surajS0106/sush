@@ -16,6 +16,13 @@ export const isCitationText = (text: unknown) => text === CITE_TEXT;
 /** Text without its citation markers, for copying and for sending back to the model. */
 export const stripCitations = (text: string) => text.replace(CITE_RE, "").replace(PHOTOS_RE, "");
 
+// OpenAI's own citation tokens (`citeturn1search0`), which its models write into tool
+// arguments; Rust drops them (`strip_provider_citations`), this catches docs written before that.
+const PROVIDER_CITE_RE = /[ \t]?[^\n]*|[-]/g;
+
+/** Text without OpenAI's citation tokens, which nothing outside OpenAI's own app can resolve. */
+export const stripProviderCitations = (text: string) => text.replace(PROVIDER_CITE_RE, "");
+
 /** A piece of assistant text, or the `topic_lookup` photos the model placed there by number. */
 export type TextSegment = { text: string } | { photos: number[] };
 

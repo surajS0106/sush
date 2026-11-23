@@ -83,6 +83,11 @@ export const getTask = (id: string) => tasks.get().find((t) => t.id === id);
 export const useBoardView = () => useSyncExternalStore(view.subscribe, view.get);
 export const setBoardView = (patch: Partial<BoardView>) => view.set((v) => ({ ...v, ...patch }));
 
+/** A task the Board page should open once it shows, e.g. from a chat's "Updated your Board" row. Taken once. */
+const focus = createStore<string | null>("sush.board.focus", null, false);
+export const useBoardFocus = () => useSyncExternalStore(focus.subscribe, focus.get);
+export const focusTask = (id: string | null) => focus.set(id);
+
 export type TaskDraft = Pick<Task, "title" | "description" | "priority" | "status" | "workspaceId">;
 
 /** Adds a task at the end of its column. */

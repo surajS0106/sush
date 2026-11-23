@@ -406,11 +406,16 @@ export const closeSettings = () => settings.set(null);
 // --- page requests -------------------------------------------------------------
 
 /** A sidebar page App should show, asked for from outside the sidebar. `id` tells repeat requests apart. */
-const pageRequest = createStore<{ id: string; page: "connectors" } | null>("sush.pageRequest", null, false);
+const pageRequest = createStore<{ id: string; page: "connectors" | "board" } | null>("sush.pageRequest", null, false);
 export const usePageRequest = () => use(pageRequest);
 export function openConnectors() {
   closeSettings();
   pageRequest.set({ id: crypto.randomUUID(), page: "connectors" });
+}
+/** The Board page; pair with `focusTask` (`lib/board.ts`) to open a task on it. */
+export function openBoard() {
+  closeSettings();
+  pageRequest.set({ id: crypto.randomUUID(), page: "board" });
 }
 
 // --- chat requests -------------------------------------------------------------

@@ -6,6 +6,7 @@
 import { BlockNoteEditor, BlockNoteSchema, defaultBlockSpecs } from "@blocknote/core";
 
 import { DiagramBlock } from "@/components/doc-diagram-block";
+import { stripProviderCitations } from "@/lib/citations";
 import { codeBlockSpec } from "@/lib/doc-code-block";
 
 /** Code block languages, keyed by Shiki's language id (what highlighting loads). */
@@ -62,7 +63,8 @@ const FENCE = /^(```|~~~)(diagram|mermaid)[^\n]*\n([\s\S]*?)^\1[ \t]*$/gm;
  * so fences become diagram blocks here and the text between them goes to BlockNote.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function markdownToBlocks(editor: DocEditor, markdown: string): any[] {
+export function markdownToBlocks(editor: DocEditor, source: string): any[] {
+  const markdown = stripProviderCitations(source);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const out: any[] = [];
   let at = 0;

@@ -40,7 +40,9 @@ const DOC_TEMPLATE =
   "(3) The body: 3 to 6 '##' sections in a logical order, each opening with a sentence of context before any list; " +
   "'###' for sub-parts (e.g. one per plan, step or option); never a bold line standing in for a heading. " +
   "(4) Close with '## Recommendations', '## Next steps' (as '- [ ]' to-dos) or '## Key takeaways', whichever fits. " +
-  "(5) When you used web pages, end with '## Sources': a bulleted list of [Page title](url) links. " +
+  "(5) When you used web pages, end with '## Sources': a bulleted list of [Page title](url) links. Cite only with " +
+  "Markdown links to real URLs, inline or in Sources; never citation markers or tokens (like 'cite', 'turn0search0'), " +
+  "which the doc can't show. " +
   "Style: sentence-case headings without emoji or numbering; paragraphs of at most four sentences; bullets that are " +
   "parallel and brief (one line where possible, no full stops on fragments); bold only for key terms, never whole " +
   "sentences or table cells; tables for comparisons of 3+ items across 2+ attributes, not for prose; numbered lists " +
@@ -59,8 +61,9 @@ export const docWriteTool: ToolSpec = {
     "to keep, edit or pass on (e.g. 'how do I sell X', 'write a launch plan'). Use artifact_write instead for code and files " +
     "in a given format, and slides_write for presentations. Research first when facts matter, then write the doc in one go. " +
     DOC_TEMPLATE +
-    " Content is GitHub Markdown without the title (the title is shown above it). Always pass the complete content; to " +
-    "change part of an existing doc use doc_edit. The user may edit docs themselves: if they have since you last saw one, " +
+    " Content is GitHub Markdown without the title (the title is shown above it). Always pass the complete content. Write " +
+    "a doc once: every later change to it (a fact, a link, a section, a fix) goes through doc_edit, which sends only the " +
+    "changed text; call doc_write on an existing doc only when the user asks for it to be rewritten. The user may edit docs themselves: if they have since you last saw one, " +
     "call doc_read before revising it. In your reply, say in a line or two what the doc covers; don't repeat its text.",
   inputSchema: {
     type: "object",
@@ -87,8 +90,10 @@ export const docEditTool: ToolSpec = {
   name: DOC_EDIT,
   description:
     "Change parts of an existing doc without rewriting it: each edit replaces one exact, unique piece of its Markdown " +
-    "(`find`, copied from the doc as it is now) with `replace`. To add a section, find the line it should follow and " +
-    "replace it with that line plus the new section. Keep to the doc's structure and style (as doc_write describes). All edits apply or none do.",
+    "(`find`, copied from the doc as it is now) with `replace`; set `all` to replace every occurrence instead. To add a " +
+    "section, find the line it should follow and replace it with that line plus the new section. Keep to the doc's " +
+    "structure and style (as doc_write describes). All edits apply or none do. Use it for every change to a doc that " +
+    "exists, however many places it touches, rather than rewriting the doc with doc_write.",
   inputSchema: {
     type: "object",
     properties: {
@@ -100,6 +105,7 @@ export const docEditTool: ToolSpec = {
           properties: {
             find: { type: "string", description: "Exact text from the doc, long enough to occur once" },
             replace: { type: "string", description: "What it becomes (empty to delete it)" },
+            all: { type: "boolean", description: "Replace every occurrence of `find`, not just a unique one" },
           },
           required: ["find", "replace"],
         },
