@@ -18,6 +18,7 @@ import { closeFile } from "@/lib/files";
 import { closeDeck } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type Doc, type ToolSpec } from "@/lib/tauri";
+import { isPhone } from "@/lib/utils";
 import type { SushUIMessage } from "@/lib/transport";
 
 export const DOC_WRITE = "doc_write";
@@ -342,6 +343,8 @@ const autoOpened = new Set<string>();
 
 /** Opens the panel the first time a call starts writing a doc. */
 export function autoOpenDoc(threadId: string, call: DocCall) {
+  // It would cover the chat; the card opens it.
+  if (isPhone()) return;
   if (!call.streaming || autoOpened.has(call.callId)) return;
   autoOpened.add(call.callId);
   openDoc(threadId, call.docId, call.callId);

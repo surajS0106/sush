@@ -115,6 +115,7 @@ export function ReasoningPicker({ catalog, target }: { catalog: ProviderModels[]
       <span className="hidden whitespace-nowrap pl-1.5 pr-2 sm:inline">{label}</span>
 
       <div
+        data-hover-overlay
         className={cn(
           "absolute inset-y-0 right-0 flex w-28 items-center gap-2 rounded-full bg-background pl-2 pr-3 text-foreground shadow-sm ring-1 ring-border transition-opacity duration-150",
           dragging

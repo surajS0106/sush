@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 
 export function Page({ children }: { children: ReactNode }) {
-  return <div className="flex flex-col gap-8 py-6 pr-14 pl-8">{children}</div>;
+  return <div className="flex flex-col gap-8 py-6 pr-14 pl-8 max-md:px-4 max-md:pt-2">{children}</div>;
 }
 
 export function Group({ title, children }: { title: string; children: ReactNode }) {
@@ -22,12 +22,12 @@ export function Group({ title, children }: { title: string; children: ReactNode 
 
 export function Setting({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
-    <div className="flex min-h-14 items-center justify-between gap-6 py-3">
+    <div className="flex min-h-14 items-center justify-between gap-6 py-3 max-md:flex-wrap max-md:gap-x-4 max-md:gap-y-2">
       <div className="min-w-0">
         <p className="text-sm font-medium">{title}</p>
         {description && <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }

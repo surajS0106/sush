@@ -75,6 +75,41 @@ pub(crate) fn request_body_with(req: &ChatRequest, native_web: bool) -> Value {
     body
 }
 
+/// xAI (Grok) speaks Chat Completions for everything else, but its own search
+/// (`web_search` and `x_search`, xAI's "Agent Tools") runs only on its Responses
+/// API, so a Grok request with Sush's search goes there instead.
+/// <https://docs.x.ai/developers/tools/web-search>
+pub(crate) fn is_xai(base_url: &str) -> bool {
+    url::Url::parse(base_url).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|h| h == "api.x.ai")
+}
+
+/// Whether this request goes to xAI's Responses API for its search: it offers
+/// Sush's search, and the conversation hasn't already called Sush's own tools.
+pub(crate) fn xai_searches(req: &ChatRequest) -> bool {
+    req.tools.iter().any(|t| t.name == web::SEARCH) && web::native_ok(req)
+}
+
+/// A Grok request on the Responses API, with xAI's web and X search in place of
+/// Sush's `web_search` (Sush's `web_fetch` stays). No reasoning settings unless
+/// the user picked a level: Grok models differ in which they accept, and
+/// reasoning isn't carried between requests (`store` is off, no encrypted items).
+pub(crate) fn xai_body(req: &ChatRequest) -> Value {
+    let mut body = request_body_with(req, true);
+    body["include"] = json!(["web_search_call.action.sources"]);
+    match req.effort {
+        Some(effort) if req.thinking != Some(false) => body["reasoning"] = json!({ "effort": effort }),
+        _ => {
+            body.as_object_mut().expect("an object").remove("reasoning");
+        }
+    }
+    if let Some(tools) = body["tools"].as_array_mut() {
+        if let Some(at) = tools.iter().position(|t| t["type"] == "web_search") {
+            tools.insert(at + 1, json!({ "type": "x_search" }));
+        }
+    }
+    body
+}
+
 /// Reasoning summaries can need a verified organization. Replies matter more
 /// than showing the summary, so a request refused for that goes again without it.
 pub(crate) fn rejects_summary(status: u16, message: &str) -> bool {
@@ -219,6 +254,17 @@ impl Decoder for ResponsesDecoder {
                 if !sources.is_empty() {
                     out.push(ChatEvent::WebSources { call_id: id, sources });
                 }
+            }
+            // xAI's X search: a call it ran itself (ids start `xs_`), shown like a web search.
+            "response.output_item.done" if v["item"]["type"] == "custom_tool_call" => {
+                let item = &v["item"];
+                let id = item["call_id"].as_str().or_else(|| item["id"].as_str()).unwrap_or_default().to_string();
+                let args: Value = match &item["input"] {
+                    Value::String(s) => serde_json::from_str(s).unwrap_or_else(|_| json!({ "query": s })),
+                    other => other.clone(),
+                };
+                let query = args["query"].as_str().or_else(|| args["search_query"].as_str()).unwrap_or_default();
+                out.push(ChatEvent::ServerToolCall { id, name: web::SEARCH.into(), input: json!({ "query": query, "on": "X" }) });
             }
             "response.output_text.annotation.added" if v["annotation"]["type"] == "url_citation" => {
                 if let Some(url) = v["annotation"]["url"].as_str() {
@@ -371,6 +417,39 @@ mod tests {
         assert!(!plain["include"].as_array().unwrap().contains(&json!("web_search_call.action.sources")));
         assert!(refuses_web_search(400, "Tool 'web_search' is not supported"));
         assert!(!refuses_web_search(429, "web_search rate limit"));
+    }
+
+    #[test]
+    fn grok_gets_xais_web_and_x_search() {
+        assert!(is_xai("https://api.x.ai/v1"));
+        assert!(!is_xai("https://api.openai.com/v1"));
+        assert!(!is_xai("https://api.x.ai.example.com/v1"));
+        let mut req = request(vec![Message::text(Role::User, "news?")]);
+        req.model = "grok-4.7".into();
+        let spec = |name: &str| ToolSpec { name: name.into(), description: "d".into(), input_schema: json!({"type": "object"}) };
+        req.tools = vec![spec("ls"), spec(web::SEARCH), spec(web::FETCH)];
+        assert!(xai_searches(&req));
+        let body = xai_body(&req);
+        let kinds: Vec<&str> = body["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().or(t["type"].as_str()).unwrap()).collect();
+        assert_eq!(kinds, ["ls", "web_search", "x_search", "web_fetch"]);
+        assert_eq!(body["include"], json!(["web_search_call.action.sources"]));
+        assert!(body.get("reasoning").is_none());
+        req.effort = Some(Effort::High);
+        assert_eq!(xai_body(&req)["reasoning"], json!({ "effort": "high" }));
+        req.tools = vec![spec("ls")];
+        assert!(!xai_searches(&req));
+    }
+
+    #[test]
+    fn decodes_xais_x_search_as_activity() {
+        let sse = r#"data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","call_id":"xs_1","name":"x_keyword_search","input":"{\"query\":\"grok news\",\"limit\":10}","status":"completed"}}
+
+data: {"type":"response.completed","response":{"usage":{"input_tokens":5,"output_tokens":3}}}
+
+"#;
+        let events = decode_all(ResponsesDecoder::default(), sse);
+        assert_eq!(events[0], ChatEvent::ServerToolCall { id: "xs_1".into(), name: "web_search".into(), input: json!({ "query": "grok news", "on": "X" }) });
+        assert_eq!(events[1], ChatEvent::Finish { reason: FinishReason::Stop });
     }
 
     #[test]

@@ -15,9 +15,9 @@ use sush_core::workspace::git::{self, BranchStatus, CommitDetail, GitInfo, GitLo
 use sush_core::workspace::sandbox::SandboxStatus;
 use sush_core::workspace::{Access, Commands, EditApproval, Entry, Workspace, WorkspaceFs};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
+use crate::files;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::blocking;
@@ -34,12 +34,11 @@ pub async fn workspaces_list(state: State<'_, AppState>) -> AppResult<Vec<Worksp
 pub async fn workspace_add(app: AppHandle, state: State<'_, AppState>) -> AppResult<Option<Workspace>> {
     let dialog = app.clone();
     let picked = tauri::async_runtime::spawn_blocking(move || {
-        dialog.dialog().file().set_title("Choose a folder for Cowork").blocking_pick_folder()
+        files::pick_folder(&dialog, "Choose a folder for Cowork")
     })
     .await
-    .map_err(|e| AppError::Invalid(format!("The folder picker failed: {e}")))?;
-    let Some(picked) = picked else { return Ok(None) };
-    let path = picked.into_path().map_err(|e| AppError::Invalid(format!("That folder can't be used: {e}")))?;
+    .map_err(|e| AppError::Invalid(format!("The folder picker failed: {e}")))??;
+    let Some(path) = picked else { return Ok(None) };
     let root = dunce::canonicalize(&path)?;
     if !root.is_dir() {
         return Err(AppError::Invalid(format!("{} isn't a folder.", root.display())));

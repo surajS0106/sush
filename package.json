@@ -13,6 +13,7 @@
     "dev:ollama": "ollama ps || ollama serve",
     "build": "bun --filter server compile && bun run build:viewer && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json",
     "build:mac": "export PATH=\"$HOME/.cargo/bin:$PATH\" MACOSX_DEPLOYMENT_TARGET=11.0 && bun --filter server compile && bun run build:viewer && VITE_AUTH_URL=http://localhost:47321 bun --filter desktop tauri build --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.macos-icon.conf.json --bundles dmg",
+    "build:android": "bun --filter desktop tauri android build --debug --apk --target aarch64 --target x86_64",
     "typecheck": "bun --filter '*' typecheck"
   },
   "devDependencies": {

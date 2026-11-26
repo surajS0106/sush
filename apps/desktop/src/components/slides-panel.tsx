@@ -61,6 +61,7 @@ import {
   type Slide,
 } from "@/lib/slides";
 import { api, errorMessage } from "@/lib/tauri";
+import { BackCloses } from "@/lib/back";
 import { cn } from "@/lib/utils";
 
 // --- one slide ------------------------------------------------------------------------
@@ -361,12 +362,13 @@ export function SlidesPanel({ threadId, deck, busy }: SlidesPanelProps) {
       ref={ref}
       aria-label={`${version.title} slides`}
       className={cn(
-        "relative flex min-w-[320px] shrink-0 flex-col p-2",
+        "side-panel relative flex min-w-[320px] shrink-0 flex-col p-2",
         expanded ? "flex-1" : "max-w-[calc(100%-360px)] pl-0",
         !expanded && width === null && "w-[56%] max-w-[min(1100px,calc(100%-360px))]",
       )}
       style={expanded || width === null ? undefined : { width }}
     >
+      <BackCloses onBack={() => closeDeck(threadId)} />
       {!expanded && (
         <ResizeHandle
           label="Resize slides panel"

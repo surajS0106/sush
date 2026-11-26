@@ -6,9 +6,9 @@ edition.workspace = true
 license.workspace = true
 
 [lib]
-# Desktop only for now. Mobile targets would need "staticlib" (iOS) and "cdylib" (Android) here.
 name = "sush_lib"
-crate-type = ["rlib"]
+# cdylib: Android loads the app as a shared library.
+crate-type = ["rlib", "cdylib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -16,15 +16,12 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 sush-core.workspace = true
 async-trait.workspace = true
-# "unstable" for `Window::add_child`: the built-in browser is a child webview.
-tauri = { version = "2", features = ["unstable"] }
+tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
 base64 = "0.22"
 ignore = "0.4"
 futures.workspace = true
 getrandom = "0.3"
-keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -32,19 +29,30 @@ sha2 = "0.10"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs", "io-util", "net"] }
 tokio-util.workspace = true
-# Shared sessions' connection to the relay (`share.rs`); native-tls like reqwest.
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
 url = "2"
-whisper-rs = "0.16"
 dunce = "1.0.5"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# "unstable" for `Window::add_child`: the built-in browser is a child webview.
+tauri = { version = "2", features = ["unstable"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service"] }
+# Shared sessions' connection to the relay (`share.rs`); native-tls like reqwest.
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+whisper-rs = "0.16"
+tauri-plugin-dialog = "2"
 tauri-plugin-updater = "2"
 # sush:// links, such as Yammer's "Ask in Sush" (deep_link.rs). On Windows and Linux a link starts a
 # second copy, which single-instance hands to this one.
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
 tauri-plugin-process = "2"
+
+[target.'cfg(target_os = "android")'.dependencies]
+# Kotlin hands the secrets key over JNI before Tauri starts (android.rs, Vault.kt).
+jni = "0.21"
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+# The secrets file is encrypted with a key the Android Keystore wraps (secrets.rs).
+aes-gcm = "0.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

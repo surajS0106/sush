@@ -67,7 +67,7 @@ import {
   type ConnectorStatus,
 } from "@/lib/library";
 import { api, CUSTOM_CLIENT_REDIRECT, errorMessage } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 // --- logo ----------------------------------------------------------------------------
 
@@ -894,13 +894,16 @@ function Connectors() {
                   <p className="text-xs text-muted-foreground">A remote MCP server, by URL</p>
                 </div>
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setEditing(newLocal())}>
-                <TerminalIcon />
-                <div>
-                  <p>Local connector</p>
-                  <p className="text-xs text-muted-foreground">An MCP server run as a command</p>
-                </div>
-              </DropdownMenuItem>
+              {/* A phone can't run other programs. */}
+              {!isAndroid && (
+                <DropdownMenuItem onSelect={() => setEditing(newLocal())}>
+                  <TerminalIcon />
+                  <div>
+                    <p>Local connector</p>
+                    <p className="text-xs text-muted-foreground">An MCP server run as a command</p>
+                  </div>
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils"
 import { Dialog as DialogPrimitive } from "radix-ui"
 
 import { Button } from "@/components/ui/button"
+import { BackCloses } from "@/lib/back"
 import { XIcon } from "lucide-react"
 
 function Dialog({
@@ -64,6 +65,7 @@ function DialogContent({
         )}
         {...props}
       >
+        <BackCloses />
         {children}
         {showCloseButton && (
           <DialogPrimitive.Close data-slot="dialog-close" asChild>

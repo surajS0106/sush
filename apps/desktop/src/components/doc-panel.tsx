@@ -54,6 +54,7 @@ import {
 import { parseDiagram, renderDiagram, splitDiagrams } from "@/lib/diagram";
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { isSharedThread, type Doc, type DocVersion } from "@/lib/tauri";
+import { BackCloses } from "@/lib/back";
 import { cn } from "@/lib/utils";
 
 const DocEditor = lazy(() => import("@/components/doc-editor"));
@@ -469,12 +470,13 @@ export function DocPanel({ threadId, docId, call }: DocPanelProps) {
       ref={ref}
       aria-label={`${title} doc`}
       className={cn(
-        "relative flex min-w-[320px] shrink-0 flex-col p-2",
+        "side-panel relative flex min-w-[320px] shrink-0 flex-col p-2",
         expanded ? "flex-1" : "max-w-[calc(100%-360px)] pl-0",
         !expanded && width === null && "w-[56%] max-w-[min(1100px,calc(100%-360px))]",
       )}
       style={expanded || width === null ? undefined : { width }}
     >
+      <BackCloses onBack={() => closeDoc(threadId)} />
       {!expanded && (
         <ResizeHandle
           label="Resize doc panel"

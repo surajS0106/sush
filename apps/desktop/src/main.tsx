@@ -19,6 +19,8 @@ import { initShares } from "./lib/share";
 import { initWorkspaces } from "./lib/workspaces";
 import { initSelectAll } from "./lib/select-all";
 import { initZoom } from "./lib/zoom";
+import { initAndroid } from "./lib/android";
+import { isAndroid } from "./lib/utils";
 import { initStore } from "./lib/store";
 import { errorMessage } from "./lib/tauri";
 
@@ -42,7 +44,8 @@ document.addEventListener("click", (e) => {
   }
 });
 
-initZoom();
+if (isAndroid) initAndroid();
+else initZoom();
 initSelectAll();
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);

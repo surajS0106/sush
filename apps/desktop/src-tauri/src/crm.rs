@@ -5,8 +5,8 @@
 use serde::{Deserialize, Serialize};
 use sush_core::crm::{self, Activity, ActivityKind, CrmEvent, CrmSettings, ImportResult, Kind, Record, Removed, Saved, View};
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
 
+use crate::files;
 use crate::error::{AppError, AppResult};
 use crate::runs::RunFrame;
 use crate::state::AppState;
@@ -221,12 +221,11 @@ pub struct Guesses {
 #[tauri::command]
 pub async fn crm_import_pick(app: AppHandle) -> AppResult<Option<CsvFile>> {
     let picked = tokio::task::spawn_blocking(move || {
-        app.dialog().file().set_title("Import a CSV").add_filter("Spreadsheet (CSV)", &["csv", "tsv", "txt"]).blocking_pick_file()
+        files::pick(&app, "Import a CSV", ("Spreadsheet (CSV)", &["csv", "tsv", "txt"]), false)
     })
     .await
-    .map_err(|e| AppError::Invalid(e.to_string()))?;
-    let Some(file) = picked else { return Ok(None) };
-    let path = file.into_path().map_err(|e| AppError::Invalid(format!("That file can't be used: {e}")))?;
+    .map_err(|e| AppError::Invalid(e.to_string()))??;
+    let Some(path) = picked.into_iter().next() else { return Ok(None) };
     blocking(move || {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file.csv").to_string();
         if std::fs::metadata(&path)?.len() > MAX_CSV {

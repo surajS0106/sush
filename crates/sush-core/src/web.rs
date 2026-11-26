@@ -5,8 +5,9 @@
 //! allowed, checked at every redirect and pinned for the connection, so a model
 //! can't use the tool to reach the user's router, local servers or cloud metadata.
 //!
-//! Anthropic and OpenAI models get their provider's own search instead: their
-//! wire formats swap the tools named here for native ones (`providers/`).
+//! Anthropic, OpenAI and xAI (Grok) models get their provider's own search instead:
+//! their wire formats swap the tools named here for native ones (`providers/`; Grok's
+//! goes to xAI's Responses API for it, with X search too).
 
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;

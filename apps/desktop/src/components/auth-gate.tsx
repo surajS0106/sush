@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { LoginScreen } from "@/components/login-screen";
 import { Spinner } from "@/components/ui/spinner";
-import { useSession } from "@/lib/auth";
+import { HAS_ACCOUNTS, useSession } from "@/lib/auth";
 
 /** Renders the app only for a signed-in user; otherwise the login screen. */
 export function AuthGate({ children }: { children: ReactNode }) {
@@ -15,5 +15,5 @@ export function AuthGate({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  return session ? children : <LoginScreen />;
+  return session || !HAS_ACCOUNTS ? children : <LoginScreen />;
 }

@@ -45,6 +45,20 @@ impl OpenAiProvider {
         };
         Ok(decode_response(resp, responses::ResponsesDecoder::default()))
     }
+
+    /// A Grok request with xAI's own search (`responses::xai_body`). None when xAI
+    /// refused it (a model without server-side tools, say): Chat Completions with
+    /// Sush's search then carries the request. A bad key or a rate limit is an answer.
+    async fn stream_xai(&self, req: &ChatRequest) -> Result<Option<EventStream>, ProviderError> {
+        match check_status(NAME, self.post("responses", &responses::xai_body(req)).await?).await {
+            Ok(resp) => Ok(Some(decode_response(resp, responses::ResponsesDecoder::default()))),
+            Err(ProviderError::Http { status, message, .. }) if (400..500).contains(&status) && ![401, 403, 429].contains(&status) => {
+                eprintln!("sush: xAI refused its own search ({status}: {message}); using Sush's");
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Some OpenAI models reason by default yet refuse function tools on Chat
@@ -62,6 +76,11 @@ impl Provider for OpenAiProvider {
                 // A compatible host serving one of these ids may only have Chat Completions.
                 Err(ProviderError::Http { status: 404, .. }) => {}
                 other => return other,
+            }
+        }
+        if responses::is_xai(&self.endpoint.base_url) && responses::xai_searches(&req) {
+            if let Some(stream) = self.stream_xai(&req).await? {
+                return Ok(stream);
             }
         }
         let mut body = request_body(&req);

@@ -31,12 +31,14 @@ import { followUrl, requestDir, requestFile, requestGitCommit, requestGitLog } f
 import { useOpenPassage } from "@/lib/notebooks";
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type FileView, type ShareView, type WorkspaceEntry } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+import { BackCloses } from "@/lib/back";
+import { cn, isPhone } from "@/lib/utils";
 
 type Tab = "room" | "notebook" | "files" | "graph" | "browser";
 
 const panelTab = createStore<Tab>("sush.shared-panel-tab", "room");
-const panelOpen = createStore<boolean>("sush.shared-panel-open", true);
+// On a phone it covers the chat, so it starts closed.
+const panelOpen = createStore<boolean>("sush.shared-panel-open", !isPhone());
 
 export function SharedPanel({ share, changed }: { share: ShareView; changed: Set<string> }) {
   const open = useSyncExternalStore(panelOpen.subscribe, panelOpen.get);
@@ -82,11 +84,12 @@ export function SharedPanel({ share, changed }: { share: ShareView; changed: Set
     <aside
       ref={ref}
       className={cn(
-        "relative flex max-w-[calc(100%-360px)] min-w-[320px] shrink-0 flex-col gap-2 p-2 pl-0",
+        "side-panel relative flex max-w-[calc(100%-360px)] min-w-[320px] shrink-0 flex-col gap-2 p-2 pl-0",
         width === null && "w-[44%] max-w-[min(820px,calc(100%-360px))]",
       )}
       style={width === null ? undefined : { width }}
     >
+      <BackCloses onBack={() => panelOpen.set(false)} />
       <ResizeHandle
         label="Resize side panel"
         edge="left"

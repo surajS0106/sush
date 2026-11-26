@@ -80,7 +80,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { UserAvatar } from "@/components/user-avatar";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
 import { transitionTheme } from "@/lib/appearance";
-import { signOut, useSession } from "@/lib/auth";
+import { HAS_ACCOUNTS, signOut, useSession } from "@/lib/auth";
 import { automationForThread, useAutomations } from "@/lib/automations";
 import { SIDEBAR, setLayout, useLayout } from "@/lib/layout";
 import { openSettings } from "@/lib/library";
@@ -94,13 +94,13 @@ import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
 import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
 import type { Conversation } from "@/lib/store";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 /** Sessions listed before the "More" toggle. */
 const RECENT_LIMIT = 8;
 
 /** The sidebar's destinations, in order. "Edit sidebar…" moves any of them under "More". */
-const NAV = [
+const ALL_NAV = [
   { id: "cowork", label: "Cowork", icon: FolderOpenIcon },
   { id: "folders", label: "Folders", icon: FolderIcon },
   { id: "board", label: "Board", icon: KanbanIcon },
@@ -115,7 +115,11 @@ const NAV = [
   { id: "docs", label: "Docs", icon: FileTextIcon },
 ] as const;
 
-type NavItem = (typeof NAV)[number];
+type NavItem = (typeof ALL_NAV)[number];
+
+/** These work in a folder on this computer, which a phone doesn't have. */
+const FOLDER_NAV: readonly string[] = ["cowork", "folders", "security", "review", "wiki"];
+const NAV: readonly NavItem[] = isAndroid ? ALL_NAV.filter((n) => !FOLDER_NAV.includes(n.id)) : ALL_NAV;
 
 const comingSoon = (what: string) => toast(`${what} is coming soon`);
 
@@ -129,7 +133,7 @@ export type SessionMode = "chat" | "cowork";
  * What the main area shows: the open session, or a page the sidebar opens in
  * its place; `shared` is a session someone shared with this app (`components/shared-sessions.tsx`).
  */
-export type Page = "session" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "docs" | "crm" | "workflows" | "shared";
+export type Page = "session" | "home" | "chats" | "folders" | "board" | "connectors" | "automations" | "security" | "review" | "wiki" | "notebooks" | "docs" | "crm" | "workflows" | "shared";
 
 interface AppSidebarProps {
   conversations: Conversation[];
@@ -178,20 +182,29 @@ function SidebarResizer() {
 export function AppSidebar({
   conversations,
   activeId,
-  onSelect,
-  onNew,
-  onNewCowork,
-  onNewInProject,
   onDelete,
-  onOpenSettings,
   nav,
   mode,
-  onSwitchMode,
   page,
-  onOpenPage,
   sharedId,
-  onOpenShared,
+  ...props
 }: AppSidebarProps) {
+  // As a drawer (a narrow window, a phone), it closes once something in it is picked.
+  const { isMobile, setOpenMobile } = useSidebar();
+  const closing =
+    <A extends unknown[]>(f: (...args: A) => void) =>
+    (...args: A) => {
+      if (isMobile) setOpenMobile(false);
+      f(...args);
+    };
+  const onSelect = closing(props.onSelect);
+  const onNew = closing(props.onNew);
+  const onNewCowork = closing(props.onNewCowork);
+  const onNewInProject = closing(props.onNewInProject);
+  const onOpenSettings = closing(props.onOpenSettings);
+  const onSwitchMode = closing(props.onSwitchMode);
+  const onOpenPage = closing(props.onOpenPage);
+  const onOpenShared = closing(props.onOpenShared);
   const { data: session } = useSession();
   const trafficLights = useTrafficLights();
   // Empty means no filter; the field is always shown.
@@ -247,7 +260,7 @@ export function AppSidebar({
       <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-0.5 px-2 select-none", trafficLights && "pl-20")}>
         <NavControls nav={nav} />
         <span data-tauri-drag-region className="flex-1 self-stretch" />
-        <ModeToggle mode={mode} onChange={onSwitchMode} />
+        {!isAndroid && <ModeToggle mode={mode} onChange={onSwitchMode} />}
       </div>
 
       <div className="flex flex-col gap-1.5 px-2 pb-2">
@@ -271,7 +284,7 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton onClick={onNew} className="h-9 rounded-lg">
               <PlusIcon /> <span>New</span>
-              <kbd className="ml-auto font-sans text-xs text-muted-foreground">{NEW_SHORTCUT_LABEL}</kbd>
+              {!isAndroid && <kbd className="ml-auto font-sans text-xs text-muted-foreground">{NEW_SHORTCUT_LABEL}</kbd>}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -382,18 +395,18 @@ export function AppSidebar({
       <SidebarFooter className="gap-3 pt-1">
         <SidebarCards onNew={onNew} onCowork={() => onSwitchMode("cowork")} onAutomations={() => onOpenPage("automations")} />
         <SidebarMenu>
-          <UpgradeButton />
+          {!isAndroid && <UpgradeButton />}
           <SidebarMenuItem>
             <ProfileMenu
               name={session?.user.name || "Sush"}
-              email={session?.user.email ?? "Local workspace"}
+              email={session?.user.email ?? (isAndroid ? "On this phone" : "Local workspace")}
               image={session?.user.image}
               onOpenSettings={onOpenSettings}
             />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      <SidebarResizer />
+      {!isAndroid && <SidebarResizer />}
     </Sidebar>
   );
 }
@@ -797,22 +810,30 @@ function ProfileMenu({
           <SettingsIcon /> <span>Settings</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void checkForUpdate()}>
-          <DownloadIcon /> <span>Check for updates</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => openSettings({ section: "changelog" })}>
-          <ConfettiIcon /> <span>What's new</span>
-        </DropdownMenuItem>
+        {!isAndroid && (
+          <>
+            <DropdownMenuItem onSelect={() => void checkForUpdate()}>
+              <DownloadIcon /> <span>Check for updates</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => openSettings({ section: "changelog" })}>
+              <ConfettiIcon /> <span>What's new</span>
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuItem onSelect={() => comingSoon("Help")}>
           <CircleHelpIcon /> <span>Get help</span>
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={() => comingSoon("Feedback")}>
           <MessageSquareIcon /> <span>Give feedback</span>
         </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void signOut()}>
-          <LogOutIcon /> <span>Log out</span>
-        </DropdownMenuItem>
+        {HAS_ACCOUNTS && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => void signOut()}>
+              <LogOutIcon /> <span>Log out</span>
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

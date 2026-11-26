@@ -39,10 +39,13 @@ import { useSession } from "@/lib/auth";
 import { openSettings } from "@/lib/library";
 import { MASCOTS, setMascot, useMascot } from "@/lib/mascot";
 import { finishOnboarding, useOnboardingOpen } from "@/lib/onboarding";
-import { cn, focusComposer } from "@/lib/utils";
+import { useBackKey } from "@/lib/back";
+import { cn, focusComposer, isAndroid } from "@/lib/utils";
 
-const STEPS = ["welcome", "look", "modes", "tour", "model"] as const;
-type Step = (typeof STEPS)[number];
+const ALL_STEPS = ["welcome", "look", "modes", "tour", "model"] as const;
+type Step = (typeof ALL_STEPS)[number];
+/** A phone has no folders or desktop pages to show around. */
+const STEPS: readonly Step[] = isAndroid ? ["welcome", "look", "model"] : ALL_STEPS;
 
 /** How many characters the look step offers; the rest are in Settings → Sushi. */
 const CHARACTERS_SHOWN = 10;
@@ -76,6 +79,9 @@ export function Onboarding({ hasProviders }: { hasProviders: boolean | null }) {
     finishOnboarding();
     openSettings({ section: "providers" });
   };
+
+  // Android's Back goes a step back, and skips the tour from the first.
+  useBackKey(open ? index + 1 : 0, () => (index > 0 ? go(index - 1) : done()));
 
   // ← and → walk the steps, unless a control that uses them has focus; Escape skips the tour.
   useEffect(() => {
@@ -118,7 +124,7 @@ export function Onboarding({ hasProviders }: { hasProviders: boolean | null }) {
           {/* Doubles as the title bar, so the window can still be moved. */}
           <header
             data-tauri-drag-region
-            className={cn("relative flex h-12 shrink-0 items-center px-4 select-none", IS_MAC ? "pl-24" : "pr-36")}
+            className={cn("relative flex h-12 shrink-0 items-center px-4 select-none", IS_MAC ? "pl-24" : !isAndroid && "pr-36")}
           >
             <span data-tauri-drag-region className="text-sm font-semibold tracking-tight">
               Sush
@@ -136,7 +142,7 @@ export function Onboarding({ hasProviders }: { hasProviders: boolean | null }) {
                 exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -32 * direction }}
                 transition={{ duration: 0.22, ease: "easeOut" }}
               >
-                <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-10 py-10">
+                <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col justify-center px-10 py-10 max-md:px-5 max-md:py-6">
                   {step === "welcome" && <WelcomeStep />}
                   {step === "look" && <LookStep />}
                   {step === "modes" && <ModesStep />}
@@ -147,7 +153,7 @@ export function Onboarding({ hasProviders }: { hasProviders: boolean | null }) {
             </AnimatePresence>
           </div>
 
-          <footer className="relative mx-auto flex w-full max-w-5xl items-center gap-3 border-t px-10 py-4">
+          <footer className="relative mx-auto flex w-full max-w-5xl items-center gap-3 border-t px-10 py-4 max-md:gap-2 max-md:px-5">
           <div className="flex flex-1 items-center gap-1.5" aria-hidden>
             {STEPS.map((s, i) => (
               <button
@@ -224,21 +230,26 @@ function WelcomeStep() {
       </div>
       <h2 className="text-3xl font-semibold tracking-tight">Welcome to Sush{first ? `, ${first}` : ""}</h2>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">
-        Your AI workspace that lives on your computer. Chat with any model, let it work in your folders, and keep your
-        data on your own machine.
+        {isAndroid
+          ? "Your AI workspace that lives on your phone. Chat with any model, connect your apps, and keep your data on your own device."
+          : "Your AI workspace that lives on your computer. Chat with any model, let it work in your folders, and keep your data on your own machine."}
       </p>
-      <div className="mt-8 grid w-full max-w-2xl grid-cols-3 gap-3 text-left">
+      <div className="mt-8 grid w-full max-w-2xl grid-cols-3 gap-3 text-left max-md:grid-cols-1">
         <Highlight icon={CpuIcon} title="Any model">
           OpenAI, Anthropic, OpenRouter, or a local model through Ollama. Bring your own key.
         </Highlight>
         <Highlight icon={LockIcon} title="Private by default">
-          Chats are stored on this computer. API keys go to your system keychain.
+          {isAndroid
+            ? "Chats are stored on this phone. API keys are encrypted with its Keystore."
+            : "Chats are stored on this computer. API keys go to your system keychain."}
         </Highlight>
         <Highlight icon={SparklesIcon} title="Gets work done">
-          Edits files, runs commands in a sandbox, searches the web and uses your apps.
+          {isAndroid
+            ? "Searches the web, writes docs and slides, and uses your apps."
+            : "Edits files, runs commands in a sandbox, searches the web and uses your apps."}
         </Highlight>
       </div>
-      <p className="mt-6 text-xs text-muted-foreground">Psst: click the little one above to say hi.</p>
+      <p className="mt-6 text-xs text-muted-foreground">Psst: {isAndroid ? "tap" : "click"} the little one above to say hi.</p>
     </div>
   );
 }
@@ -260,7 +271,7 @@ function LookStep() {
   const appearance = useAppearance();
   const mascot = useMascot();
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-10">
+    <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-10 max-md:grid-cols-1">
       <div>
       <StepHeading eyebrow="Make it yours" title="Pick a look">
         You can change any of this later in Settings.
@@ -284,7 +295,7 @@ function LookStep() {
       <p className="pb-2 text-xs text-muted-foreground">
         It stands on the message box, watches you type and gets to work when Sush does. More in Settings → Sushi.
       </p>
-      <div role="radiogroup" aria-label="Mascot" className="grid grid-cols-5 gap-1">
+      <div role="radiogroup" aria-label="Mascot" className="grid grid-cols-5 gap-1 max-md:grid-cols-3">
         {MASCOTS.slice(0, CHARACTERS_SHOWN).map((m) => (
           <CharacterTile key={m.key} kind={m.key} label={m.label} selected={m.key === mascot} onPick={() => setMascot(m.key)} />
         ))}
@@ -465,10 +476,10 @@ function ModelStep({ hasProviders }: { hasProviders: boolean | null }) {
   return (
     <>
       <StepHeading eyebrow="Last step" title="Connect a model">
-        Sush talks to the model you choose. Add a provider with your API key, or point it at a model running on this
-        computer. Keys stay in your system keychain.
+        Sush talks to the model you choose. Add a provider with your API key, or point it at a model running on {isAndroid ? "your" : "this"}
+        computer. Keys stay {isAndroid ? "encrypted on this phone" : "in your system keychain"}.
       </StepHeading>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
         <ProviderOption title="OpenAI" text="GPT models with your OpenAI API key." />
         <ProviderOption title="Anthropic" text="Claude models with your Anthropic API key." />
         <ProviderOption title="OpenRouter, Groq, Azure…" text="Any endpoint that speaks the OpenAI or Anthropic format." />

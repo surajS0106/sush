@@ -11,6 +11,7 @@ import { closeDoc } from "@/lib/docs";
 import { closeFile } from "@/lib/files";
 import { createStore } from "@/lib/store";
 import { api, type ToolSpec } from "@/lib/tauri";
+import { isPhone } from "@/lib/utils";
 import type { SushUIMessage } from "@/lib/transport";
 
 export const SLIDES_WRITE = "slides_write";
@@ -224,6 +225,8 @@ const autoOpened = new Set<string>();
 
 /** Opens the panel the first time a call starts writing a deck. */
 export function autoOpenDeck(threadId: string, view: DeckView) {
+  // It would cover the chat; the card opens it.
+  if (isPhone()) return;
   if (!view.building || autoOpened.has(view.callId)) return;
   autoOpened.add(view.callId);
   openDeck(threadId, view.id);

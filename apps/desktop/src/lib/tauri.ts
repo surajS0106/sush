@@ -1741,6 +1741,8 @@ export const api = {
   flightsRates: () => invoke<ExchangeRates>("flights_rates"),
   /** macOS only; other platforms read the position through the webview (`lib/location.ts`). */
   locationRead: () => invoke<{ latitude: number; longitude: number; accuracyMeters: number }>("location_read"),
+  /** Android: match the system bars to Sush's theme. */
+  androidBars: (dark: boolean) => invoke<void>("android_bars", { dark }),
   whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),

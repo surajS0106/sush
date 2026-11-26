@@ -253,7 +253,7 @@ export function ModelPicker({ catalog: all, value, onChange, onPickImageModel, d
                   )}
                 </>
               ) : (
-                <span>Select model</span>
+                <span className="truncate">Select model</span>
               )}
             </motion.span>
           </AnimatePresence>

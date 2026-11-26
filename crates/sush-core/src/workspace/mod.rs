@@ -301,7 +301,10 @@ impl WorkspaceFs {
         if meta.is_dir() {
             return Err(format!("{rel} is a folder; only files can be deleted."));
         }
-        trash::delete(self.root.join(rel)).map_err(|e| format!("{rel}: couldn't move it to the trash: {e}"))
+        #[cfg(not(target_os = "android"))]
+        return trash::delete(self.root.join(rel)).map_err(|e| format!("{rel}: couldn't move it to the trash: {e}"));
+        #[cfg(target_os = "android")]
+        Err(format!("{rel}: this device has no trash to move it to"))
     }
 
     /// Put a file back as it was, or remove it if it didn't exist (undo).

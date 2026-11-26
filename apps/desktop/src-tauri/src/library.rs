@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sush_core::mcp::ServerCommand;
 use tauri::AppHandle;
-use tauri_plugin_dialog::DialogExt;
 
+use crate::files;
 use crate::error::{AppError, AppResult};
 
 const MAX_FILE_BYTES: u64 = 256 * 1024;
@@ -43,8 +43,7 @@ pub struct Folder {
 #[tauri::command]
 pub async fn pick_folder_attachment(app: AppHandle) -> AppResult<Option<Folder>> {
     tokio::task::spawn_blocking(move || {
-        let Some(picked) = app.dialog().file().set_title("Add folder").blocking_pick_folder() else { return Ok(None) };
-        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("That folder can't be used: {e}")))?;
+        let Some(path) = files::pick_folder(&app, "Add folder")? else { return Ok(None) };
         walk(&path).map(Some)
     })
     .await
@@ -54,12 +53,7 @@ pub async fn pick_folder_attachment(app: AppHandle) -> AppResult<Option<Folder>>
 /// Save text where the user picks in a save dialog. Returns whether it was saved.
 #[tauri::command]
 pub async fn save_text_file_as(app: AppHandle, file_name: String, contents: String) -> AppResult<bool> {
-    tokio::task::spawn_blocking(move || {
-        let Some(picked) = app.dialog().file().set_file_name(file_name).blocking_save_file() else { return Ok(false) };
-        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("Can't save there: {e}")))?;
-        std::fs::write(path, contents)?;
-        Ok(true)
-    })
+    tokio::task::spawn_blocking(move || files::save(&app, file_name, contents.as_bytes()))
     .await
     .map_err(|e| AppError::Invalid(e.to_string()))?
 }
@@ -70,12 +64,7 @@ pub async fn save_bytes_file_as(app: AppHandle, file_name: String, data: String)
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| AppError::Invalid(format!("The file's data was malformed: {e}")))?;
-    tokio::task::spawn_blocking(move || {
-        let Some(picked) = app.dialog().file().set_file_name(file_name).blocking_save_file() else { return Ok(false) };
-        let path = picked.into_path().map_err(|e| AppError::Invalid(format!("Can't save there: {e}")))?;
-        std::fs::write(path, bytes)?;
-        Ok(true)
-    })
+    tokio::task::spawn_blocking(move || files::save(&app, file_name, &bytes))
     .await
     .map_err(|e| AppError::Invalid(e.to_string()))?
 }

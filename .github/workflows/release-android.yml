@@ -1,0 +1,120 @@
+name: Release Android
+
+# Manual only: builds the signed arm64 APK and publishes it as the Android app's own GitHub release,
+# `android-v<version>`, with the version from tauri.android.conf.json and the notes from
+# CHANGELOG-android.md. Android is versioned separately from the desktop app (release.yml, `v<version>`),
+# and nothing for Windows, macOS or Linux is built here, so this is cheap enough to run for every
+# phone-only change. Run it from the Actions tab, or `gh workflow run release-android.yml`.
+#
+# The release is created with --latest=false. The desktop app's "Upgrade now" reads latest.json from the
+# *latest* release, and an Android release has none, so it must never become the latest. (Anything
+# that downloads the APK has to look for the newest `android-v*` release, not `releases/latest`.)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-android
+  cancel-in-progress: false
+
+jobs:
+  android:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    # The signing keystore lives in this environment, not the repo, and the environment only admits runs
+    # from main, after an approval (Settings → Environments → release). Secrets: ANDROID_KEYSTORE_BASE64,
+    # ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD. The keystore is permanent:
+    # losing it means installed copies can never update, so keep the backup in ~/.sush.
+    environment: release
+    steps:
+      # Third-party actions run with the keystore in reach, so each is pinned to a commit, not a movable tag.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: aarch64-linux-android
+
+      - name: Set up the Android toolchain
+        shell: bash
+        run: |
+          # The runner image ships JDK 17, the Android SDK and the NDK; use them rather than another action.
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      # This version's section of CHANGELOG-android.md becomes the release notes. A release with no entry stops here.
+      - name: Read release notes
+        shell: bash
+        run: |
+          version=$(jq -r .version apps/desktop/src-tauri/tauri.android.conf.json)
+          notes=$(awk -v v="$version" '/^## /{on = index($0, "## " v " ") == 1; next} on' CHANGELOG-android.md)
+          if [ -z "$(echo "$notes" | tr -d '[:space:]')" ]; then
+            echo "::error::CHANGELOG-android.md has no '## $version — <date>' section. Rename Unreleased before releasing."
+            exit 1
+          fi
+          echo "$notes" > "$RUNNER_TEMP/notes.md"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - run: bun install --frozen-lockfile
+
+      - name: Decode the signing keystore
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is not set in the release environment, so the APK can't be signed."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sush-release.jks"
+
+      # arm64 only, which is every current phone. tauri.android.conf.json leaves out the updater, which
+      # Android doesn't have, so this job needs no updater signing key.
+      - name: Build the APK
+        shell: bash
+        env:
+          SUSH_KEYSTORE_FILE: ${{ runner.temp }}/sush-release.jks
+          SUSH_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SUSH_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SUSH_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: bun --filter desktop tauri android build --apk --target aarch64
+
+      - name: Check the APK
+        shell: bash
+        run: |
+          apk=apps/desktop/src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk
+          test -f "$apk" || { echo "::error::No signed release APK was produced (unsigned builds are named app-universal-release-unsigned.apk)."; ls -R "$(dirname "$apk")/.."; exit 1; }
+          bt="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | grep -v rc | sort -V | tail -1)"
+          "$bt/apksigner" verify --verbose --min-sdk-version 26 "$apk"
+          # A release must not be debuggable or allow cleartext traffic.
+          manifest=$("$bt/aapt2" dump xmltree --file AndroidManifest.xml "$apk")
+          if echo "$manifest" | grep -qE 'debuggable.*(true|0xffffffff)'; then
+            echo "::error::The release APK is debuggable."; exit 1
+          fi
+          if echo "$manifest" | grep -qE 'usesCleartextTraffic.*(true|0xffffffff)'; then
+            echo "::error::The release APK allows cleartext traffic."; exit 1
+          fi
+          cp "$apk" "Sush_${VERSION}_android.apk"
+          echo "APK_FILE=Sush_${VERSION}_android.apk" >> "$GITHUB_ENV"
+
+      # Upload to this version's release, or create it (never as the latest, see the top of this file).
+      # --clobber lets a re-run replace the file.
+      - name: Publish the APK
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="android-v$VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$APK_FILE" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "$APK_FILE" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Sush for Android v$VERSION" --notes-file "$RUNNER_TEMP/notes.md" --latest=false
+          fi

@@ -1,3 +1,4 @@
+import { ArrowLeftIcon, PlusIcon } from "lucide-react";
 import { MotionConfig } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -14,7 +15,8 @@ import { ConnectorsPage } from "@/components/connectors-section";
 import { FoldersPage } from "@/components/folders-page";
 import { ChatView } from "@/components/chat-view";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { NavControls, type Nav } from "@/components/nav-controls";
+import { NavControls, ToolbarButton, type Nav } from "@/components/nav-controls";
+import { isDockTab, PhoneChats, PhoneDock, PhoneHome } from "@/components/phone";
 import { ReportsPage } from "@/components/reports-page";
 import { NotebooksPage } from "@/components/notebooks-page";
 import { WikiPage } from "@/components/wiki-page";
@@ -33,6 +35,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sideb
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { IS_MAC, useTrafficLights } from "@/components/window-controls";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { useProviders } from "@/hooks/use-providers";
 import { useAppearance } from "@/lib/appearance";
 import { linkSession, taskPrompt, type Task } from "@/lib/board";
@@ -51,7 +54,8 @@ import {
 } from "@/lib/store";
 import { useShare } from "@/lib/share";
 import { errorMessage, type ShareView } from "@/lib/tauri";
-import { cn, focusComposer } from "@/lib/utils";
+import { useBackKey } from "@/lib/back";
+import { cn, focusComposer, isAndroid, isPhone } from "@/lib/utils";
 import { startPriceAlerts } from "@/lib/price-alerts";
 import { whenLeader } from "@/lib/windows";
 import { addWorkspace, getWorkspaces, openFile } from "@/lib/workspaces";
@@ -62,7 +66,7 @@ export default function App() {
   const ids = conversations.map((c) => c.id);
   // The main area shows the open session, or a page like Automations; opening any session goes back to it.
   // Back and forward walk both, so leaving a chat for Connectors and pressing back returns to the chat.
-  const [{ page, id: activeId }, go, nav] = useNavHistory(lastActiveTab() ?? conversations[0]?.id ?? null, ids);
+  const [{ page, id: activeId }, go, nav] = useNavHistory(lastActiveTab() ?? conversations[0]?.id ?? null, ids, isPhone() ? "home" : "session");
   const setPage = (page: Page) => go((cur) => ({ page, id: cur.id }));
   const setActiveId = (id: string | null) => go({ page: "session", id });
   // A session someone shared with this app, watched on a page of its own; it isn't one of ours, so it has no tab.
@@ -77,6 +81,14 @@ export default function App() {
     if (page === "shared" && !watched) setPage("session");
   }, [page, watched]);
   const tabs = useTabs(activeId, ids, setActiveId);
+  const phone = useIsMobile() && isAndroid;
+  // A phone moves between the dock's tabs; a chat or a page from Home opens over the last one.
+  const lastTab = useRef<Page>("home");
+  if (isDockTab(page)) lastTab.current = page;
+  const goBack = () => setPage(isDockTab(page) ? "home" : lastTab.current);
+  // Android's Back: a phone goes back toward Home, then out of the app (MainActivity.kt); a tablet
+  // leaves a page for the session.
+  useBackKey(phone ? (page === "home" ? 0 : 1) : isAndroid && page !== "session" ? 1 : 0, () => (phone ? goBack() : setPage("session")));
   const { motion } = useAppearance();
   const layout = useLayout();
 
@@ -219,7 +231,10 @@ export default function App() {
   useEffect(() => watchBudget(providers ?? []), [providers]);
 
   useEffect(() => {
-    if (!current) startChat();
+    if (current) return;
+    // A phone keeps its page (Home at launch); the chat waits behind it for "+".
+    if (isPhone()) go((cur) => ({ page: cur.page, id: getOrCreateEmptyConversation().id }));
+    else startChat();
   }, [current]);
 
   return (
@@ -229,6 +244,7 @@ export default function App() {
           className="h-svh overflow-hidden"
           style={{ "--sidebar-width": `${layout.sidebar}px` } as React.CSSProperties}
         >
+          {!phone && (
           <AppSidebar
             conversations={conversations}
             activeId={activeId}
@@ -247,14 +263,24 @@ export default function App() {
             sharedId={sharedId}
             onOpenShared={openShared}
           />
+          )}
           <SidebarInset className="min-w-0">
+            {!(phone && isDockTab(page)) && (
             <AppHeader
+              onBack={phone ? goBack : undefined}
               workspaceId={page === "session" ? current?.workspaceId : undefined}
               nav={nav}
               session={page === "session" ? current : null}
               sharedId={page === "shared" ? sharedId : null}
               onToggleIncognito={toggleIncognito}
             >
+              {phone ? (
+                <PhoneTitle title={page === "session" ? current?.title : PAGE_TITLES[page]} onNew={startNew}>
+                  {page === "session" && current && current.messages.length > 0 && (
+                    <SessionMenu conversation={current} onOpen={tabs.openInNewTab} onDelete={deleteSession} />
+                  )}
+                </PhoneTitle>
+              ) : (
               <SessionTabs
                 open={tabs.open}
                 conversations={conversations}
@@ -269,8 +295,32 @@ export default function App() {
                   current && <SessionMenu conversation={current} onOpen={tabs.openInNewTab} onDelete={deleteSession} />
                 }
               />
+              )}
             </AppHeader>
+            )}
             <ErrorBoundary title="Something went wrong showing this" resetKey={`${page}:${activeId}`}>
+              <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", phone && isDockTab(page) && page !== "home" && page !== "chats" && "pb-20")}>
+              {page === "home" && (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <PhoneHome
+                    conversations={conversations}
+                    hasProviders={providers ? providers.length > 0 : null}
+                    onOpenPage={setPage}
+                    onOpenSession={tabs.openInNewTab}
+                    onAsk={() => {
+                      startChat();
+                      // Asked for, so the keyboard comes up (focusComposer leaves it down on a phone).
+                      setTimeout(() => document.querySelector<HTMLTextAreaElement>("textarea[name=message]")?.focus(), 120);
+                    }}
+                    onIncognito={() => tabs.openInNewTab(createIncognitoConversation().id)}
+                  />
+                </div>
+              )}
+              {page === "chats" && (
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <PhoneChats conversations={conversations} onOpenSession={tabs.openInNewTab} onDelete={deleteSession} />
+                </div>
+              )}
               {page === "folders" && (
                 <FoldersPage
                   onNewSession={(id) => startCowork(id)}
@@ -328,7 +378,9 @@ export default function App() {
                   />
                 </PromptInputProvider>
               )}
+              </div>
             </ErrorBoundary>
+            {phone && isDockTab(page) && <PhoneDock page={page} onTab={setPage} onNew={() => startChat()} />}
           </SidebarInset>
         </SidebarProvider>
         <SessionDialogs />
@@ -336,7 +388,7 @@ export default function App() {
         <SettingsDialog providers={providers ?? []} onProvidersChanged={() => void refresh()} />
         <WhatsNewDialog />
         <Onboarding hasProviders={providers ? providers.length > 0 : null} />
-        <Toaster richColors position="bottom-right" />
+        <Toaster richColors position={phone ? "top-center" : "bottom-right"} />
       </TooltipProvider>
     </MotionConfig>
   );
@@ -353,8 +405,11 @@ function AppHeader({
   session,
   sharedId,
   onToggleIncognito,
+  onBack,
   children,
 }: {
+  /** A phone's back arrow, in place of the sidebar's controls. */
+  onBack?: () => void;
   workspaceId?: string;
   nav: Nav;
   session: Conversation | null;
@@ -373,17 +428,21 @@ function AppHeader({
       className={cn(
         "flex h-12 shrink-0 items-center gap-0.5 px-2 select-none",
         // Clear the custom window controls, or the macOS traffic lights once the sidebar is hidden.
-        IS_MAC ? trafficLights && sidebarHidden && "pl-20" : "pr-36",
+        isAndroid ? "h-14" : IS_MAC ? trafficLights && sidebarHidden && "pl-20" : "pr-36",
       )}
     >
-      {sidebarHidden && (
+      {onBack ? (
+        <ToolbarButton label="Back" onClick={onBack} className="size-10 [&>svg]:size-5">
+          <ArrowLeftIcon />
+        </ToolbarButton>
+      ) : sidebarHidden && (
         <>
           <NavControls nav={nav} coworkStatus />
-          <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />
+          {!isAndroid && <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />}
         </>
       )}
       {children}
-      <span data-tauri-drag-region className="min-w-8 flex-1 self-stretch" />
+      <span data-tauri-drag-region className={cn("flex-1 self-stretch", isAndroid ? "max-md:hidden" : "min-w-8")} />
       {session && !sharedId && <DocsButton threadId={session.id} />}
       {session && !sharedId && <ShareButton conversation={session} />}
       {/* Who's watching: a session shared from here, or the one being watched. */}
@@ -398,6 +457,30 @@ function AppHeader({
         session && <IncognitoToggle active={!!session.incognito} onToggle={onToggleIncognito} />
       )}
     </header>
+  );
+}
+
+const PAGE_TITLES: Partial<Record<Page, string>> = {
+  board: "Board",
+  crm: "CRM",
+  connectors: "Connectors",
+  automations: "Automations",
+  workflows: "Workflows",
+  notebooks: "Binders",
+  docs: "Docs",
+  shared: "Shared session",
+};
+
+/** A phone's title bar shows one session, with no tab strip: its name and menu, and a new one. */
+function PhoneTitle({ title, onNew, children }: { title?: string; onNew: () => void; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-1">
+      <h1 className="min-w-0 truncate pl-1 text-base font-medium">{title ?? "Sush"}</h1>
+      {children}
+      <button type="button" aria-label="New chat" onClick={onNew} className="ml-auto flex size-10 shrink-0 items-center justify-center rounded-md text-muted-foreground active:bg-muted">
+        <PlusIcon className="size-5" />
+      </button>
+    </div>
   );
 }
 
@@ -417,8 +500,8 @@ const sameLocation = (a: NavLocation, b: NavLocation) => a.page === b.page && a.
  * pages alike. Deleted sessions are skipped. Updates are functional, so several moves in one
  * event (open a tab, then show the session page) land as one.
  */
-function useNavHistory(initial: string | null, ids: string[]) {
-  const [history, setHistory] = useState<NavHistory>({ past: [], current: { page: "session", id: initial }, future: [] });
+function useNavHistory(initial: string | null, ids: string[], initialPage: Page = "session") {
+  const [history, setHistory] = useState<NavHistory>({ past: [], current: { page: initialPage, id: initial }, future: [] });
   const exists = (id: string | null) => id !== null && ids.includes(id);
   // A session entry needs its session; a page entry is always worth going back to.
   const live = (l: NavLocation, current: NavLocation) => (l.page !== "session" || exists(l.id)) && !sameLocation(l, current);

@@ -1,8 +1,7 @@
 ---
-name: ship
+name: ship-commit
 description: Build and verify a finished feature (typecheck, desktop production build, Rust workspace tests), then commit and push it to GitHub. Only when the user explicitly asks to build, ship, or push.
 disable-model-invocation: true
-argument-hint: [optional commit message or branch name]
 ---
 
 # Build, then push

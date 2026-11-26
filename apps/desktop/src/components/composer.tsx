@@ -1,4 +1,5 @@
 import type { ChatStatus } from "ai";
+import { toast } from "sonner";
 import { ArrowUpIcon, AudioLinesIcon, FileIcon, FolderIcon, MicIcon, PauseIcon, XIcon } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -114,7 +115,8 @@ export function Composer({
   const busy = status === "submitted" || status === "streaming";
   const started = messages.length > 0;
   const empty = textInput.value.length === 0;
-  const canSend = !!target && (textInput.value.trim().length > 0 || attachments.files.length > 0);
+  const hasDraft = textInput.value.trim().length > 0 || attachments.files.length > 0;
+  const canSend = !!target && hasDraft;
   // Mid-reply, the button sends (steers) once there's something to send, and pauses otherwise.
   const steering = busy && canSend;
   const [promptIndex, setPromptIndex] = useState(0);
@@ -142,8 +144,9 @@ export function Composer({
   const imagesReady = useImagesReady();
   const imageMode = (conversationId ? storedImageMode : localImageMode) && imagesReady && !notebook;
   const imageModel = useActiveImageSettings();
-  // Like ChatGPT: with nothing to send, the send button starts a voice conversation instead.
-  const offerVoice = !!conversationId && !busy && !canSend && !imageMode && !notebook && !dictating;
+  // Like ChatGPT: with nothing typed, the send button starts a voice conversation instead. Only with nothing
+  // typed: with a draft but no model picked yet, it stays the send button and says what's missing.
+  const offerVoice = !!conversationId && !busy && !hasDraft && !imageMode && !notebook && !dictating;
   const turnOnImages = useCallback(() => setImageMode(true), [setImageMode]);
   // Picking a chat model ends drawing: the chat talks again.
   const pickChatModel = useCallback(
@@ -194,6 +197,11 @@ export function Composer({
 
   // Sending mid-recording sends what's been transcribed so far and drops the rest.
   const submit = (msg: PromptInputMessage) => {
+    // Rejected, so the composer keeps the draft (`PromptInput` clears only on success).
+    if (!target && !busy) {
+      toast("Pick a model first", { description: "Tap the model button next to send." });
+      return Promise.reject(new Error("no model"));
+    }
     dictation.cancel(false);
     onSubmit(msg, imageMode ? { image: true } : undefined);
   };
@@ -344,11 +352,11 @@ export function Composer({
                 onImageMode={setImageMode}
               />
             )}
-            {/* Shrinks in a narrow panel: the model name truncates first, the send button never does. */}
+            {/* Shrinks in a narrow panel or a phone: the model name truncates first (down to its logo), the send button never does. */}
             <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 [&>*]:shrink-0">
               {/* A notebook's source tools never ask, so there's no approval mode to pick. */}
               {!notebook && <PermissionModePicker />}
-              <div className="composer-pill min-w-24 shrink! [&_button]:max-w-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
+              <div className="composer-pill min-w-0 shrink! @sm:min-w-24 [&_button]:max-w-full [&_button]:border [&_button]:border-foreground/10 [&_button]:bg-foreground/[0.03] [&_button]:text-foreground [&_button]:shadow-xs [&_button]:hover:bg-foreground/[0.06] dark:[&_button]:border-white/10 dark:[&_button]:bg-white/5 dark:[&_button]:hover:bg-white/10">
                 <ModelPicker
                   catalog={catalog}
                   value={target}
@@ -359,7 +367,10 @@ export function Composer({
               </div>
               {/* An image chat runs no chat model, so its control is the image's quality, not thinking. */}
               {imageMode ? <ImageQualityPicker image={imageModel} /> : <ReasoningPicker catalog={catalog} target={target} />}
-              <ContextMeter catalog={catalog} target={target} messages={messages} conversationId={conversationId} busy={busy} />
+              {/* A phone-narrow composer has no room for it; the send button comes first. */}
+              <span className="flex @max-sm:hidden">
+                <ContextMeter catalog={catalog} target={target} messages={messages} conversationId={conversationId} busy={busy} />
+              </span>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
@@ -423,7 +434,7 @@ export function Composer({
                 <PromptInputSubmit
                   status={steering ? "ready" : status}
                   onStop={onStop}
-                  disabled={!busy && !canSend}
+                  disabled={!busy && !hasDraft}
                   aria-label={steering ? "Send now; it joins the reply at its next step" : busy ? "Pause" : "Send"}
                   className={
                     busy || canSend
@@ -463,7 +474,7 @@ export function Composer({
           <ComposerDock conversationId={conversationId} workspaceId={workspaceId} started={started} />
         )}
       </div>
-      <p className="px-1 text-right text-[11px] text-muted-foreground opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
+      <p className="px-1 text-right text-[11px] text-muted-foreground in-data-android:hidden opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
         <kbd className="rounded border px-1 py-0.5 font-sans">Enter</kbd> to send ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">Shift+Enter</kbd> for new line ·{" "}
         {!notebook && (

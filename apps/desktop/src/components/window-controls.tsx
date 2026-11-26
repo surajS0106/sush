@@ -2,7 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { CopyIcon, MinusIcon, SquareIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 /** macOS keeps its native traffic lights (overlay title bar); elsewhere the window is undecorated. */
 export const IS_MAC = navigator.userAgent.includes("Mac");
@@ -35,12 +35,12 @@ export function useTrafficLights() {
   return IS_MAC && !fullscreen;
 }
 
-/** Minimize / maximize / close, pinned to the window's top-right corner. Renders nothing on macOS. */
+/** Minimize / maximize / close, pinned to the window's top-right corner. Renders nothing on macOS and Android. */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
-    if (IS_MAC) return;
+    if (IS_MAC || isAndroid) return;
     const win = getCurrentWindow();
     const sync = () => void win.isMaximized().then(setMaximized);
     sync();
@@ -48,7 +48,7 @@ export function WindowControls() {
     return () => void unlisten.then((fn) => fn());
   }, []);
 
-  if (IS_MAC) return null;
+  if (IS_MAC || isAndroid) return null;
   const win = getCurrentWindow();
 
   return (

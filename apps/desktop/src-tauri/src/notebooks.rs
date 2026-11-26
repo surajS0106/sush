@@ -18,9 +18,9 @@ use sush_core::notebooks::{
 };
 use sush_core::web::{self, Fetched};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_dialog::DialogExt;
 use tokio::sync::Semaphore;
 
+use crate::files;
 use crate::error::{AppError, AppResult};
 use crate::state::AppState;
 use crate::store::blocking;
@@ -169,17 +169,11 @@ pub async fn notebook_set_overview(
 pub async fn notebook_pick_cover(app: AppHandle, state: State<'_, AppState>) -> AppResult<Option<String>> {
     let dialog = app.clone();
     let picked = tokio::task::spawn_blocking(move || {
-        dialog
-            .dialog()
-            .file()
-            .set_title("Choose a cover image")
-            .add_filter("Images", &["png", "jpg", "jpeg", "webp", "gif"])
-            .blocking_pick_file()
+        files::pick(&dialog, "Choose a cover image", ("Images", &["png", "jpg", "jpeg", "webp", "gif"]), false)
     })
     .await
-    .map_err(|e| AppError::Invalid(e.to_string()))?;
-    let Some(file) = picked else { return Ok(None) };
-    let path = file.into_path().map_err(|e| AppError::Invalid(format!("That image can't be used: {e}")))?;
+    .map_err(|e| AppError::Invalid(e.to_string()))??;
+    let Some(path) = picked.into_iter().next() else { return Ok(None) };
     let store = state.store.clone();
     blocking(move || {
         if std::fs::metadata(&path)?.len() > MAX_COVER {
@@ -560,19 +554,12 @@ pub async fn notebook_add_link(app: AppHandle, state: State<'_, AppState>, id: S
 pub async fn notebook_add_files(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<Vec<Source>> {
     let dialog = app.clone();
     let picked = tokio::task::spawn_blocking(move || {
-        dialog
-            .dialog()
-            .file()
-            .set_title("Add sources")
-            .add_filter("Documents", &["pdf", "txt", "md", "markdown"])
-            .blocking_pick_files()
+        files::pick(&dialog, "Add sources", ("Documents", &["pdf", "txt", "md", "markdown"]), true)
     })
     .await
-    .map_err(|e| AppError::Invalid(e.to_string()))?
-    .unwrap_or_default();
+    .map_err(|e| AppError::Invalid(e.to_string()))??;
     let mut added = Vec::new();
-    for file in picked {
-        let path = file.into_path().map_err(|e| AppError::Invalid(format!("That file can't be used: {e}")))?;
+    for path in picked {
         let store = state.store.clone();
         let (kind, title, blob) = blocking(move || read_file(&store, &path)).await?;
         let mut source = Source::new(new_id(), id.clone(), kind, title, now_ms());

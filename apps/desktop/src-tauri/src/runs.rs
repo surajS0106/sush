@@ -124,6 +124,16 @@ pub struct LiveRun {
     error: Option<String>,
 }
 
+/// A session's name for a notification, which the lock screen may show.
+#[cfg(target_os = "android")]
+fn android_title(thread: &ThreadMeta) -> String {
+    if thread.incognito {
+        "Incognito chat".into()
+    } else {
+        thread.title.clone()
+    }
+}
+
 #[derive(Default)]
 pub struct Runs {
     /// Each window's channel, by label. Lock order: `channels`, then a run's `state`.
@@ -202,6 +212,29 @@ impl Runs {
                 let _ = live.inbox.send(Inbox::Recheck);
             }
         }
+    }
+
+    /// Tell Android's service what's running, so it keeps the app going in the background.
+    #[cfg(target_os = "android")]
+    fn notify_android(&self, app: &AppHandle, finished: Option<crate::android::Finished>) {
+        let lives: Vec<Arc<Live>> = self.live.lock().unwrap().values().cloned().collect();
+        let mut activity = crate::android::Activity { finished, ..Default::default() };
+        for live in lives {
+            let s = live.state.lock().unwrap();
+            match s.status {
+                RunStatus::Submitted | RunStatus::Streaming => activity.working.push(android_title(&s.thread)),
+                // A sub-agent's approvals are answered in its parent's session.
+                RunStatus::Awaiting => activity.waiting.push(crate::android::Waiting {
+                    id: s.thread.parent_id.clone().unwrap_or_else(|| s.thread.id.clone()),
+                    title: android_title(&s.thread),
+                }),
+                RunStatus::Ready | RunStatus::Error => {}
+            }
+        }
+        // The map's order changes from call to call.
+        activity.working.sort();
+        activity.waiting.sort_by(|a, b| a.id.cmp(&b.id));
+        crate::android::runs_changed(app, activity);
     }
 
     /// Send a frame to every window (a page may be reloading; it resubscribes),
@@ -614,6 +647,11 @@ impl RunHost for Host {
         for channel in channels.values() {
             let _ = channel.send(frame.clone());
         }
+        drop(channels);
+        #[cfg(target_os = "android")]
+        if matches!(frame, RunFrame::Status { .. }) {
+            state.runs.notify_android(&self.app, None);
+        }
     }
 
     async fn save(&self, messages: &[Value]) {
@@ -948,6 +986,8 @@ async fn start(
         checkpoint_to,
     });
     runs.live.lock().unwrap().insert(thread.id.clone(), live.clone());
+    #[cfg(target_os = "android")]
+    runs.notify_android(app, None);
 
     let report = live.report.as_ref().filter(|r| r.role == Role::Run).map(|r| r.report.id.clone());
     if let Some(id) = &report {
@@ -1009,6 +1049,20 @@ async fn start(
             live.remove(&host.thread_id);
         }
         drop(live);
+        #[cfg(target_os = "android")]
+        {
+            let finished = {
+                let s = host.live.state.lock().unwrap();
+                // A sub-agent reports to its parent, and a stopped or waiting run isn't news.
+                let shown = !cancel.is_cancelled() && s.thread.parent_id.is_none() && s.status != RunStatus::Awaiting;
+                shown.then(|| crate::android::Finished {
+                    id: s.thread.id.clone(),
+                    title: android_title(&s.thread),
+                    failed: s.status == RunStatus::Error,
+                })
+            };
+            runs.notify_android(&host.app, finished);
+        }
         let _ = done_tx.send(true);
     });
     Ok(Some(live))

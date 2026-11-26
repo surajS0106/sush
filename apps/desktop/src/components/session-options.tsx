@@ -27,7 +27,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { setConversationWorkspace } from "@/lib/store";
 import { errorMessage } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 import {
   addWorkspace,
   finishRebase,
@@ -42,7 +42,12 @@ import {
 const CHIP =
   "flex h-7 items-center gap-1.5 rounded-lg border border-foreground/10 bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:bg-foreground/[0.03] hover:text-foreground dark:border-white/10 dark:bg-card";
 
-export function SessionOptions({ conversationId, workspaceId }: { conversationId: string; workspaceId?: string }) {
+export function SessionOptions(props: { conversationId: string; workspaceId?: string }) {
+  // A phone has no folders to pick.
+  return isAndroid ? null : <FolderOptions {...props} />;
+}
+
+function FolderOptions({ conversationId, workspaceId }: { conversationId: string; workspaceId?: string }) {
   const workspaces = useWorkspaces();
   const sandbox = useSandboxStatus();
   const current = workspaces.find((w) => w.id === workspaceId);

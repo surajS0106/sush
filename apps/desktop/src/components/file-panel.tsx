@@ -29,6 +29,7 @@ import {
 import { PANEL, setLayout, useLayout } from "@/lib/layout";
 import { api, errorMessage } from "@/lib/tauri";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { BackCloses } from "@/lib/back";
 import { cn } from "@/lib/utils";
 
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
@@ -387,12 +388,13 @@ export function FilePanel({ threadId, versions }: { threadId: string; versions: 
       ref={ref}
       aria-label={shown.name}
       className={cn(
-        "relative flex min-w-[320px] shrink-0 flex-col p-2",
+        "side-panel relative flex min-w-[320px] shrink-0 flex-col p-2",
         expanded ? "flex-1" : "max-w-[calc(100%-360px)] pl-0",
         !expanded && width === null && "w-[56%] max-w-[min(1100px,calc(100%-360px))]",
       )}
       style={expanded || width === null ? undefined : { width }}
     >
+      <BackCloses onBack={() => closeFile(threadId)} />
       {!expanded && (
         <ResizeHandle
           label="Resize file panel"

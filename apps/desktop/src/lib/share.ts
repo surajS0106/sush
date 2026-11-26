@@ -15,7 +15,7 @@ import { createContext, useMemo, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import { setToolRunning } from "@/lib/agent";
-import { AUTH_URL, getAuthToken } from "@/lib/auth";
+import { AUTH_URL, getAuthToken, HAS_ACCOUNTS } from "@/lib/auth";
 import { placesOrder } from "@/lib/connector-catalog";
 import { forgetThreads, onShareFrames, seedThread, sessionRunConfig } from "@/lib/sessions";
 import { createStore, threadMeta } from "@/lib/store";
@@ -485,7 +485,7 @@ export async function refreshShareAccount() {
 }
 
 /** The address a new relay setup starts from: the server this app signs in to. */
-export const DEFAULT_RELAY = AUTH_URL;
+export const DEFAULT_RELAY = HAS_ACCOUNTS ? AUTH_URL : "";
 
 /** Share through the server this app signs in to, with this app's own session. */
 export async function shareWithAppAccount(relayUrl = DEFAULT_RELAY) {

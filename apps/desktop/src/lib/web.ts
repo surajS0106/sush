@@ -2,8 +2,8 @@
 // pages, deciding for itself when to. They run in Rust (`sush_core::web`): search through
 // Ollama's web search with the user's Ollama key (Settings → Search), and pages through
 // Ollama too, or fetched from this machine (public addresses only) without a key.
-// Anthropic and OpenAI models get their provider's own search under the same names: the
-// wire formats swap these specs for native tools, so these runners never see those calls.
+// Anthropic, OpenAI and xAI (Grok) models get their provider's own search under the same names:
+// the wire formats swap these specs for native tools, so these runners never see those calls.
 
 import { api, errorMessage, type ToolSpec, type WebSearchResult } from "@/lib/tauri";
 import type { SushUIMessage } from "@/lib/transport";

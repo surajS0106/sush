@@ -311,7 +311,7 @@ pub async fn memory_clear(state: State<'_, AppState>) -> AppResult<()> {
 }
 
 /// Serves `sushblob://localhost/<sha>` (`http://sushblob.localhost/<sha>` on
-/// Windows) so the webview can show stored images.
+/// Windows and Android) so the webview can show stored images.
 pub fn serve_blob<R: tauri::Runtime>(ctx: UriSchemeContext<'_, R>, request: tauri::http::Request<Vec<u8>>, responder: UriSchemeResponder) {
     let app = ctx.app_handle().clone();
     let store = app.state::<AppState>().store.clone();

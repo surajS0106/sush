@@ -4,7 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { CoworkStatusBadge } from "@/components/cowork-status-dot";
 import { useSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 /** Back/forward through the sessions you've opened. */
 export interface Nav {
@@ -26,12 +26,17 @@ export function NavControls({ nav, coworkStatus = false }: { nav: Nav; coworkSta
         <PanelLeftIcon />
         {coworkStatus && <CoworkStatusBadge className="ring-background" />}
       </ToolbarButton>
+      {/* Android has its own Back. */}
+      {!isAndroid && (
+        <>
       <ToolbarButton label="Back" disabled={!nav.canBack} onClick={nav.back}>
         <ArrowLeftIcon />
       </ToolbarButton>
       <ToolbarButton label="Forward" disabled={!nav.canForward} onClick={nav.forward}>
         <ArrowRightIcon />
       </ToolbarButton>
+        </>
+      )}
     </>
   );
 }

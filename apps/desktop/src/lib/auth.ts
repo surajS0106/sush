@@ -6,6 +6,8 @@
 
 import { createAuthClient } from "better-auth/react";
 
+import { isAndroid } from "@/lib/utils";
+
 const TOKEN_KEY = "sush.authToken";
 
 function readToken(): string {
@@ -28,6 +30,12 @@ function writeToken(token: string | null) {
 /** The server accounts live on. In dev it doubles as the relay for shared sessions. */
 export const AUTH_URL = import.meta.env.VITE_AUTH_URL ?? "http://localhost:3000";
 
+/**
+ * Whether this build signs in. The Android app has no server of its own to sign in to, so unless
+ * it's built with one (`VITE_AUTH_URL`) it runs without an account: chats are on the phone anyway.
+ */
+export const HAS_ACCOUNTS = !isAndroid || !!import.meta.env.VITE_AUTH_URL;
+
 /** This app's session token, to share through the same server without signing in again (`lib/share.ts`). */
 export const getAuthToken = readToken;
 
@@ -42,7 +50,8 @@ export const authClient = createAuthClient({
   },
 });
 
-export const useSession = authClient.useSession;
+const noSession = { data: null, isPending: false } as unknown as ReturnType<typeof authClient.useSession>;
+export const useSession: typeof authClient.useSession = HAS_ACCOUNTS ? authClient.useSession : ((() => noSession) as typeof authClient.useSession);
 
 /** Throws with the server's message when better-auth answers with an error. */
 function check<T>(res: { data: T | null; error: { message?: string; statusText?: string } | null }): T | null {

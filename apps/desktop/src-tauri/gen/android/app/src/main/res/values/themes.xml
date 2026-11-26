@@ -1,0 +1,7 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.sush" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Behind the status and navigation bars: the page's background colour, or the bars show as tinted strips. -->
+        <item name="android:windowBackground">#FCFEFE</item>
+    </style>
+</resources>

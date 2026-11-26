@@ -2,18 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the app's windows: the first, and sessions dragged out into their own (windows.rs)",
-  "windows": ["main", "session-*"],
+  "windows": [
+    "main",
+    "session-*"
+  ],
   "permissions": [
     "core:default",
-    "core:window:allow-start-dragging",
-    "core:window:allow-internal-toggle-maximize",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
-    "core:window:allow-close",
-    "core:webview:allow-set-webview-zoom",
-    "opener:default",
-    "dialog:default",
-    "updater:default",
-    "process:allow-restart"
+    "opener:default"
   ]
 }

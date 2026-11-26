@@ -251,7 +251,7 @@ pub struct LocalRelay {
     url: Option<String>,
 }
 
-#[cfg(not(debug_assertions))]
+#[cfg(all(desktop, not(debug_assertions)))]
 fn local_relay_view(app: &AppHandle) -> LocalRelay {
     let lan = app.state::<crate::auth_server::AuthServer>().lan();
     let url = share_lan_address()
@@ -263,9 +263,9 @@ fn local_relay_view(app: &AppHandle) -> LocalRelay {
 
 #[tauri::command]
 pub fn local_relay(app: AppHandle) -> LocalRelay {
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(desktop, not(debug_assertions)))]
     let relay = local_relay_view(&app);
-    #[cfg(debug_assertions)]
+    #[cfg(any(mobile, debug_assertions))]
     let relay = {
         let _ = app;
         LocalRelay { available: false, lan: false, url: None }
@@ -276,7 +276,7 @@ pub fn local_relay(app: AppHandle) -> LocalRelay {
 /// Let others on the local network reach this app's relay (or stop): restarts it.
 #[tauri::command]
 pub async fn local_relay_set_lan(app: AppHandle, on: bool) -> AppResult<LocalRelay> {
-    #[cfg(not(debug_assertions))]
+    #[cfg(all(desktop, not(debug_assertions)))]
     let relay = {
         let handle = app.clone();
         tauri::async_runtime::spawn_blocking(move || handle.state::<crate::auth_server::AuthServer>().set_lan(on))
@@ -284,7 +284,7 @@ pub async fn local_relay_set_lan(app: AppHandle, on: bool) -> AppResult<LocalRel
             .map_err(|e| AppError::Invalid(e.to_string()))??;
         Ok(local_relay_view(&app))
     };
-    #[cfg(debug_assertions)]
+    #[cfg(any(mobile, debug_assertions))]
     let relay = {
         let _ = (app, on);
         Err(AppError::Invalid("In development, run `bun run dev:relay` for a relay others can reach.".into()))

@@ -1,5 +1,8 @@
-#[cfg(not(debug_assertions))]
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(all(desktop, not(debug_assertions)))]
 mod auth_server;
+#[cfg_attr(mobile, path = "mobile/browser.rs")]
 mod browser;
 mod commands;
 mod connector_auth;
@@ -10,11 +13,12 @@ mod engine_bridge;
 #[cfg(target_os = "macos")]
 mod dock_icon;
 mod error;
+mod files;
 mod flights;
 mod images;
 mod library;
 mod location;
-#[cfg(unix)]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 mod login_env;
 mod maps;
 #[cfg(target_os = "macos")]
@@ -33,10 +37,13 @@ mod topic;
 mod voice;
 mod web;
 mod weather;
+#[cfg_attr(mobile, path = "mobile/whisper.rs")]
 mod whisper;
 mod widgets;
+#[cfg_attr(mobile, path = "mobile/windows.rs")]
 mod windows;
 mod workspaces;
+#[cfg_attr(mobile, path = "mobile/deep_link.rs")]
 mod deep_link;
 mod yammer;
 
@@ -45,22 +52,27 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(unix)]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     login_env::init();
     paths::init();
     let builder = tauri::Builder::default();
     // First, so a second launch hands its arguments (a sush:// link on Windows and Linux) to this
     // copy and exits. Not for a second profile in a debug build, which runs beside the first (paths.rs).
+    #[cfg(desktop)]
     let builder = match paths::profile() {
         None => builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| deep_link::focus(app))),
         Some(_) => builder,
     };
-    builder
+    #[cfg(desktop)]
+    let builder = builder
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_process::init());
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(android::plugin());
+    builder
+        .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol(sush_core::store::BLOB_SCHEME, store::serve_blob)
         .register_uri_scheme_protocol(widgets::SCHEME, widgets::serve)
         // Dictation records in the webview; the OS still asks the user for mic access.
@@ -72,6 +84,7 @@ pub fn run() {
             let config_dir = paths::config_dir(app.handle())?;
             secrets::init(&config_dir);
             app.manage(state::AppState::load(config_dir, paths::data_dir(app.handle())?)?);
+            #[cfg(desktop)]
             deep_link::init(app.handle());
             #[cfg(target_os = "macos")]
             menu::init(app.handle())?;
@@ -86,7 +99,7 @@ pub fn run() {
             app.manage(whisper::Whisper::default());
             app.manage(browser::Browser::default());
             app.manage(voice::VoiceSessions::default());
-            #[cfg(not(debug_assertions))]
+            #[cfg(all(desktop, not(debug_assertions)))]
             {
                 let server = auth_server::AuthServer::default();
                 server.start(auth_server::Dirs {
@@ -298,6 +311,8 @@ pub fn run() {
             flights::flights_locate,
             flights::flights_rates,
             location::location_read,
+            #[cfg(target_os = "android")]
+            android::android_bars,
             topic::topic_lookup,
             web::web_key_status,
             web::web_key_set,
@@ -336,7 +351,7 @@ pub fn run() {
                     }
                 }
             }
-            #[cfg(not(debug_assertions))]
+            #[cfg(all(desktop, not(debug_assertions)))]
             if let tauri::RunEvent::Exit = _event {
                 _app.state::<auth_server::AuthServer>().stop();
             }

@@ -8,6 +8,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
+import { isAndroid } from "@/lib/utils";
 import { openYammer, useYammerStatus } from "@/components/yammer-setup-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -80,7 +81,7 @@ function ProviderSelect({ form, providers }: { form: Form; providers: ProviderVi
       value={form.providerId}
       onChange={form.pickProvider}
       items={[
-        { value: BUILTIN, label: "Built-in Whisper", hint: "142 MB, offline" },
+        ...(isAndroid ? [] : [{ value: BUILTIN, label: "Built-in Whisper", hint: "142 MB, offline" }]),
         ...providers.map((p) => ({
           value: p.id,
           label: p.name,
@@ -178,6 +179,7 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
   const engine = dictationEngine(useSpeechSettings());
   return (
     <Page>
+      {!isAndroid && (
       <Group title="Dictation">
         <Setting title="Dictate with" description="Yammer is Sush's dictation app and works everywhere. Sush's built-in dictation needs nothing else installed.">
           <Segmented<DictationEngine>
@@ -192,6 +194,7 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
         </Setting>
         {engine === "yammer" && <YammerSettings />}
       </Group>
+      )}
       {engine === "sush" && <SushSpeech form={form} providers={providers} />}
       <OverviewVoices providers={providers} />
     </Page>
@@ -219,7 +222,7 @@ function SushSpeech({ form, providers }: { form: Form; providers: ProviderView[]
           <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">Ctrl+D</kbd>
         </Setting>
       </Group>
-      {form.builtin && (
+      {form.builtin && !isAndroid && (
         <p className="text-sm text-muted-foreground">
           Whisper base.en runs on this computer. It downloads once (142 MB) the first time you dictate.
         </p>

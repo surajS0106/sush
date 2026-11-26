@@ -15,6 +15,7 @@ import { closeDoc } from "@/lib/docs";
 import { closeDeck } from "@/lib/slides";
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type ToolSpec } from "@/lib/tauri";
+import { isPhone } from "@/lib/utils";
 import type { SushUIMessage } from "@/lib/transport";
 
 export const DOCX_EDIT = "docx_edit";
@@ -207,7 +208,8 @@ export function autoOpenFile(threadId: string, callId: string, finished: boolean
   }
   if (!version || !seenRunning.has(callId) || autoOpened.has(callId)) return;
   autoOpened.add(callId);
-  openFile(threadId, version.name);
+  // On a phone it would cover the chat; the card opens it.
+  if (!isPhone()) openFile(threadId, version.name);
 }
 
 // --- bytes ----------------------------------------------------------------------------

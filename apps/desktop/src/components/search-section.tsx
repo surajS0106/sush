@@ -123,7 +123,8 @@ export function SearchSection() {
           <li>Paste it above. It's kept in your system's secure storage and only sent to Ollama.</li>
         </ol>
         <p>
-          Searches send the query to Ollama. Without a key, models can still read a page you give them: Sush fetches it from this computer, and
+          Claude, GPT and Grok models don't need this key: they search with their own provider's search, on your key for that provider (Grok
+          searches X too). Every other model's searches send the query to Ollama. Without a key, models can still read a page you give them: Sush fetches it from this computer, and
           only from public websites, never your local network.
         </p>
       </div>

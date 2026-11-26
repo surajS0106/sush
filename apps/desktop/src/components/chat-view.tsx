@@ -400,7 +400,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
                   : "Connecting…"}
             </p>
           </div>
-          <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">{composer}</div>
+          <div className="mx-auto w-full max-w-(--transcript-width) px-6 max-md:px-3 pb-6">{composer}</div>
         </div>
       </WorkspaceFrame>
     );
@@ -427,7 +427,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
       // at the bottom with where it runs and which folder it works in just above.
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-(--transcript-width) px-6 pt-[12vh] pb-8">
+          <div className="mx-auto w-full max-w-(--transcript-width) px-6 max-md:px-3 pt-[12vh] pb-8">
             {hasProviders === null ? null : hasProviders ? (
               <>
                 <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight">
@@ -441,7 +441,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
             )}
           </div>
         </div>
-        <div className="mx-auto w-full max-w-(--transcript-width) px-6 pb-6">
+        <div className="mx-auto w-full max-w-(--transcript-width) px-6 max-md:px-3 pb-6">
           <SessionOptions conversationId={id} workspaceId={workspaceId} />
           {composer}
         </div>
@@ -449,7 +449,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
     ) : (
       // A plain chat: greeting and composer together in the middle, starters below.
       // Centred, except a tall custom opening (a notebook's overview), which would be cut off above.
-      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-y-auto px-6", emptyState ? "pt-10 pb-8" : "justify-center pb-[10vh]")}>
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col items-center overflow-x-hidden overflow-y-auto px-6 max-md:px-4", emptyState ? "pt-10 pb-8" : "justify-center pb-[10vh]")}>
         <div className={cn("w-full max-w-2xl", emptyState && "my-auto")}>
           {hasProviders === null ? null : hasProviders && emptyState ? (
             typeof emptyState === "function" ? emptyState((text) => submit({ text, files: [] })) : emptyState
@@ -500,7 +500,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
       <TranscriptResizer />
       <Conversation className="min-h-0 flex-1">
         {/* The dock floats over the transcript, so the last message clears it by its measured height. */}
-        <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 pt-8 pb-[calc(var(--dock-h,0px)+2rem)]">
+        <ConversationContent className="mx-auto w-full max-w-(--transcript-width) px-6 max-md:px-3 pt-8 pb-[calc(var(--dock-h,0px)+2rem)]">
           {incognito && (
             <p className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
               <GhostIcon className="size-3.5" /> Incognito: this chat isn’t saved and is deleted when you leave it
@@ -585,7 +585,7 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
           its gutters to the transcript; only its own controls take them. */}
       <div
         ref={dockRef}
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 mx-auto w-full max-w-(--transcript-width) px-6 pb-6 [&>*]:pointer-events-auto"
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 mx-auto w-full max-w-(--transcript-width) px-6 max-md:px-3 pb-6 [&>*]:pointer-events-auto"
       >
         {share && <ControlBanner share={share} />}
         {share && <SuggestionQueue share={share} />}

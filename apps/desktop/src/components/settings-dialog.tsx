@@ -28,6 +28,7 @@ import {
 import { motion } from "motion/react";
 import { useTheme } from "next-themes";
 import { useEffect, useRef, useState, type ComponentType, type FormEvent } from "react";
+import { ArrowLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { CurrencySelect } from "@/components/currency-select";
@@ -61,12 +62,14 @@ import { HoverHighlight, MotionHighlight } from "@/components/ui/motion-highligh
 import { AvatarSprite, UserAvatar } from "@/components/user-avatar";
 import { loadCrm, saveSettings, useCrm } from "@/lib/crm";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
-import { changePassword, connectedApps, deleteAccount, disconnectApp, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
+import { changePassword, connectedApps, deleteAccount, disconnectApp, HAS_ACCOUNTS, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import { openOnboarding, setOnboardingAtLaunch, useOnboardingAtLaunch } from "@/lib/onboarding";
 import type { ProviderView } from "@/lib/tauri";
-import { cn, focusComposer } from "@/lib/utils";
+import { useBackKey } from "@/lib/back";
+import { cn, focusComposer, isAndroid } from "@/lib/utils";
 import { setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib/weather";
 
 interface NavItem {
@@ -112,6 +115,9 @@ const NAV: { group: string; items: NavItem[] }[] = [
   },
 ];
 
+/** Not in this build: signing in where there's no server for it, and the desktop's release notes on Android. */
+const absent = (id: SettingsSection) => (id === "account" && !HAS_ACCOUNTS) || (id === "changelog" && isAndroid);
+
 interface SettingsDialogProps {
   providers: ProviderView[];
   onProvidersChanged: () => void;
@@ -127,8 +133,22 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
   const q = query.trim().toLowerCase();
   const groups = NAV.map(({ group, items }) => ({
     group,
-    items: q ? items.filter((i) => `${i.label} ${i.keywords}`.toLowerCase().includes(q)) : items,
+    items: items.filter((i) => !absent(i.id) && (!q || `${i.label} ${i.keywords}`.toLowerCase().includes(q))),
   })).filter((g) => g.items.length > 0);
+
+  // A phone shows the list or a section, one at a time. Opened at General, it starts with the list.
+  const phone = useIsMobile();
+  const [listed, setListed] = useState(false);
+  const opened = state !== null;
+  useEffect(() => {
+    if (opened) setListed(state?.section === "general");
+  }, [opened]);
+  // Asked for from elsewhere while open.
+  const section = state?.section;
+  useEffect(() => {
+    if (section && section !== "general") setListed(false);
+  }, [section]);
+  const inSection = phone && opened && !listed;
 
   // Opened at a section from elsewhere (e.g. Plugins), the nav shows it.
   useEffect(() => {
@@ -145,7 +165,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
       }}
     >
       <DialogContent
-        className="flex h-[min(760px,90vh)] gap-0 overflow-hidden p-0 sm:max-w-5xl"
+        className="flex h-[min(760px,90vh)] gap-0 overflow-hidden p-0 max-md:top-0 max-md:left-0 max-md:h-svh max-md:max-w-full max-md:translate-0 max-md:rounded-none sm:max-w-5xl max-md:sm:max-w-full"
         // Focus the search on open rather than ringing the first nav item.
         onOpenAutoFocus={(e) => e.preventDefault()}
         // Back to the composer, e.g. after "New skill" opened a chat with /create-skill.
@@ -155,7 +175,17 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">App preferences, account, providers and customizations.</DialogDescription>
-        <nav className="flex w-56 shrink-0 flex-col border-r bg-sidebar">
+        <SectionBack active={inSection && isAndroid} onBack={() => setListed(true)} />
+        {inSection && (
+          <button
+            type="button"
+            onClick={() => setListed(true)}
+            className="absolute top-2 left-2 z-10 flex h-9 items-center gap-2 rounded-md px-2 text-sm font-medium active:bg-muted"
+          >
+            <ArrowLeftIcon className="size-4" /> {NAV.flatMap((g) => g.items).find((i) => i.id === section)?.label}
+          </button>
+        )}
+        <nav className={cn("flex w-56 shrink-0 flex-col border-r bg-sidebar max-md:w-full max-md:border-r-0 max-md:pt-10", inSection && "max-md:hidden")}>
           {/* The search stays put; only the list below it scrolls. */}
           <div className="shrink-0 p-3 pb-1">
             <div className="relative">
@@ -185,9 +215,12 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
                       type="button"
                       data-hover-item
                       aria-current={state?.section === id ? "page" : undefined}
-                      onClick={() => openSettings({ section: id })}
+                      onClick={() => {
+                        openSettings({ section: id });
+                        setListed(false);
+                      }}
                       className={cn(
-                        "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm text-sidebar-foreground/80 transition-colors hover:text-sidebar-foreground",
+                        "relative flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 max-md:py-2.5 text-left text-sm text-sidebar-foreground/80 transition-colors hover:text-sidebar-foreground",
                         state?.section === id && "font-medium text-sidebar-foreground",
                       )}
                     >
@@ -204,7 +237,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
             Starts below the close button so its scrollbar doesn't run underneath it. */}
         <motion.div
           key={state?.section}
-          className="mt-10 min-h-0 min-w-0 flex-1 overflow-y-auto"
+          className={cn("mt-10 min-h-0 min-w-0 flex-1 overflow-y-auto max-md:mt-12", phone && listed && "hidden")}
           initial={{ opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.18, ease: "easeOut" }}
@@ -230,6 +263,12 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
       </DialogContent>
     </Dialog>
   );
+}
+
+/** On Android, Back goes from a section to the list before it closes Settings. */
+function SectionBack({ active, onBack }: { active: boolean; onBack: () => void }) {
+  useBackKey(active ? 1 : 0, onBack);
+  return null;
 }
 
 // --- general -----------------------------------------------------------------------

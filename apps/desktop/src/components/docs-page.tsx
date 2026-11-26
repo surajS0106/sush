@@ -52,9 +52,9 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
   };
 
   return (
-    <div className="flex min-h-0 flex-1">
-      {/* The list. */}
-      <div className="flex w-72 shrink-0 flex-col border-r">
+    <div className="flex min-h-0 flex-1 max-md:flex-col">
+      {/* The list; above the doc in a narrow window. */}
+      <div className="flex w-72 shrink-0 flex-col border-r max-md:max-h-64 max-md:w-full max-md:border-r-0 max-md:border-b">
         <header className="flex items-center gap-2 px-4 pt-6 pb-3">
           <FileTextIcon className="size-5 text-muted-foreground" />
           <h1 className="flex-1 text-xl font-semibold tracking-tight">Docs</h1>
@@ -109,7 +109,7 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
       </div>
 
       {/* The open doc. */}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {open ? (
           <>
             <header className="flex h-12 shrink-0 items-center gap-1 px-3">

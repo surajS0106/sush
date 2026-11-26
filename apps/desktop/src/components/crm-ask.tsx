@@ -66,7 +66,7 @@ export function CrmAskPanel({
   }, [id]);
 
   return (
-    <aside aria-label="Ask Sush about your CRM" className="flex w-[26rem] max-w-full shrink-0 flex-col border-l bg-background">
+    <aside aria-label="Ask Sush about your CRM" className="side-panel flex w-[26rem] max-w-full shrink-0 flex-col border-l bg-background">
       <header className="flex items-center gap-2 border-b px-4 py-2">
         <ContactIcon className="size-4 text-brand" />
         <h2 className="flex-1 text-sm font-medium">Ask Sush</h2>

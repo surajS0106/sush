@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
 import type { ProviderView, TranscribeApi } from "@/lib/tauri";
+import { isAndroid } from "@/lib/utils";
 
 /** The built-in Whisper model, which isn't a configured provider. */
 export const BUILTIN = "builtin";
@@ -33,7 +34,11 @@ export const useSpeechSettings = () => useSyncExternalStore(speech.subscribe, sp
 export const getSpeechSettings = speech.get;
 export const setSpeechSettings = (patch: Partial<SpeechSettings>) => speech.set((s) => ({ ...s, ...patch }));
 
-export const dictationEngine = (s: SpeechSettings): DictationEngine => s.engine ?? "yammer";
+/**
+ * Android's Yammer is a bubble over every app, so it dictates into Sush by itself; Sush's own
+ * button is for its own dictation.
+ */
+export const dictationEngine = (s: SpeechSettings): DictationEngine => (isAndroid ? "sush" : (s.engine ?? "yammer"));
 
 // --- Yammer --------------------------------------------------------------------------
 
@@ -67,7 +72,8 @@ export type SpeechTarget =
 
 /** The configured speech target; the built-in model unless a provider is picked. */
 export function resolveSpeechTarget(settings: SpeechSettings, providers: ProviderView[]): SpeechTarget | null {
-  if (!settings.providerId || settings.providerId === BUILTIN) return { kind: "builtin" };
+  // Whisper isn't built for Android.
+  if (!settings.providerId || settings.providerId === BUILTIN) return isAndroid ? null : { kind: "builtin" };
   // An explicit choice never silently falls back to something else.
   const picked = providers.find((p) => p.id === settings.providerId);
   return picked && canTranscribe(picked) && settings.model.trim()

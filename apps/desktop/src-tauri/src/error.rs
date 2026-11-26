@@ -7,6 +7,7 @@ use sush_core::ProviderError;
 pub enum AppError {
     #[error(transparent)]
     Provider(#[from] ProviderError),
+    #[cfg(desktop)]
     #[error("secure storage: {0}")]
     Keyring(#[from] keyring::Error),
     #[error(transparent)]

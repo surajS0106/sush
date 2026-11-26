@@ -167,6 +167,7 @@ impl Store {
         let conn = Connection::open(dir.join("sush.db"))?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
         migrate(&conn)?;
+        fix_blob_urls(&conn)?;
         Ok(Self { conn: Mutex::new(conn), blob_dir })
     }
 
@@ -762,6 +763,24 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
     Ok(())
 }
 
+/// Tables whose `data` column can hold blob URLs.
+const BLOB_URL_TABLES: [&str; 6] = ["messages", "reports", "docs", "notebooks", "notebook_sources", "notebook_notes"];
+
+/// Rewrite stored blob URLs in the other platform's form to this one's, which
+/// is the only form this webview loads (Android saved `sushblob://` URLs
+/// before it got the `http://` form). Touches only rows that have one.
+fn fix_blob_urls(conn: &Connection) -> StoreResult<()> {
+    let ours = blob_url("");
+    let theirs = if ours.starts_with("http://") { format!("{BLOB_SCHEME}://localhost/") } else { format!("http://{BLOB_SCHEME}.localhost/") };
+    for table in BLOB_URL_TABLES {
+        conn.execute(
+            &format!("UPDATE {table} SET data = replace(data, ?1, ?2) WHERE instr(data, ?1) > 0"),
+            params![theirs, ours],
+        )?;
+    }
+    Ok(())
+}
+
 fn upsert_meta(conn: &Connection, m: &ThreadMeta) -> StoreResult<()> {
     let target = m.target.as_ref().map(serde_json::to_string).transpose()?;
     conn.execute(
@@ -895,10 +914,10 @@ fn extracted(media_type: &str) -> bool {
 /// URI scheme the desktop app serves blobs on.
 pub const BLOB_SCHEME: &str = "sushblob";
 
-/// A blob's URL as the webview loads it. Windows webviews only allow custom
-/// schemes as `http://<scheme>.localhost`.
+/// A blob's URL as the webview loads it. Windows and Android webviews only
+/// allow custom schemes as `http://<scheme>.localhost`.
 pub fn blob_url(sha: &str) -> String {
-    if cfg!(windows) {
+    if cfg!(any(windows, target_os = "android")) {
         format!("http://{BLOB_SCHEME}.localhost/{sha}")
     } else {
         format!("{BLOB_SCHEME}://localhost/{sha}")
@@ -1140,6 +1159,20 @@ mod tests {
         });
         store.resolve_blobs(&mut request).unwrap();
         assert_eq!(request.messages[0].parts[0], Part::Image { media_type: "image/png".into(), data: png });
+    }
+
+    #[test]
+    fn stored_blob_urls_in_the_other_form_are_rewritten_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let sha = "a".repeat(64);
+        let ours = blob_url(&sha);
+        let theirs = if ours.starts_with("http://") { format!("sushblob://localhost/{sha}") } else { format!("http://sushblob.localhost/{sha}") };
+        let message = |url: &str| json!({ "id": "m", "role": "assistant", "parts": [{ "type": "file", "mediaType": "image/png", "url": url }] });
+        store.save_thread(&meta("a", "Image", 1), Some(vec![message(&theirs)])).unwrap();
+
+        let store = Store::open(dir.path()).unwrap();
+        assert_eq!(store.threads().unwrap()[0].messages, vec![message(&ours)]);
     }
 
     #[test]
