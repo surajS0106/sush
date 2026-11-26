@@ -304,7 +304,7 @@ function ChangeBox({ sensitive }: { sensitive: boolean }) {
 
   return (
     <form
-      className="sticky bottom-0 mt-auto bg-linear-to-t from-popover from-70% to-transparent pt-6 pr-14 pb-4 pl-8"
+      className="sticky bottom-0 mt-auto bg-linear-to-t from-popover from-70% to-transparent pt-6 pr-14 pb-4 pl-8 max-md:px-4"
       onSubmit={(e) => {
         e.preventDefault();
         void submit();

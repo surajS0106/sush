@@ -1,9 +1,10 @@
 // The Docs page: every doc, whether Sush wrote it in a chat or the user started
 // it here, in a list beside the open one. The open doc is the same editor as
 // the chat's side panel (`DocBody`), with its history, outline and Share menu,
-// and a link back to the chat it came from.
+// and a link back to the chat it came from. A phone shows one at a time: the
+// list, or the open doc with a back arrow.
 
-import { FileTextIcon, MessageSquareIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
+import { ArrowLeftIcon, FileTextIcon, MessageSquareIcon, PlusIcon, SearchIcon, Trash2Icon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 
 import { DocBody, DocIcon, OutlineMenu, relativeTime, ShareMenu, VersionsMenu } from "@/components/doc-panel";
@@ -13,7 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { createDoc, deleteDoc, useDocs } from "@/lib/docs";
 import { getConversations } from "@/lib/store";
 import type { Doc, DocVersion } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+import { useBackKey } from "@/lib/back";
+import { cn, isPhone } from "@/lib/utils";
 
 /** The first line of text under the title, for the list. */
 function snippet(doc: Doc): string {
@@ -38,7 +40,10 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
     const q = query.trim().toLowerCase();
     return q ? docs.filter((d) => d.title.toLowerCase().includes(q) || d.content.toLowerCase().includes(q)) : docs;
   }, [docs, query]);
-  const open = docs.find((d) => d.id === openId) ?? shown[0] ?? null;
+  const phone = isPhone();
+  // A phone opens a doc only when one is picked; a wider window always shows one beside the list.
+  const open = docs.find((d) => d.id === openId) ?? (phone ? null : shown[0]) ?? null;
+  useBackKey(phone && open ? 1 : 0, () => setOpenId(null));
   const chatExists = !!open?.threadId && getConversations().some((c) => c.id === open.threadId);
 
   const select = (id: string) => {
@@ -51,10 +56,33 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
     if (await deleteDoc(doc)) setOpenId(null);
   };
 
+  const create = async () => {
+    const doc = await createDoc();
+    if (doc) select(doc.id);
+  };
+
+  const empty = (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+      <FileTextIcon className="size-8 text-muted-foreground" />
+      <p className="max-w-sm text-sm text-muted-foreground">
+        Docs are pages Sush writes for you: plans, guides, write-ups. Edit them like Notion, keep every version, and share them.
+      </p>
+      <Button onClick={() => void create()}>
+        <PlusIcon /> New doc
+      </Button>
+    </div>
+  );
+
   return (
     <div className="flex min-h-0 flex-1 max-md:flex-col">
-      {/* The list; above the doc in a narrow window. */}
-      <div className="flex w-72 shrink-0 flex-col border-r max-md:max-h-64 max-md:w-full max-md:border-r-0 max-md:border-b">
+      {/* The list; above the doc in a narrow window, on its own on a phone. */}
+      <div
+        className={cn(
+          "flex w-72 shrink-0 flex-col border-r",
+          phone ? "min-h-0 w-full flex-1 border-r-0" : "max-md:max-h-64 max-md:w-full max-md:border-r-0 max-md:border-b",
+          phone && open && "hidden",
+        )}
+      >
         <header className="flex items-center gap-2 px-4 pt-6 pb-3">
           <FileTextIcon className="size-5 text-muted-foreground" />
           <h1 className="flex-1 text-xl font-semibold tracking-tight">Docs</h1>
@@ -64,10 +92,7 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
                 variant="ghost"
                 size="icon-sm"
                 aria-label="New doc"
-                onClick={async () => {
-                  const doc = await createDoc();
-                  if (doc) select(doc.id);
-                }}
+                onClick={() => void create()}
               >
                 <PlusIcon />
               </Button>
@@ -75,11 +100,14 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
             <TooltipContent>New doc</TooltipContent>
           </Tooltip>
         </header>
-        <div className="relative px-4 pb-3">
-          <SearchIcon className="pointer-events-none absolute top-1/2 left-6.5 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search docs" aria-label="Search docs" className="pl-8" />
+        <div className="px-4 pb-3">
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search docs" aria-label="Search docs" className="pl-8" />
+          </div>
         </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+        {phone && docs.length === 0 && empty}
+        <ul className={cn("min-h-0 flex-1 overflow-y-auto px-2 pb-4", phone && docs.length === 0 && "hidden")}>
           {shown.map((d) => (
             <li key={d.id}>
               <button
@@ -109,10 +137,15 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
       </div>
 
       {/* The open doc. */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", phone && !open && "hidden")}>
         {open ? (
           <>
             <header className="flex h-12 shrink-0 items-center gap-1 px-3">
+              {phone && (
+                <Button variant="ghost" size="icon-sm" aria-label="All docs" onClick={() => setOpenId(null)}>
+                  <ArrowLeftIcon />
+                </Button>
+              )}
               <VersionsMenu doc={open} preview={preview} onPreview={setPreview} />
               <div className="flex-1" />
               {chatExists && (
@@ -134,20 +167,7 @@ export function DocsPage({ onOpenSession }: { onOpenSession: (threadId: string) 
             <DocBody key={open.id} doc={open} preview={preview} onLeavePreview={() => setPreview(null)} scrollRef={scroller} />
           </>
         ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-            <FileTextIcon className="size-8 text-muted-foreground" />
-            <p className="max-w-sm text-sm text-muted-foreground">
-              Docs are pages Sush writes for you: plans, guides, write-ups. Edit them like Notion, keep every version, and share them.
-            </p>
-            <Button
-              onClick={async () => {
-                const doc = await createDoc();
-                if (doc) select(doc.id);
-              }}
-            >
-              <PlusIcon /> New doc
-            </Button>
-          </div>
+          empty
         )}
       </div>
     </div>

@@ -846,7 +846,7 @@ function EmptyCrm({ onImport, onNew }: { onImport: () => void; onNew: () => void
         <div className="flex flex-col gap-1">
           <h2 className="text-lg font-semibold">Your companies, people and deals</h2>
           <p className="text-sm text-muted-foreground">
-            Keep them here, on this computer. Move deals through your pipeline, log calls and meetings, and save the views you check often.
+            Keep them here, on this device. Move deals through your pipeline, log calls and meetings, and save the views you check often.
           </p>
         </div>
         <div className="flex flex-wrap justify-center gap-2">

@@ -4,29 +4,22 @@
 
 import {
   ArrowUpIcon,
-  ContactIcon,
   FileTextIcon,
-  GhostIcon,
   HomeIcon,
   KanbanIcon,
   LoaderCircleIcon,
-  LogInIcon,
   MessagesSquareIcon,
   MoreHorizontalIcon,
-  NotebookTextIcon,
-  PlugIcon,
   PlusIcon,
   SearchIcon,
   SettingsIcon,
-  TimerIcon,
-  WorkflowIcon,
   type LucideIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { Page } from "@/components/app-sidebar";
-import { Mascot } from "@/components/mascot";
+import { Mascot, type MascotAct, type MascotStage } from "@/components/mascot";
 import { SessionMenuItems } from "@/components/session-actions";
 import { openJoin } from "@/components/shared-sessions";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -190,9 +183,18 @@ function ChatRow({
   );
 }
 
-/** A bento tile: an icon on its colour, a label, and a line of what's there. */
+/** What a tile's sushi does: an activity, or a stage of work (laptop, thinking, writing). */
+type Scene = {
+  kind: string;
+  act?: MascotAct;
+  stage?: MascotStage;
+  /** Set at night: a dark sky instead of the tile's colour. */
+  night?: boolean;
+};
+
+/** A bento tile: a sushi acting out what's there on the tile's colour, a label, and a line of what's there. */
 function Tile({
-  icon: Icon,
+  scene,
   label,
   value,
   tint,
@@ -201,14 +203,14 @@ function Tile({
   tall,
   className,
 }: {
-  icon: LucideIcon;
+  scene: Scene;
   label: string;
   value: ReactNode;
-  /** The icon's colour: a CSS colour or variable. */
+  /** The scene's colour: a CSS colour or variable. */
   tint: string;
   onClick: () => void;
   dot?: boolean;
-  /** A tall tile, with its icon large in the middle. */
+  /** A tall tile, with its sushi large in the middle. */
   tall?: boolean;
   className?: string;
 }) {
@@ -220,10 +222,27 @@ function Tile({
       transition={spring}
       className={cn("relative flex min-h-28 min-w-0 flex-col items-start rounded-3xl border bg-card p-4 text-left shadow-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50", className)}
     >
-      <span className="flex size-10 items-center justify-center rounded-2xl" style={{ backgroundColor: `color-mix(in oklch, ${tint} 16%, transparent)`, color: tint }}>
-        <Icon className="size-5" />
+      {/* The sushi stands on the floor of its little stage; props (a book, juggling balls, the
+          coffee machine to its right) spill over the stage's edges. Taps go to the tile. */}
+      <span
+        aria-hidden
+        className={cn(
+          "pointer-events-none flex w-full items-end rounded-2xl px-3 pb-1.5",
+          tall ? "flex-1 items-center justify-center" : "h-14",
+          // The night sky keeps its moon, stars and lamplight inside.
+          scene.night && "overflow-hidden",
+        )}
+        style={
+          scene.night
+            ? { background: "linear-gradient(to bottom, #161a38, #2c2f63)", color: tint }
+            : { backgroundColor: `color-mix(in oklch, ${tint} 14%, transparent)`, color: tint }
+        }
+      >
+        {/* Bigger in a tall tile, nudged left to centre the scene beside it (the study's desk and lamp). */}
+        <span className={cn("origin-bottom", tall && "-translate-x-3 scale-[1.8]")}>
+          <Mascot kind={scene.kind} act={scene.act} busy={!!scene.stage} stage={scene.stage} draft="" still />
+        </span>
       </span>
-      {tall && <Icon aria-hidden className="pointer-events-none absolute top-1/2 left-1/2 size-20 -translate-x-1/2 -translate-y-1/3 opacity-15" style={{ color: tint }} strokeWidth={1.25} />}
       {dot && <span className="absolute top-4 right-4 size-2.5 rounded-full bg-brand" aria-label="New" />}
       <span className="mt-auto pt-3 text-[15px] font-semibold">{label}</span>
       <span className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{value}</span>
@@ -332,10 +351,10 @@ export function PhoneHome({
         )}
       </section>
 
-      <Tile icon={KanbanIcon} label="Board" value={open ? `${count(open, "open task")}` : "Plan your tasks"} tint="var(--brand)" onClick={() => onOpenPage("board")} />
-      <Tile icon={FileTextIcon} label="Docs" value={docs.length ? count(docs.length, "doc") : "Write with Sush"} tint="oklch(0.6 0.18 255)" onClick={() => onOpenPage("docs")} />
+      <Tile scene={{ kind: "ebi", act: "whiteboard" }} label="Board" value={open ? `${count(open, "open task")}` : "Plan your tasks"} tint="var(--brand)" onClick={() => onOpenPage("board")} />
+      <Tile scene={{ kind: "tamago", act: "notebook" }} label="Docs" value={docs.length ? count(docs.length, "doc") : "Write with Sush"} tint="oklch(0.6 0.18 255)" onClick={() => onOpenPage("docs")} />
       <Tile
-        icon={NotebookTextIcon}
+        scene={{ kind: "salmon", act: "study", night: true }}
         label="Binders"
         value={notebooks.length ? count(notebooks.length, "binder") : "Chat with your sources"}
         tint="oklch(0.6 0.2 293)"
@@ -344,18 +363,18 @@ export function PhoneHome({
         className="row-span-2 min-h-full"
       />
       <Tile
-        icon={TimerIcon}
+        scene={{ kind: "maguro", act: "coffee" }}
         label="Automations"
         value={automations.length ? count(automations.length, "automation") : "Run on a schedule"}
         tint="oklch(0.72 0.14 50)"
         dot={automations.some((a) => a.unseen)}
         onClick={() => onOpenPage("automations")}
       />
-      <Tile icon={PlugIcon} label="Connectors" value={connected ? `${connected} connected` : "Connect your apps"} tint="oklch(0.63 0.15 150)" onClick={() => onOpenPage("connectors")} />
-      <Tile icon={ContactIcon} label="CRM" value="Companies and deals" tint="oklch(0.66 0.2 355)" onClick={() => onOpenPage("crm")} />
-      <Tile icon={WorkflowIcon} label="Workflows" value="Steps that run themselves" tint="oklch(0.48 0.08 195)" onClick={() => onOpenPage("workflows")} />
-      <Tile icon={GhostIcon} label="Incognito" value="A chat that isn't kept" tint="var(--muted-foreground)" onClick={onIncognito} />
-      <Tile icon={LogInIcon} label="Join a session" value="Someone shared with you" tint="var(--coral)" onClick={openJoin} />
+      <Tile scene={{ kind: "sake-maki", act: "juggle" }} label="Connectors" value={connected ? `${connected} connected` : "Connect your apps"} tint="oklch(0.63 0.15 150)" onClick={() => onOpenPage("connectors")} />
+      <Tile scene={{ kind: "sushi", act: "suit" }} label="CRM" value="Companies and deals" tint="oklch(0.66 0.2 355)" onClick={() => onOpenPage("crm")} />
+      <Tile scene={{ kind: "kappa-maki", act: "workout" }} label="Workflows" value="Steps that run themselves" tint="oklch(0.48 0.08 195)" onClick={() => onOpenPage("workflows")} />
+      <Tile scene={{ kind: "onigiri", act: "ghost" }} label="Incognito" value="A chat that isn't kept" tint="var(--muted-foreground)" onClick={onIncognito} />
+      <Tile scene={{ kind: "wasabi", act: "friends" }} label="Join a session" value="Someone shared with you" tint="var(--coral)" onClick={openJoin} />
     </div>
   );
 }

@@ -60,7 +60,7 @@ import { useImagesReady } from "@/lib/images";
 import { setAskUser, useAskUser } from "@/lib/store";
 import { api, errorMessage, type Folder } from "@/lib/tauri";
 import { FOLDER_MEDIA_TYPE, type ModelTarget, type SushUIMessage } from "@/lib/transport";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 interface ComposerMenuProps {
   target: ModelTarget | null;
@@ -130,7 +130,7 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
         <Section first>Add</Section>
         <PromptInputActionMenuItem onSelect={() => attachments.openFileDialog()}>
           <PaperclipIcon /> <Label hint="Images, PDFs and text">Files and photos</Label>
-          <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>
+          {!isAndroid && <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>}
         </PromptInputActionMenuItem>
         <PromptInputActionMenuItem onSelect={() => (imagesReady ? onImageMode(!imageMode) : manage("images"))}>
           <ImageIcon />{" "}
@@ -138,9 +138,12 @@ export function ComposerMenu({ target, messages, researchAvailable, onOpenSettin
             {imageMode ? "Stop creating images" : "Create image"}
           </Label>
         </PromptInputActionMenuItem>
-        <PromptInputActionMenuItem onSelect={() => void addFolder()}>
-          <FolderPlusIcon /> <Label hint="Include a folder's files">Add folder</Label>
-        </PromptInputActionMenuItem>
+        {/* A phone has no folders to add. */}
+        {!isAndroid && (
+          <PromptInputActionMenuItem onSelect={() => void addFolder()}>
+            <FolderPlusIcon /> <Label hint="Include a folder's files">Add folder</Label>
+          </PromptInputActionMenuItem>
+        )}
         <PromptInputActionMenuItem disabled={!target || messages.length === 0} onSelect={recordSkill}>
           <CircleDotIcon /> <Label hint="Turn this chat into a skill">Record a skill</Label>
         </PromptInputActionMenuItem>

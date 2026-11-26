@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { UserAvatar } from "@/components/user-avatar";
 import { refreshShareAccount, safeImage, setLocalRelayOpen, setUsageCounts, signOutOfRelay, useShareAccount, useUsageCounts } from "@/lib/share";
 import { api, errorMessage, type LocalRelay } from "@/lib/tauri";
+import { isAndroid } from "@/lib/utils";
 
 export function SharingSection() {
   const account = useShareAccount();
@@ -63,8 +64,13 @@ export function SharingSection() {
           memory or past chats. Guests watch unless you let them suggest messages, or hand one of them the wheel: the driver
           sends messages and answers only the approvals you choose. The session keeps running here, with your keys. Shares are
           end-to-end encrypted unless you turn it off when starting one: the key travels in the invite link, after the{" "}
-          <code>#</code>, so the relay only forwards ciphertext. On your own network, run <code>bun run dev:relay</code> on one
-          machine.
+          <code>#</code>, so the relay only forwards ciphertext.
+          {!isAndroid && (
+            <>
+              {" "}
+              On your own network, run <code>bun run dev:relay</code> on one machine.
+            </>
+          )}
         </p>
       </Group>
       <Group title="Usage counts">

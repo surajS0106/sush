@@ -1,4 +1,5 @@
 import * as React from "react"
+import { BackCloses } from "@/lib/back"
 import { cn } from "@/lib/utils"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 import { CheckIcon, ChevronRightIcon } from "lucide-react"
@@ -59,6 +60,7 @@ function DropdownMenuContent({
         className={cn(SURFACE, "max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) min-w-44 origin-(--radix-dropdown-menu-content-transform-origin) data-[state=closed]:overflow-hidden", className)}
         {...props}
       >
+        <BackCloses />
         <FollowHighlight selector={HIGHLIGHT} />
         {children}
       </DropdownMenuPrimitive.Content>

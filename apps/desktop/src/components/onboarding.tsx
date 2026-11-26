@@ -476,8 +476,8 @@ function ModelStep({ hasProviders }: { hasProviders: boolean | null }) {
   return (
     <>
       <StepHeading eyebrow="Last step" title="Connect a model">
-        Sush talks to the model you choose. Add a provider with your API key, or point it at a model running on {isAndroid ? "your" : "this"}
-        computer. Keys stay {isAndroid ? "encrypted on this phone" : "in your system keychain"}.
+        Sush talks to the model you choose. Add a provider with your API key, or point it at a model running on{" "}
+        {isAndroid ? "your computer" : "this computer"}. Keys stay {isAndroid ? "encrypted on this phone" : "in your system keychain"}.
       </StepHeading>
       <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
         <ProviderOption title="OpenAI" text="GPT models with your OpenAI API key." />

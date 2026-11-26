@@ -43,14 +43,20 @@ class MainActivity : TauriActivity() {
   }
 
   /**
-   * Back steps through the page's own history first (lib/back.ts keeps one entry per level), and
-   * with none left leaves Sush in the background, like Home, so runs carry on. This runs for the
-   * key and the edge swipe alike (the manifest turns predictive back off).
+   * Back asks the page first (`window.__sushBack` in lib/back.ts closes or leaves whatever opened
+   * last), and with nothing left leaves Sush in the background, like Home, so runs carry on. This
+   * runs for the key and the edge swipe alike (the manifest turns predictive back off).
    */
   @Deprecated("Tauri's back handling still calls this")
   override fun onBackPressed() {
     val web = findWebView(window.decorView)
-    if (web != null && web.canGoBack()) web.goBack() else moveTaskToBack(true)
+    if (web == null) {
+      moveTaskToBack(true)
+      return
+    }
+    web.evaluateJavascript("window.__sushBack ? window.__sushBack() : false") { handled ->
+      if (handled != "true") moveTaskToBack(true)
+    }
   }
 
   private fun findWebView(v: View): WebView? {

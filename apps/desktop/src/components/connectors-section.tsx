@@ -869,8 +869,9 @@ function Connectors() {
             </button>
           ))}
         </div>
-        <div className="ml-auto flex items-center gap-2">
-          <div className="relative w-52">
+        {/* Its own full-width row in a narrow window. */}
+        <div className="ml-auto flex items-center gap-2 max-md:ml-0 max-md:w-full">
+          <div className="relative w-52 max-md:w-auto max-md:flex-1">
             <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={query}

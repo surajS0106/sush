@@ -8,12 +8,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
 
 /**
  * Keeps the process alive while runs work, so leaving the app doesn't cut a reply short. It does
@@ -127,14 +130,36 @@ class RunService : Service() {
 
     private fun notification(context: Context, channel: String, title: String, text: String): NotificationCompat.Builder {
       val open = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      val tap = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+      // The lock screen shows what happened ("Sush is done"), not which session.
+      val locked = NotificationCompat.Builder(context, channel)
+        .setSmallIcon(R.drawable.ic_notification)
+        .setColor(SALMON)
+        .setLargeIcon(sushi(context))
+        .setContentTitle(title)
+        .setContentIntent(tap)
+        .build()
       return NotificationCompat.Builder(context, channel)
         .setSmallIcon(R.drawable.ic_notification)
+        .setColor(SALMON)
+        .setLargeIcon(sushi(context))
         .setContentTitle(title)
         .setContentText(text)
-        // The lock screen shows that Sush has something, not what.
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-        .setContentIntent(PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+        .setPublicVersion(locked)
+        .setContentIntent(tap)
         .setAutoCancel(true)
+    }
+
+    private const val SALMON = 0xFFF0533F.toInt()
+    private var sushiIcon: Bitmap? = null
+
+    /** The mascot, drawn at a whole number of pixels per sprite pixel so its edges stay sharp. */
+    private fun sushi(context: Context): Bitmap? = sushiIcon ?: try {
+      ContextCompat.getDrawable(context, R.drawable.notification_sushi)?.toBitmap(176, 176)?.also { sushiIcon = it }
+    } catch (e: Exception) {
+      Log.w("Sush", "couldn't draw the notification icon", e)
+      null
     }
 
     private fun manager(context: Context) = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager

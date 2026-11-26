@@ -51,7 +51,7 @@ import {
 import { isNotebookThread } from "@/lib/notebooks";
 import { getConversations } from "@/lib/store";
 import { api, errorMessage, type InviteInfo, type ShareDelegation, type ShareRole, type ShareView } from "@/lib/tauri";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 /**
  * The form to set up the relay account: sign in to a relay, or create an account on it. Signing in
@@ -106,9 +106,15 @@ export function ShareAccountSetup({ relay: start, onReady, onCancel }: { relay?:
         <Label htmlFor="share-relay">Relay</Label>
         <Input id="share-relay" value={relay} onChange={(e) => setRelay(e.target.value)} placeholder="http://192.168.1.20:3000" spellCheck={false} />
         <p className="text-xs text-muted-foreground">
-          The server shared sessions pass through. Everyone in a session uses the same one. On your Wi-Fi, one of you runs{" "}
-          <code>bun run dev:relay</code> and everyone uses that machine’s network address (like http://192.168.1.20:3000), not
-          localhost.
+          The server shared sessions pass through. Everyone in a session uses the same one.{" "}
+          {isAndroid ? (
+            <>On your Wi-Fi, use the network address of the computer running the relay (like http://192.168.1.20:3000).</>
+          ) : (
+            <>
+              On your Wi-Fi, one of you runs <code>bun run dev:relay</code> and everyone uses that machine’s network address (like
+              http://192.168.1.20:3000), not localhost.
+            </>
+          )}
         </p>
       </div>
       {sameServer && (

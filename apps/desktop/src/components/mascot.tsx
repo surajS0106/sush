@@ -121,6 +121,74 @@ const BREW_MS = 3200;
 const BOOK = ["UUUUUuUUUUU", "UvvvUuUUUUU", "UUUUUuUUUUU", "UvvUUuUUUUU"];
 const BOOK_W = BOOK[0].length;
 
+// A whiteboard on legs, standing beside the character at Sushi's pixel size: lines get
+// written across it, sticky notes go up, then it's wiped for the next round.
+const WHITEBOARD = [
+  "kkkkkkkkkkkkkk",
+  "kWWWWWWWWWWWWk",
+  "kWWWWWWWWWWWWk",
+  "kWWWWWWWWWWWWk",
+  "kWWWWWWWWWWWWk",
+  "kWWWWWWWWWWWWk",
+  "kWWWWWWWWWWWWk",
+  "kkkkkkkkkkkkkk",
+  "..B........B..",
+  "..B........B..",
+  ".BBB......BBB.",
+];
+/** One round at the whiteboard, in seconds. */
+const BOARD_S = 6;
+/** The lines written, and when each goes on, as fractions of a round. */
+const BOARD_LINES = [
+  { x: 2, y: 2, w: 7, fill: "#5b8def", from: 0.05, to: 0.25 },
+  { x: 2, y: 4, w: 5, fill: "#f0533f", from: 0.3, to: 0.45 },
+];
+const STICKIES = [
+  { x: 10, y: 1, fill: "#f6c945", at: 0.52 },
+  { x: 10, y: 4, fill: "#ff8fb1", at: 0.62 },
+];
+/** The marker following the tip of each line as it's written, then resting in the corner. */
+const MARKER = { times: [0, 0.05, 0.25, 0.3, 0.45, 0.52, 1], x: [12, 2, 9, 2, 7, 12, 12], y: [5, 0, 0, 2, 2, 5, 5] };
+
+// An open notebook held under the eyes: lines get written down the right-hand page with a
+// pencil, then the page turns.
+const NOTEBOOK = ["WWWWWbWWWWW", "WWWWWbWWWWW", "WWWWWbWWWWW", "UUUUUUUUUUU"];
+const NOTEBOOK_W = NOTEBOOK[0].length;
+/** One page, in seconds. */
+const PAGE_S = 3.6;
+const PAGE_LINES = [
+  { y: 0, w: 4, from: 0.05, to: 0.3 },
+  { y: 1, w: 3, from: 0.35, to: 0.55 },
+  { y: 2, w: 4, from: 0.6, to: 0.8 },
+];
+const PENCIL = { times: [0, 0.05, 0.3, 0.35, 0.55, 0.6, 0.8, 0.9, 1], x: [6, 6, 10, 6, 9, 6, 10, 10, 6], y: [0, 0, 0, 1, 1, 2, 2, 2, 0] };
+
+// A briefcase carried beside a character in a suit, at Sushi's pixel size.
+const BRIEFCASE = ["..hh..", ".h..h.", "CCCCCC", "CCggCC", "CCCCCC"];
+const SUIT = { jacket: "#2f3640", shirt: "#ffffff", tie: "#c8283c" };
+
+// Studying late: a desk in front of the character with an open book lying on it, and a night
+// lamp on the desk to its right lighting the page. Drawn in Sushi's pixels.
+// A desk lamp, its shade tipped towards the book on the left.
+const LAMP = ["..NNN", ".NNNN", "NNNN.", "..i..", "...i.", "...i.", "...i.", "..iii"];
+/** The bulb, under the shade's lower lip. */
+const BULB = { x: 1, y: 3 };
+const LAMP_W = LAMP[0].length;
+const DESK = { top: "#a8743f", front: "#7a4f27" };
+/** A crescent moon and the stars around it, over a night-time study. */
+const MOON = [".qq", "qq.", "qq.", ".qq"];
+const NIGHT_STARS = [
+  { x: -6, y: -14, delay: 0 },
+  { x: 14, y: -30, delay: 0.8 },
+  { x: 34, y: -20, delay: 1.6 },
+  { x: 52, y: -32, delay: 2.2 },
+];
+
+/** Friends who come over to say hi: one first, then two more. */
+const FRIENDS = ["salmon", "tamago", "kappa-maki"];
+/** One get-together, in seconds. */
+const MEET_S = 8;
+
 const COLORS: Record<string, string> = {
   S: "#f0533f", // salmon
   s: "#ff8f73", // salmon stripe
@@ -158,6 +226,9 @@ const COLORS: Record<string, string> = {
   x: "#2b2b2b", // d-pad
   o: "#f0533f", // console buttons
   n: "#7ee0a1", // console screen
+  h: "#3d3d3d", // briefcase handle
+  q: "#ffe7a3", // moon
+  C: "#8b5a2b", // briefcase
 };
 
 const MACHINE_RUNS = runs(MACHINE);
@@ -165,6 +236,10 @@ const MUG_RUNS = runs(MUG);
 const BOOK_RUNS = runs(BOOK);
 const DUMBBELL_RUNS = runs(DUMBBELL);
 const CONSOLE_RUNS = runs(CONSOLE);
+const WHITEBOARD_RUNS = runs(WHITEBOARD);
+const NOTEBOOK_RUNS = runs(NOTEBOOK);
+const BRIEFCASE_RUNS = runs(BRIEFCASE, { ...COLORS, g: "#f6c945" });
+const LAMP_RUNS = runs(LAMP);
 
 /** How far left of its spot it may wander, in CSS px, and how fast it walks. */
 const WANDER = 72;
@@ -347,6 +422,51 @@ function glassesOf(c: Character) {
   return g;
 }
 
+/** Where a character's body ends and its legs begin, in its sprite pixels. */
+const legTop = (c: Character) => Math.min(...c.legs[0].map((r) => r.y));
+
+/**
+ * A suit fitted to a character: the bottom of its body in a dark jacket, with a white shirt
+ * collar and a red tie down the middle. Sized in Sushi's pixels, so an avatar's is as big.
+ */
+function suitFor(c: Character): Run[] {
+  const s = Math.max(1, Math.round(SUSHI.px / c.px));
+  const bottom = legTop(c) - 1;
+  const top = bottom - 3 * s + 1;
+  const out: Run[] = c.body.filter((r) => r.y >= top && r.y <= bottom).map((r) => ({ ...r, fill: SUIT.jacket }));
+  const cx = Math.round(c.width / 2);
+  // [x from the middle, row, width, colour], in Sushi pixels.
+  const parts: [number, number, number, string][] = [
+    [-3, 0, 6, SUIT.shirt],
+    [-2, 1, 1, SUIT.shirt],
+    [1, 1, 1, SUIT.shirt],
+    [-1, 0, 2, SUIT.tie],
+    [-1, 1, 2, SUIT.tie],
+    [-1, 2, 2, SUIT.tie],
+  ];
+  for (const [dx, row, w, fill] of parts)
+    for (let i = 0; i < s; i++) out.push({ x: cx + dx * s, y: top + row * s + i, w: w * s, fill });
+  return out;
+}
+const suitCache = new WeakMap<Character, Run[]>();
+function suitOf(c: Character) {
+  let suit = suitCache.get(c);
+  if (!suit) suitCache.set(c, (suit = suitFor(c)));
+  return suit;
+}
+
+/** A ghost's wavy hem in place of legs: every other pixel along its bottom edge, shifting each frame. */
+function ghostHem(c: Character, frame: number): Run[] {
+  const bottom = legTop(c) - 1;
+  const out: Run[] = [];
+  for (const r of c.body.filter((b) => b.y === bottom))
+    for (let x = r.x; x < r.x + r.w; x++) {
+      if ((x + frame) % 2 === 0) out.push({ x, y: bottom + 1, w: 1, fill: r.fill });
+      if ((x + frame) % 4 === 0) out.push({ x, y: bottom + 2, w: 1, fill: r.fill });
+    }
+  return out;
+}
+
 export function Pixels({ runs }: { runs: Run[] }) {
   return runs.map((r, i) => <rect key={i} x={r.x} y={r.y} width={r.w} height={1} fill={r.fill} />);
 }
@@ -423,7 +543,22 @@ export type MascotStage = "thinking" | "tools" | "writing";
 type Mood = "idle" | MascotStage;
 
 /** Something to do between replies, played on request (Settings → Sushi). */
-export type MascotAct = "coffee" | "read" | "dance" | "nap" | "workout" | "juggle" | "meditate" | "game";
+export type MascotAct =
+  | "coffee"
+  | "read"
+  | "dance"
+  | "nap"
+  | "workout"
+  | "juggle"
+  | "meditate"
+  | "game"
+  // Scenes for Home's tiles on a phone (`phone.tsx`), not offered in Settings → Sushi.
+  | "whiteboard"
+  | "notebook"
+  | "suit"
+  | "ghost"
+  | "friends"
+  | "study";
 
 interface MascotProps {
   busy: boolean;
@@ -450,6 +585,80 @@ export function Mascot({ kind, ...props }: MascotProps) {
     setSwitched(true);
   }
   return <MascotBody key={key} character={characterFor(key)} entrance={switched} {...props} />;
+}
+
+/**
+ * The desk in front of a studying character (`width` CSS px wide, its eyes `eyesFromFloor` CSS px
+ * up): the desktop a Sushi pixel under its eyes with an open book lying on it, legs to the floor,
+ * and a night lamp at the right-hand end shining a flickering cone of light onto the page.
+ */
+function StudyDesk({ width, eyesFromFloor, reduceMotion }: { width: number; eyesFromFloor: number; reduceMotion: boolean }) {
+  const u = SUSHI.px;
+  const body = Math.ceil(width / u);
+  const w = body + 2 + LAMP_W + 1;
+  // Rows of desk under the book: from a pixel below the eyes down to the floor.
+  const deskRows = Math.max(2, Math.round(eyesFromFloor / u) - 2);
+  const top = LAMP.length; // the desktop's row, under the lamp's base
+  const rows = top + deskRows;
+  const lampX = w - LAMP_W;
+  const book = { x: 1 + Math.max(0, Math.round(body / 2) - 3), w: 7 };
+  const bulb = { x: lampX + BULB.x, y: BULB.y };
+  return (
+    <svg
+      viewBox={`0 0 ${w} ${rows}`}
+      width={w * u}
+      height={rows * u}
+      shapeRendering="crispEdges"
+      className="pointer-events-none absolute bottom-0"
+      style={{ left: -u }}
+      aria-hidden
+    >
+      {/* The light falling from the bulb onto the book. */}
+      <motion.polygon
+        points={`${bulb.x},${bulb.y + 1} ${bulb.x + 1},${bulb.y + 1} ${book.x + book.w + 1},${top} ${book.x - 1},${top}`}
+        fill="rgb(255 214 110)"
+        shapeRendering="auto"
+        animate={reduceMotion ? { opacity: 0.35 } : { opacity: [0.3, 0.42, 0.34, 0.45, 0.3] }}
+        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* The desk: its top, the apron under it, and two legs. */}
+      <rect x={0} y={top} width={w} height={1} fill={DESK.top} />
+      <rect x={0} y={top + 1} width={w} height={1} fill={DESK.front} />
+      <rect x={1} y={top + 2} width={1} height={deskRows - 2} fill={DESK.front} />
+      <rect x={w - 2} y={top + 2} width={1} height={deskRows - 2} fill={DESK.front} />
+      {/* The open book lying on it, lines of text on its pages, a page turning now and then. */}
+      <rect x={book.x} y={top - 1} width={book.w} height={1} fill={COLORS.W} />
+      <rect x={book.x + 1} y={top - 1} width={1} height={1} fill={COLORS.k} />
+      <rect x={book.x + 3} y={top - 1} width={1} height={1} fill={COLORS.B} />
+      <rect x={book.x + 5} y={top - 1} width={1} height={1} fill={COLORS.k} />
+      <rect x={book.x - 1} y={top - 1} width={1} height={1} fill={COLORS.U} />
+      <rect x={book.x + book.w} y={top - 1} width={1} height={1} fill={COLORS.U} />
+      {!reduceMotion && (
+        <motion.rect
+          y={top - 2}
+          width={1}
+          height={1}
+          fill={COLORS.W}
+          initial={{ x: book.x + book.w - 1, opacity: 0 }}
+          animate={{ x: [book.x + book.w - 1, book.x + 3, book.x], y: [top - 1, top - 2, top - 1], opacity: [0, 1, 0] }}
+          transition={{ duration: 0.6, repeat: Infinity, repeatDelay: 4, ease: "easeInOut" }}
+        />
+      )}
+      <g transform={`translate(${lampX} 0)`}>
+        <Pixels runs={LAMP_RUNS} />
+      </g>
+      {/* The bulb, glowing under the shade. */}
+      <motion.rect
+        x={bulb.x}
+        y={bulb.y}
+        width={1}
+        height={1}
+        fill="#fff3c4"
+        animate={reduceMotion ? { opacity: 1 } : { opacity: [1, 0.75, 1, 0.9, 1] }}
+        transition={{ duration: 3, repeat: Infinity }}
+      />
+    </svg>
+  );
 }
 
 const SPARKS = [
@@ -648,7 +857,8 @@ function MascotBody({
 
   // While thinking, the eyes drift up to one side, then the other; while
   // reading, they run along the lines the same way.
-  const scanning = mood === "thinking" || activity === "read" || activity === "juggle";
+  const scanning =
+    mood === "thinking" || activity === "read" || activity === "juggle" || activity === "notebook" || activity === "study";
   useEffect(() => {
     if (reduceMotion || !scanning) return;
     let timer: ReturnType<typeof setTimeout>;
@@ -718,10 +928,25 @@ function MascotBody({
       meditate: { y: [-4, -9, -4], rotate: 0, transition: { duration: 3.2, repeat: Infinity, ease: "easeInOut" } },
       // Leaning into the game, button-mashing.
       game: { y: [0, 0.5, 0], rotate: [0, -3, 0, 3, 0], transition: { duration: 1.2, repeat: Infinity, ease: "easeInOut" } },
+      // Leaning towards the board as it writes.
+      whiteboard: { rotate: [0, 3, 1, 3, 0], transition: { duration: 1.5, repeat: Infinity, ease: "easeInOut" } },
+      // A little nod with each word.
+      notebook: { y: [0, 0.5, 0], transition: { duration: 0.6, repeat: Infinity, ease: "easeInOut" } },
+      // Walking to work, briefcase in hand.
+      suit: { y: [0, -1, 0], transition: { duration: 0.3, repeat: Infinity, ease: "easeInOut" } },
+      // Floating, and fading nearly out of sight now and then.
+      ghost: { y: [-2, -6, -2], opacity: [0.8, 0.8, 0.3, 0.8], transition: { duration: 3.6, repeat: Infinity, ease: "easeInOut" } },
+      // Swaying a little over the book, late at night.
+      study: { rotate: [0, -1.5, 0, 1.5, 0], transition: { duration: 6, repeat: Infinity, ease: "easeInOut" } },
+      // Two hops for joy once everyone's arrived.
+      friends: {
+        y: [0, 0, -5, 0, -5, 0, 0],
+        transition: { duration: MEET_S, times: [0, 0.6, 0.64, 0.68, 0.72, 0.76, 1], repeat: Infinity, ease: "easeOut" },
+      },
     };
     void hopControls.start(loops[activity]);
     return () => {
-      void hopControls.start({ x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1, transition: { duration: 0.25 } });
+      void hopControls.start({ x: 0, y: 0, rotate: 0, scaleX: 1, scaleY: 1, opacity: 1, transition: { duration: 0.25 } });
     };
   }, [activity, reduceMotion, hopControls]);
 
@@ -772,8 +997,25 @@ function MascotBody({
 
   // One frame counter drives the walking legs, the typing hands and the rolling eyes.
   const gaming = activity === "game";
-  const moving = walking || laptopOut || dancing || gaming || dizzy !== null;
-  const frameMs = dizzy === "reeling" ? 80 : dizzy === "down" ? 130 : walking ? 150 : dancing ? 250 : gaming ? 140 : mood === "writing" ? 90 : 120;
+  const ghost = activity === "ghost";
+  const commuting = activity === "suit";
+  const moving = walking || laptopOut || dancing || gaming || ghost || commuting || dizzy !== null;
+  const frameMs =
+    dizzy === "reeling"
+      ? 80
+      : dizzy === "down"
+        ? 130
+        : walking || commuting
+          ? 150
+          : dancing
+            ? 250
+            : ghost
+              ? 300
+              : gaming
+                ? 140
+                : mood === "writing"
+                  ? 90
+                  : 120;
   useEffect(() => {
     if (reduceMotion || !moving) return setFrame(0);
     const id = setInterval(() => setFrame((f) => f + 1), frameMs);
@@ -908,6 +1150,12 @@ function MascotBody({
     ? { x: ponder ? 1 : -1, y: -1 }
     : activity === "workout"
     ? { x: 0, y: lift ? -1 : 0 }
+    : activity === "notebook"
+    ? { x: ponder ? 1 : 0, y: 1 }
+    : activity === "study"
+    ? { x: ponder ? 1 : -1, y: 1 }
+    : activity === "whiteboard" || activity === "friends"
+    ? { x: 1, y: 0 }
     : gaming
     ? { x: 0, y: 1 }
     : walking
@@ -1017,6 +1265,140 @@ function MascotBody({
             transition={{ duration: 3.2, delay: i * 1.6, repeat: Infinity, ease: "easeOut" }}
           />
         ))}
+      {activity === "study" && (
+        <>
+          {/* The lamp's warm glow behind it, breathing a little. */}
+          <motion.div
+            className="pointer-events-none absolute rounded-full"
+            style={{
+              width: width * px * 2.6,
+              height: width * px * 2.6,
+              left: width * px * 0.75 - width * px * 1.3,
+              bottom: -width * px * 0.7,
+              background: "radial-gradient(circle, rgb(255 210 120 / 0.45), transparent 65%)",
+            }}
+            animate={reduceMotion ? { opacity: 0.8 } : { opacity: [0.7, 1, 0.8, 1, 0.7] }}
+            transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+          />
+          <div className="pointer-events-none absolute" style={{ left: -2, top: -24 }}>
+            <Glyph rows={MOON} px={2.5} />
+          </div>
+          {NIGHT_STARS.map((st) => (
+            <motion.div
+              key={st.x}
+              className="pointer-events-none absolute"
+              style={{ left: st.x, top: st.y }}
+              animate={reduceMotion ? { opacity: 0.8 } : { opacity: [0.2, 1, 0.2], scale: [0.7, 1, 0.7] }}
+              transition={{ duration: 2.4, delay: st.delay, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <Glyph rows={STAR} px={1} />
+            </motion.div>
+          ))}
+        </>
+      )}
+      {activity === "whiteboard" && (
+        // The whiteboard beside it: two lines written with the marker, two sticky notes, wiped.
+        <svg
+          viewBox={`0 0 ${WHITEBOARD[0].length} ${WHITEBOARD.length}`}
+          width={WHITEBOARD[0].length * SUSHI.px}
+          height={WHITEBOARD.length * SUSHI.px}
+          shapeRendering="crispEdges"
+          className="pointer-events-none absolute bottom-0 left-full ml-1"
+        >
+          <Pixels runs={WHITEBOARD_RUNS} />
+          {BOARD_LINES.map((l) => (
+            <motion.rect
+              key={l.y}
+              x={l.x}
+              y={l.y}
+              height={1}
+              fill={l.fill}
+              initial={{ width: reduceMotion ? l.w : 0 }}
+              animate={reduceMotion ? { width: l.w } : { width: [0, 0, l.w, l.w, 0, 0] }}
+              transition={reduceMotion ? { duration: 0 } : { duration: BOARD_S, times: [0, l.from, l.to, 0.88, 0.95, 1], repeat: Infinity, ease: "linear" }}
+            />
+          ))}
+          {STICKIES.map((n) => (
+            <motion.rect
+              key={n.y}
+              x={n.x}
+              y={n.y}
+              width={2}
+              height={2}
+              fill={n.fill}
+              initial={{ opacity: reduceMotion ? 1 : 0 }}
+              animate={reduceMotion ? { opacity: 1 } : { opacity: [0, 0, 1, 1, 0, 0] }}
+              transition={reduceMotion ? { duration: 0 } : { duration: BOARD_S, times: [0, n.at, n.at + 0.02, 0.88, 0.95, 1], repeat: Infinity }}
+            />
+          ))}
+          {!reduceMotion && (
+            <motion.g
+              initial={{ x: MARKER.x[0], y: MARKER.y[0] }}
+              animate={{ x: MARKER.x, y: MARKER.y }}
+              transition={{ duration: BOARD_S, times: MARKER.times, repeat: Infinity, ease: "easeInOut" }}
+            >
+              <rect width={1} height={1} fill="#5b8def" />
+              <rect y={1} width={1} height={1} fill={COLORS.E} />
+            </motion.g>
+          )}
+        </svg>
+      )}
+      {commuting && (
+        // The briefcase in hand, swinging as it walks.
+        <motion.svg
+          viewBox={`0 0 ${BRIEFCASE[0].length} ${BRIEFCASE.length}`}
+          width={BRIEFCASE[0].length * SUSHI.px}
+          height={BRIEFCASE.length * SUSHI.px}
+          shapeRendering="crispEdges"
+          className="pointer-events-none absolute left-full"
+          style={{ bottom: SUSHI.px, transformOrigin: "50% 0%" }}
+          animate={reduceMotion ? { rotate: 0 } : { rotate: [-8, 8, -8] }}
+          transition={{ duration: 0.6, repeat: Infinity, ease: "easeInOut" }}
+        >
+          <Pixels runs={BRIEFCASE_RUNS} />
+        </motion.svg>
+      )}
+      {activity === "friends" && (
+        // A friend walks over and they say hi; two more come running; everyone hops; they head off.
+        <div className="pointer-events-none absolute bottom-0 left-full ml-1 flex items-end">
+          {!reduceMotion && (
+            <motion.div
+              className="absolute -top-3 -left-2"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0, 1, 1, 0, 0], y: [0, 0, 0, -6, -10, -10] }}
+              transition={{ duration: MEET_S, times: [0, 0.18, 0.2, 0.3, 0.36, 1], repeat: Infinity }}
+            >
+              <Glyph rows={HEART} px={1.5} />
+            </motion.div>
+          )}
+          {FRIENDS.map((kind, i) => {
+            const arrive = i === 0 ? 0.06 : 0.36 + i * 0.05;
+            return (
+              <motion.div
+                key={kind}
+                className={cn(i > 0 && "-ml-1")}
+                initial={{ opacity: reduceMotion ? 1 : 0 }}
+                animate={
+                  reduceMotion
+                    ? { opacity: 1 }
+                    : {
+                        x: [36, 36, 0, 0, 0, 0, 0, 0, 0, 36],
+                        y: [0, 0, 0, 0, -5, 0, -5, 0, 0, 0],
+                        opacity: [0, 0, 1, 1, 1, 1, 1, 1, 0, 0],
+                      }
+                }
+                transition={
+                  reduceMotion
+                    ? { duration: 0 }
+                    : { duration: MEET_S, times: [0, arrive, arrive + 0.1, 0.6, 0.64, 0.68, 0.72, 0.76, 0.92, 1], repeat: Infinity, ease: "easeOut" }
+                }
+              >
+                <MascotSprite kind={kind} scale={i === 0 ? 0.7 : 0.55} />
+              </motion.div>
+            );
+          })}
+        </div>
+      )}
       <AnimatePresence>
         {activity === "coffee" && (
           // The coffee machine, standing beside the character at Sushi's pixel size.
@@ -1154,7 +1536,12 @@ function MascotBody({
           </motion.div>
         )}
       </AnimatePresence>
-      <motion.div animate={hopControls} style={{ transformOrigin: "50% 100%", transformPerspective: 160 }}>
+      <motion.div
+        animate={hopControls}
+        style={{ transformOrigin: "50% 100%", transformPerspective: 160 }}
+        // A ghost: pale, see-through and glowing.
+        className={cn(ghost && "brightness-125 grayscale drop-shadow-[0_0_3px_rgb(150_190_255/0.8)]")}
+      >
         <motion.svg
           viewBox={`0 0 ${width} ${height}`}
           width={width * px}
@@ -1212,7 +1599,8 @@ function MascotBody({
               </motion.g>
             )}
           </AnimatePresence>
-          <Pixels runs={legs[walking || dancing ? frame % legs.length : 0]} />
+          {activity === "suit" && <Pixels runs={suitOf(character)} />}
+          {ghost ? <Pixels runs={ghostHem(character, frame)} /> : <Pixels runs={legs[walking || dancing || commuting ? frame % legs.length : 0]} />}
           <AnimatePresence>
             {coffee === "drink" && (
               // The mug in both hands under the face, steaming; a sip lifts and tips it.
@@ -1276,6 +1664,52 @@ function MascotBody({
                   <rect x={-1} y={1} width={1} height={1} fill={COLORS.R} />
                   <rect x={BOOK_W} y={1} width={1} height={1} fill={COLORS.R} />
                 </motion.g>
+                </g>
+              </motion.g>
+            )}
+            {activity === "notebook" && (
+              // An open notebook under the eyes; the pencil writes lines down the right-hand page.
+              <motion.g key="notebook">
+                <g transform={`translate(${heldAt(NOTEBOOK_W).x} ${laptop.y}) scale(${laptop.scale})`}>
+                  <motion.g
+                    style={{ transformBox: "fill-box", transformOrigin: "50% 100%" }}
+                    initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4, scaleY: 0.3 }}
+                    animate={{ opacity: 1, y: 0, scaleY: 1, transition: { delay: 0.1, duration: 0.25, ease: "easeOut" } }}
+                    exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 3, scaleY: 0.2, transition: { duration: 0.2 } }}
+                  >
+                    <Pixels runs={NOTEBOOK_RUNS} />
+                    {/* The left-hand page, already written. */}
+                    <rect x={1} y={0} width={3} height={1} fill="#aeb5bf" />
+                    <rect x={1} y={1} width={2} height={1} fill="#aeb5bf" />
+                    <rect x={1} y={2} width={3} height={1} fill="#aeb5bf" />
+                    {PAGE_LINES.map((l) => (
+                      <motion.rect
+                        key={l.y}
+                        x={6}
+                        y={l.y}
+                        height={1}
+                        fill="#5b6472"
+                        initial={{ width: reduceMotion ? l.w : 0 }}
+                        animate={reduceMotion ? { width: l.w } : { width: [0, 0, l.w, l.w, 0, 0] }}
+                        transition={reduceMotion ? { duration: 0 } : { duration: PAGE_S, times: [0, l.from, l.to, 0.9, 0.92, 1], repeat: Infinity, ease: "linear" }}
+                      />
+                    ))}
+                    <rect x={-1} y={1} width={1} height={1} fill={COLORS.R} />
+                    {/* The pencil, its point on the line being written, held in the right hand. */}
+                    {!reduceMotion && (
+                      <motion.g
+                        initial={{ x: PENCIL.x[0], y: PENCIL.y[0] }}
+                        animate={{ x: PENCIL.x, y: PENCIL.y }}
+                        transition={{ duration: PAGE_S, times: PENCIL.times, repeat: Infinity, ease: "linear" }}
+                      >
+                        <rect width={1} height={1} fill={COLORS.E} />
+                        <rect x={1} y={-1} width={1} height={1} fill="#f6c945" />
+                        <rect x={2} y={-2} width={1} height={1} fill="#f6c945" />
+                        <rect x={3} y={-3} width={1} height={1} fill="#ff8fb1" />
+                        <rect x={1} y={0} width={1} height={1} fill={COLORS.R} />
+                      </motion.g>
+                    )}
+                  </motion.g>
                 </g>
               </motion.g>
             )}
@@ -1350,6 +1784,7 @@ function MascotBody({
           </AnimatePresence>
         </motion.svg>
       </motion.div>
+      {activity === "study" && <StudyDesk width={width * px} eyesFromFloor={(height - laptop.y) * px} reduceMotion={!!reduceMotion} />}
     </motion.div>
   );
 }

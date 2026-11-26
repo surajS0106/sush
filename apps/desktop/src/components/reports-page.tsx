@@ -146,7 +146,7 @@ export function ReportsLayout({
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className={cn("mx-auto w-full px-8 pt-12 pb-16", wide ? "max-w-6xl" : "max-w-4xl")}>
         <header className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-[1_1_16rem]">
             <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
             <p className="mt-2 text-muted-foreground">{description}</p>
           </div>

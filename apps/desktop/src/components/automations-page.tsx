@@ -123,9 +123,9 @@ export function AutomationsPage({ onOpenSession }: { onOpenSession: (id: string)
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto w-full max-w-4xl px-8 pt-12 pb-16">
+      <div className="mx-auto w-full max-w-4xl px-8 pt-12 pb-16 max-md:px-4 max-md:pt-6">
         <header className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-[1_1_16rem]">
             <h1 className="text-3xl font-semibold tracking-tight">Automations</h1>
             <p className="mt-2 text-muted-foreground">Run prompts on a schedule or whenever you need them.</p>
           </div>

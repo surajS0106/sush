@@ -410,7 +410,8 @@ export function ChatView({ conversation, catalog, hasProviders, onOpenSettings, 
   if (messages.length === 0 && !voiceOn) {
     const connect = (
       <div className={cn("flex flex-col gap-3", workspaceId ? "items-start" : "mb-7 items-center text-center")}>
-        <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight">
+        {/* The mark goes above the heading when the heading wraps, so it doesn't push the text off centre. */}
+        <h1 className="flex items-center gap-3 text-[26px] font-medium tracking-tight max-md:flex-col max-md:gap-2">
           <img src="/sush-mark.png" alt="" className="size-8 shrink-0" />
           Connect a model to get started
         </h1>

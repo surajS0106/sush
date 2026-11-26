@@ -116,7 +116,8 @@ const NAV: { group: string; items: NavItem[] }[] = [
 ];
 
 /** Not in this build: signing in where there's no server for it, and the desktop's release notes on Android. */
-const absent = (id: SettingsSection) => (id === "account" && !HAS_ACCOUNTS) || (id === "changelog" && isAndroid);
+// A phone has no folders, so no plugins to install from one.
+const absent = (id: SettingsSection) => (id === "account" && !HAS_ACCOUNTS) || ((id === "changelog" || id === "plugins") && isAndroid);
 
 interface SettingsDialogProps {
   providers: ProviderView[];
@@ -176,6 +177,11 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">App preferences, account, providers and customizations.</DialogDescription>
         <SectionBack active={inSection && isAndroid} onBack={() => setListed(true)} />
+        {phone && !inSection && (
+          <p aria-hidden className="absolute top-2 left-4 z-10 flex h-9 items-center text-base font-semibold">
+            Settings
+          </p>
+        )}
         {inSection && (
           <button
             type="button"

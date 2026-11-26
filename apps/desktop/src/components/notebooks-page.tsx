@@ -112,7 +112,7 @@ function NotebookList({ notebooks, onOpen }: { notebooks: Notebook[]; onOpen: (i
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto w-full max-w-5xl px-8 pt-12 pb-16">
         <header className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-[1_1_16rem]">
             <h1 className="text-3xl font-semibold tracking-tight">Binders</h1>
             <p className="mt-2 text-muted-foreground">
               Gather PDFs, web pages, papers and notes, then ask about them. Every answer cites the passage it comes from.

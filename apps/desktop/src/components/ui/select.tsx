@@ -1,4 +1,5 @@
 import * as React from "react"
+import { BackCloses } from "@/lib/back"
 import { cn } from "@/lib/utils"
 import { Select as SelectPrimitive } from "radix-ui"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
@@ -72,6 +73,7 @@ function SelectContent({
         align={align}
         {...props}
       >
+        <BackCloses />
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport
           data-position={position}

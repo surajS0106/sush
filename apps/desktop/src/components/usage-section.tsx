@@ -178,7 +178,7 @@ export function UsageSection({ providers }: { providers: ProviderView[] }) {
         )}
 
         <p className="px-1 text-xs text-muted-foreground">
-          Estimated from each reply's token count at list prices. Models on this computer are free; models
+          Estimated from each reply's token count at list prices. Local models are free; models
           without a known price show "—" and aren't in the total. Deleted chats no longer count. Titles and
           memory updates aren't included.
         </p>

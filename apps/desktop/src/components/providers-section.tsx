@@ -120,7 +120,8 @@ export function ProvidersSection({ providers, onChanged }: ProvidersSectionProps
               }}
             />
           ) : (
-            <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground">
+            // Stacked under the list in a narrow window, where the list already says it's empty.
+            <div className="flex h-full items-center justify-center p-8 text-sm text-muted-foreground max-md:hidden">
               Add a provider to get started.
             </div>
           )}

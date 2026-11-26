@@ -1,6 +1,7 @@
 import * as React from "react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 
+import { BackCloses } from "@/lib/back"
 import { cn } from "@/lib/utils"
 
 /** A floating panel for content that isn't a menu (a calendar, a short form), with the dropdown's surface and motion. */
@@ -12,7 +13,7 @@ function PopoverTrigger(props: React.ComponentProps<typeof PopoverPrimitive.Trig
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
-function PopoverContent({ className, align = "start", sideOffset = 6, ...props }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
+function PopoverContent({ className, align = "start", sideOffset = 6, children, ...props }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   return (
     <PopoverPrimitive.Portal>
       <PopoverPrimitive.Content
@@ -24,7 +25,10 @@ function PopoverContent({ className, align = "start", sideOffset = 6, ...props }
           className,
         )}
         {...props}
-      />
+      >
+        <BackCloses />
+        {children}
+      </PopoverPrimitive.Content>
     </PopoverPrimitive.Portal>
   )
 }

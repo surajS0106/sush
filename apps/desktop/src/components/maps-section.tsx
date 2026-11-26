@@ -95,7 +95,7 @@ export function MapsSection() {
       <Group title="Your location">
         <Setting
           title="Saved address"
-          description="Offered first when a chat asks where you are, because a computer's own position can be far off. Stored on this device."
+          description="Offered first when a chat asks where you are, because a device's own position can be far off. Stored on this device."
         >
           <SavedAddress />
         </Setting>

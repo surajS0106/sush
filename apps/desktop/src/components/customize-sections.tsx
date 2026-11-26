@@ -40,8 +40,9 @@ import { errorMessage } from "@/lib/tauri";
 
 export function SectionHeader({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-4 border-b py-4 pr-14 pl-6">
-      <div>
+    // The action goes under the text when they don't fit side by side, rather than squeezing it.
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b py-4 pr-14 pl-6 max-md:pr-6">
+      <div className="min-w-0 flex-[1_1_16rem]">
         <h2 className="text-base font-semibold">{title}</h2>
         <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
       </div>
