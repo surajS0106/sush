@@ -1166,7 +1166,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_blob_urls_in_the_other_form_are_rewritten_on_open() {
+    fn stored_blob_urls_in_the_other_form_are_rewritten() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
         let sha = "a".repeat(64);
@@ -1175,7 +1175,8 @@ mod tests {
         let message = |url: &str| json!({ "id": "m", "role": "assistant", "parts": [{ "type": "file", "mediaType": "image/png", "url": url }] });
         store.save_thread(&meta("a", "Image", 1), Some(vec![message(&theirs)])).unwrap();
 
-        let store = Store::open(dir.path()).unwrap();
+        // `open` runs this only on Android, where such URLs were saved.
+        fix_blob_urls(&store.conn.lock().unwrap()).unwrap();
         assert_eq!(store.threads().unwrap()[0].messages, vec![message(&ours)]);
     }
 
