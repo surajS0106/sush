@@ -14,7 +14,7 @@ desktop app's (lib/changelog.ts).
   workflow stops if that heading is missing.
 -->
 
-## Unreleased
+## 0.2.2 — 2026-11-27
 
 ### New
 
