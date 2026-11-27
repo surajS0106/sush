@@ -4851,7 +4851,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sush"
-version = "2.16.0"
+version = "2.17.0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -4889,7 +4889,7 @@ dependencies = [
 
 [[package]]
 name = "sush-core"
-version = "2.16.0"
+version = "2.17.0"
 dependencies = [
  "anyhow",
  "async-stream",
