@@ -14,6 +14,12 @@ desktop app's (lib/changelog.ts).
   workflow stops if that heading is missing.
 -->
 
+## Unreleased
+
+### New
+
+- Sush updates itself: when a new version is out, Home shows it, and one tap downloads it and opens Android's installer. You can also check in Settings → General.
+
 ## 0.2.1 — 2026-11-27
 
 ### Fixed

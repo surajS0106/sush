@@ -1,7 +1,11 @@
 import { useSyncExternalStore } from "react";
+import { Channel } from "@tauri-apps/api/core";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { toast } from "sonner";
+
+import { api } from "@/lib/tauri";
+import { isAndroid } from "@/lib/utils";
 
 /** Where the update flow is: the sidebar shows "Upgrade now" once `available`. */
 export type UpdateState =
@@ -12,7 +16,10 @@ export type UpdateState =
   | { status: "installing"; version: string };
 
 let state: UpdateState = { status: "idle" };
-let pending: Update | null = null;
+/** The release found: a Tauri `Update` on desktop; on Android, Rust keeps the release and this is its version. */
+let pending: Update | { version: string } | null = null;
+/** When the last check ended, so the phone's Home (which mounts often) doesn't ask GitHub every time. */
+let lastChecked = 0;
 const listeners = new Set<() => void>();
 
 function set(next: UpdateState) {
@@ -33,9 +40,13 @@ export function useUpdate(): UpdateState {
 /** Ask the release feed whether a newer version is out. `quiet` skips the toasts (the launch check). */
 export async function checkForUpdate(quiet = false) {
   if (state.status !== "idle" && state.status !== "available") return;
+  // GitHub's API, which Android checks, allows 60 unauthenticated requests an hour.
+  if (quiet && isAndroid && Date.now() - lastChecked < 60 * 60 * 1000) return;
+  const before = state;
   set({ status: "checking" });
   try {
-    const update = await checkWithRetry();
+    const update = isAndroid ? await api.androidUpdateCheck() : await checkWithRetry();
+    lastChecked = Date.now();
     if (update) {
       pending = update;
       set({ status: "available", version: update.version });
@@ -46,7 +57,7 @@ export async function checkForUpdate(quiet = false) {
     }
   } catch (e) {
     // Dev builds and offline machines have no feed to read; that's only worth a word when asked.
-    set({ status: "idle" });
+    set(before.status === "available" && pending ? before : { status: "idle" });
     if (!quiet) toast.error("Couldn't check for updates", { description: describeCheckError(e) });
   }
 }
@@ -85,6 +96,7 @@ export async function upgradeNow() {
   }
   const update = pending;
   const version = update.version;
+  if (!("downloadAndInstall" in update)) return installOnAndroid(version);
   let total = 0;
   let done = 0;
   set({ status: "downloading", version, percent: null });
@@ -100,5 +112,26 @@ export async function upgradeNow() {
   } catch (e) {
     set({ status: "available", version });
     toast.error(`Update failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+/**
+ * Android: Rust downloads the APK and opens Android's installer on it, which asks the user to
+ * confirm (and, the first time, to let Sush install apps). Installing ends this process, so the
+ * button only goes back to "available" in case the user cancels.
+ */
+async function installOnAndroid(version: string) {
+  set({ status: "downloading", version, percent: null });
+  const progress = new Channel<{ received: number; total: number }>();
+  progress.onmessage = ({ received, total }) => {
+    if (received >= total) set({ status: "installing", version });
+    else set({ status: "downloading", version, percent: total ? Math.round((received / total) * 100) : null });
+  };
+  try {
+    await api.androidUpdateInstall(progress);
+  } catch (e) {
+    toast.error(`Update failed: ${e instanceof Error ? e.message : String(e)}`);
+  } finally {
+    set({ status: "available", version });
   }
 }

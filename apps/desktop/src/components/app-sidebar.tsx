@@ -395,7 +395,7 @@ export function AppSidebar({
       <SidebarFooter className="gap-3 pt-1">
         <SidebarCards onNew={onNew} onCowork={() => onSwitchMode("cowork")} onAutomations={() => onOpenPage("automations")} />
         <SidebarMenu>
-          {!isAndroid && <UpgradeButton />}
+          <UpgradeButton />
           <SidebarMenuItem>
             <ProfileMenu
               name={session?.user.name || "Sush"}

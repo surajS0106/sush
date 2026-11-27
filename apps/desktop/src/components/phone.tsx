@@ -4,6 +4,7 @@
 
 import {
   ArrowUpIcon,
+  DownloadIcon,
   FileTextIcon,
   HomeIcon,
   KanbanIcon,
@@ -33,6 +34,7 @@ import { useProjects } from "@/lib/projects";
 import { useReportThreads } from "@/lib/reports";
 import { useSessionStatus } from "@/lib/sessions";
 import type { Conversation } from "@/lib/store";
+import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
 import { cn } from "@/lib/utils";
 import { useStepThreadIds } from "@/lib/workflows";
 
@@ -257,6 +259,34 @@ function partOfDay() {
   return hour < 5 ? "Good night" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 }
 
+/** A newer Sush for Android is out: update in place. Checks when Home opens, at most hourly (`lib/updater.ts`). */
+function UpdateBanner() {
+  const update = useUpdate();
+  useEffect(() => void checkForUpdate(true), []);
+  if (update.status !== "available" && update.status !== "downloading" && update.status !== "installing") return null;
+  const busy = update.status !== "available";
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={() => void upgradeNow()}
+      className="col-span-2 flex items-center gap-3 rounded-3xl border border-brand/40 bg-brand/10 px-4 py-3 text-left text-sm disabled:opacity-80"
+    >
+      {busy ? <LoaderCircleIcon className="size-5 shrink-0 animate-spin text-brand" /> : <DownloadIcon className="size-5 shrink-0 text-brand" />}
+      <span className="min-w-0 flex-1">
+        <span className="font-semibold">
+          {update.status === "available"
+            ? `Sush v${update.version} is ready.`
+            : update.status === "downloading"
+              ? `Downloading v${update.version}${update.percent === null ? "…" : ` ${update.percent}%`}`
+              : "Opening the installer…"}
+        </span>{" "}
+        {update.status === "available" && <span className="text-muted-foreground">Tap to update.</span>}
+      </span>
+    </button>
+  );
+}
+
 /** Home on a phone: a bento of everything, with what you'd most likely do first at the top. */
 export function PhoneHome({
   conversations,
@@ -305,6 +335,8 @@ export function PhoneHome({
           <SettingsIcon className="size-5" />
         </button>
       </header>
+
+      <UpdateBanner />
 
       {hasProviders === false && (
         <button

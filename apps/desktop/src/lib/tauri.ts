@@ -1743,6 +1743,11 @@ export const api = {
   locationRead: () => invoke<{ latitude: number; longitude: number; accuracyMeters: number }>("location_read"),
   /** Android: match the system bars to Sush's theme. */
   androidBars: (dark: boolean) => invoke<void>("android_bars", { dark }),
+  /** Android: the newest `android-v*` release, if it's newer than this app. */
+  androidUpdateCheck: () => invoke<{ version: string; notes: string } | null>("android_update_check"),
+  /** Android: download the release the last check found and open the installer on it. */
+  androidUpdateInstall: (onProgress: Channel<{ received: number; total: number }>) =>
+    invoke<void>("android_update_install", { onProgress }),
   whisperModelStatus: () => invoke<{ downloaded: boolean; sizeBytes: number }>("whisper_model_status"),
   whisperModelDownload: (onProgress: Channel<{ received: number; total: number }>) =>
     invoke<void>("whisper_model_download", { onProgress }),

@@ -313,6 +313,10 @@ pub fn run() {
             location::location_read,
             #[cfg(target_os = "android")]
             android::android_bars,
+            #[cfg(target_os = "android")]
+            android::android_update_check,
+            #[cfg(target_os = "android")]
+            android::android_update_install,
             topic::topic_lookup,
             web::web_key_status,
             web::web_key_set,

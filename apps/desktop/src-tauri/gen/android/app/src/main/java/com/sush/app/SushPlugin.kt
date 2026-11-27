@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
+import android.provider.Settings
 import android.webkit.MimeTypeMap
 import androidx.activity.result.ActivityResult
 import androidx.core.app.ActivityCompat
@@ -68,7 +69,7 @@ class SushPlugin(private val activity: Activity) : Plugin(activity) {
     // Files picked or shared last time have been read by now.
     thread {
       val old = System.currentTimeMillis() - 24 * 3600 * 1000L
-      for (dir in listOf(picked, File(activity.cacheDir, "exports"))) {
+      for (dir in listOf(picked, File(activity.cacheDir, "exports"), File(activity.cacheDir, "updates"))) {
         dir.listFiles()?.filter { it.lastModified() < old }?.forEach { it.deleteRecursively() }
       }
     }
@@ -140,6 +141,51 @@ class SushPlugin(private val activity: Activity) : Plugin(activity) {
     send.clipData = ClipData.newRawUri(file.name, uri)
     activity.startActivity(Intent.createChooser(send, file.name))
     invoke.resolve()
+  }
+
+  /** An update's APK, downloaded by Rust into the cache (`android_update_install`): hand it to Android's installer. */
+  @Command
+  fun installApk(invoke: Invoke) {
+    val file = File(invoke.parseArgs(ShareArgs::class.java).path)
+    val pm = activity.packageManager
+    val info = if (Build.VERSION.SDK_INT >= 33) pm.getPackageArchiveInfo(file.path, PackageManager.PackageInfoFlags.of(0))
+      else @Suppress("DEPRECATION") pm.getPackageArchiveInfo(file.path, 0)
+    if (info?.packageName != activity.packageName) {
+      file.delete()
+      invoke.reject("That download isn't an update for Sush. Try again.")
+      return
+    }
+    if (pm.canRequestPackageInstalls()) return install(invoke, file)
+    // Once, the first time: Android asks the user to let Sush install apps. Some versions restart
+    // Sush when that's switched on; the APK stays in the cache, so updating again is quick.
+    val settings = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))
+    try {
+      startActivityForResult(invoke, settings, "installAllowed")
+    } catch (e: Exception) {
+      invoke.reject("Allow Sush to install apps in Android's settings, then try again.")
+    }
+  }
+
+  @ActivityCallback
+  fun installAllowed(invoke: Invoke, result: ActivityResult) {
+    if (!activity.packageManager.canRequestPackageInstalls()) {
+      invoke.reject("Sush needs permission to install apps to update itself.")
+      return
+    }
+    install(invoke, File(invoke.parseArgs(ShareArgs::class.java).path))
+  }
+
+  private fun install(invoke: Invoke, file: File) {
+    val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.fileprovider", file)
+    val intent = Intent(Intent.ACTION_VIEW)
+      .setDataAndType(uri, "application/vnd.android.package-archive")
+      .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    try {
+      activity.startActivity(intent)
+      invoke.resolve()
+    } catch (e: Exception) {
+      invoke.reject("Couldn't open Android's installer. Try again.")
+    }
   }
 
   @Command

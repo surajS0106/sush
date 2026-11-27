@@ -80,7 +80,7 @@ function Timeline({ releases, current }: { releases: Release[]; current: string 
 }
 
 /** The version row: what's installed, and checking for (or installing) a newer one. */
-function VersionRow({ version }: { version: string | null }) {
+export function VersionRow({ version }: { version: string | null }) {
   const update = useUpdate();
   const action =
     update.status === "available" ? (

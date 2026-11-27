@@ -16,6 +16,8 @@ The version is `tauri.android.conf.json`'s, separate from the desktop's.
 
 `release-android.yml` (Actions tab, or `gh workflow run release-android.yml`; manual only) builds a signed arm64 APK and publishes it as the `android-v<version>` release with `--latest=false`, so the desktop updater's `releases/latest` never lands on it. Its notes are that version's section of `CHANGELOG-android.md`, and the job stops without one. To release: add to `## Unreleased` there, bump `version` in `tauri.android.conf.json`, rename the heading to `## <version> — <date>`, push to main, run the workflow and approve the `release` environment.
 
+Installed copies update themselves from these releases (`android_update_check` / `android_update_install` in `src/android.rs`, `installApk` in `SushPlugin.kt`): the phone's Home shows a banner when the newest `android-v*` release is newer than the app, and Settings → General → About has the version and "Check for updates". Rust downloads the release's `*_android.apk` asset into the cache, checks its size and GitHub's SHA-256 digest, and Kotlin opens Android's installer on it (the first time, Android asks to let Sush install apps). Android only installs it over the app if it's signed with the same key. So keep the asset name `Sush_<version>_android.apk`, and never publish an `android-v*` release that isn't ready: every phone offers it.
+
 The signing key is in the `release` environment's secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). The environment only admits runs from main, after an approval. The backup is `~/.sush/sush-release.jks` with `~/.sush/android-signing.properties`. Losing it means installed copies can never update. For a signed build on this machine, copy that properties file to `gen/android/key.properties` (ignored by git). Never commit a `.jks`.
 
 ## What's different
@@ -25,11 +27,11 @@ The signing key is in the `release` environment's secrets (`ANDROID_KEYSTORE_BAS
 - **Secrets:** `secrets.bin` in private storage, AES-256-GCM, its key wrapped by the Android Keystore (`Vault.kt` → `SushNative.unlock`, before Tauri starts). `allowBackup` is off.
 - **Background runs:** `runs.rs` reports working, waiting and finished runs (`notify_android` → `android::runs_changed` → `RunService.kt`). A `dataSync` foreground service holds the process while anything works. Android 15 and later limits it to 6 hours a day. Tools the UI runs need the page, so they depend on the webview still running. Swiping Sush from Recents ends it, runs and all; what finished is saved.
 - **Accounts:** there's no local auth server on a phone. Without `VITE_AUTH_URL` at build time (`HAS_ACCOUNTS` in `lib/auth.ts`) the app has no sign-in. With it, add the server to `connect-src` in an Android CSP. Shared sessions sign in to their relay separately, in Settings → Sharing.
-- **UI:** `isAndroid` and `isPhone()` in `lib/utils.ts`; `html[data-android]` in `index.css`. A phone has no sidebar: `components/phone.tsx` is the glass dock (Home, Chats, Board, Docs, and + for a new chat), the bento Home and the chats list. A chat or a page opened from Home fills the screen with a back arrow, and Back goes toward Home. Folder work (Cowork, Folders, Security, Review, Wiki), local connectors, the updater and dictation through Yammer's desktop app aren't offered. `.side-panel` covers the chat on a phone.
+- **UI:** `isAndroid` and `isPhone()` in `lib/utils.ts`; `html[data-android]` in `index.css`. A phone has no sidebar: `components/phone.tsx` is the glass dock (Home, Chats, Board, Docs, and + for a new chat), the bento Home and the chats list. A chat or a page opened from Home fills the screen with a back arrow, and Back goes toward Home. Folder work (Cowork, Folders, Security, Review, Wiki), local connectors, What's new and dictation through Yammer's desktop app aren't offered. `.side-panel` covers the chat on a phone.
 - **Back:** `lib/back.ts` keeps one history entry per thing to go back from; `MainActivity.onBackPressed` uses them up, then backgrounds the app. Put `<BackCloses>` in anything new that opens over the page; `Dialog` and `Sheet` already have it.
 
 ## Not there yet
 
-- An update check in the app, and a Play listing.
+- A Play listing (Play restricts `REQUEST_INSTALL_PACKAGES`, so a Play build would drop the in-app updater).
 - Answering an approval from its notification (it opens the app).
 - Driving a desktop Cowork session from the phone as its owner.

@@ -32,7 +32,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { CurrencySelect } from "@/components/currency-select";
-import { ChangelogSection } from "@/components/changelog";
+import { ChangelogSection, VersionRow } from "@/components/changelog";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { FlightsSection } from "@/components/flights-section";
 import { ImagesSection } from "@/components/images-section";
@@ -64,6 +64,7 @@ import { loadCrm, saveSettings, useCrm } from "@/lib/crm";
 import { ACCENTS, setAppearance, transitionTheme, useAppearance, type Accent, type ChatFont } from "@/lib/appearance";
 import { changePassword, connectedApps, deleteAccount, disconnectApp, HAS_ACCOUNTS, signOut, updateProfile, useSession, type ConnectedApp } from "@/lib/auth";
 import { AVATARS, avatarId, builtinAvatar, photoToDataUrl } from "@/lib/avatars";
+import { useAppVersion } from "@/lib/changelog";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { closeSettings, openSettings, useSettings, type SettingsSection } from "@/lib/library";
 import { openOnboarding, setOnboardingAtLaunch, useOnboardingAtLaunch } from "@/lib/onboarding";
@@ -289,6 +290,16 @@ const FONTS: { value: ChatFont; label: string; family: string }[] = [
   { value: "opendyslexic", label: "OpenDyslexic", family: '"OpenDyslexic", sans-serif' },
 ];
 
+/** Android has no What's new section (its notes are the GitHub releases'), so its version and updates live here. */
+function AboutGroup() {
+  const version = useAppVersion();
+  return (
+    <Group title="About">
+      <VersionRow version={version} />
+    </Group>
+  );
+}
+
 function GeneralSection() {
   const { theme = "system", setTheme } = useTheme();
   const appearance = useAppearance();
@@ -374,6 +385,7 @@ function GeneralSection() {
       </Group>
       <TemperatureGroup />
       <OnboardingGroup />
+      {isAndroid && <AboutGroup />}
     </Page>
   );
 }
