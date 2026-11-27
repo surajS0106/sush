@@ -28,13 +28,13 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "Maps show up the first time you ask for directions.";
+export const UNRELEASED_SUMMARY = "Grok searches the web and X with its own search and shows what each reply costs, and maps show up the first time you ask.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
 export const UNRELEASED: Change[] = [
+  { kind: "new", title: "Grok searches X", text: "Grok models search the web and X with xAI's own search, so answers about what people are posting now come with their sources." },
   { kind: "fixed", text: "Asking for directions shows the map the first time, instead of only after you ask again." },
   { kind: "improved", text: "Long replies stream with less work for your computer." },
-  { kind: "improved", text: "On a phone, Settings opens as a grid of tiles like Home." },
   { kind: "fixed", text: "Grok models now show their cost on each reply and count toward your monthly budget." },
 ];
 

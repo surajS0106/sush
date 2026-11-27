@@ -167,7 +167,11 @@ impl Store {
         let conn = Connection::open(dir.join("sush.db"))?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;")?;
         migrate(&conn)?;
-        fix_blob_urls(&conn)?;
+        // Only Android ever saved blob URLs in another platform's form; elsewhere this would
+        // scan every row on each launch and could rewrite a chat that merely quotes one.
+        if cfg!(target_os = "android") {
+            fix_blob_urls(&conn)?;
+        }
         Ok(Self { conn: Mutex::new(conn), blob_dir })
     }
 
