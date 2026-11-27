@@ -14,6 +14,17 @@ desktop app's (lib/changelog.ts).
   workflow stops if that heading is missing.
 -->
 
+## 0.2.3 — 2026-11-28
+
+### Improved
+
+- Settings opens as a grid of tiles, like Home.
+
+### Fixed
+
+- Menus in Settings stay on screen instead of running off the edge.
+- Grok models now show their cost on each reply and count toward your monthly budget.
+
 ## 0.2.2 — 2026-11-27
 
 ### New
