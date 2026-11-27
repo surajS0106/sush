@@ -23,6 +23,13 @@ export interface SushMetadata {
   contextTokens?: number;
   /** How many model steps (calls) the reply took. */
   steps?: number;
+  /**
+   * The part of `inputTokens`, `outputTokens` and `cachedInputTokens` from steps whose
+   * prompt reached 200K tokens, which some providers (xAI) bill at a long-context rate.
+   */
+  longInputTokens?: number;
+  longOutputTokens?: number;
+  longCachedInputTokens?: number;
   /** When the reply started (ms); missing on replies saved before it was recorded. */
   createdAt?: number;
   /** On a reply that was stopped before it finished; Resume carries on from it. */

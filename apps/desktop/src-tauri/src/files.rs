@@ -1,5 +1,7 @@
 //! Files the user picks or saves. Desktop asks with the OS's dialogs; Android
-//! with its file picker and share sheet (`android.rs`). The webview never names a path.
+//! with its file picker and share sheet (`android.rs`). iOS has neither yet (no
+//! Swift plugin): saving puts the file in the app's Documents folder, which the
+//! Files app shows under On My iPhone → Sush. The webview never names a path.
 //! These block, so call them off the async workers.
 
 use std::path::PathBuf;
@@ -20,7 +22,7 @@ pub fn pick(app: &AppHandle, title: &str, filter: (&str, &[&str]), multiple: boo
         .collect()
 }
 
-#[cfg(mobile)]
+#[cfg(target_os = "android")]
 pub fn pick(app: &AppHandle, _title: &str, filter: (&str, &[&str]), multiple: bool) -> AppResult<Vec<PathBuf>> {
     let mimes = filter.1.iter().flat_map(|ext| mime_types(ext)).map(|m| m.to_string()).collect();
     let paths = crate::android::pick_files(app, mimes, multiple)?;
@@ -34,7 +36,12 @@ pub fn pick(app: &AppHandle, _title: &str, filter: (&str, &[&str]), multiple: bo
     Ok(paths)
 }
 
-#[cfg(mobile)]
+#[cfg(target_os = "ios")]
+pub fn pick(_app: &AppHandle, _title: &str, _filter: (&str, &[&str]), _multiple: bool) -> AppResult<Vec<PathBuf>> {
+    Err(AppError::Invalid("Picking files isn't available on iPhone yet. Attach it in the chat instead.".into()))
+}
+
+#[cfg(target_os = "android")]
 fn mime_types(ext: &str) -> &'static [&'static str] {
     match ext {
         "png" => &["image/png"],
@@ -61,7 +68,7 @@ pub fn save(app: &AppHandle, file_name: String, contents: &[u8]) -> AppResult<bo
 
 /// Opens the share sheet. Always false: Android doesn't say whether anything came
 /// of it, so the UI shouldn't claim the file was saved.
-#[cfg(mobile)]
+#[cfg(target_os = "android")]
 pub fn save(app: &AppHandle, file_name: String, contents: &[u8]) -> AppResult<bool> {
     use tauri::Manager;
     let name = std::path::Path::new(&file_name).file_name().map_or_else(|| "file".into(), |n| n.to_os_string());
@@ -71,6 +78,28 @@ pub fn save(app: &AppHandle, file_name: String, contents: &[u8]) -> AppResult<bo
     std::fs::write(&path, contents)?;
     crate::android::share_file(app, path)?;
     Ok(false)
+}
+
+/// Writes the file to Documents (On My iPhone → Sush in the Files app), next to
+/// any file already there of that name rather than over it.
+#[cfg(target_os = "ios")]
+pub fn save(app: &AppHandle, file_name: String, contents: &[u8]) -> AppResult<bool> {
+    use tauri::Manager;
+    let name = std::path::Path::new(&file_name).file_name().map_or_else(|| "file".into(), |n| n.to_string_lossy().into_owned());
+    let dir = app.path().document_dir().map_err(|e| AppError::Invalid(e.to_string()))?;
+    std::fs::create_dir_all(&dir)?;
+    let (stem, ext) = match name.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (name.clone(), String::new()),
+    };
+    let mut path = dir.join(&name);
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("{stem} ({n}){ext}"));
+        n += 1;
+    }
+    std::fs::write(&path, contents)?;
+    Ok(true)
 }
 
 /// A folder the user picked. Android's folders aren't paths, so there's nothing to pick there.

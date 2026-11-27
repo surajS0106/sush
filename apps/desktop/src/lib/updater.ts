@@ -5,7 +5,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { toast } from "sonner";
 
 import { api } from "@/lib/tauri";
-import { isAndroid } from "@/lib/utils";
+import { isAndroid, isIOS } from "@/lib/utils";
 
 /** Where the update flow is: the sidebar shows "Upgrade now" once `available`. */
 export type UpdateState =
@@ -39,6 +39,8 @@ export function useUpdate(): UpdateState {
 
 /** Ask the release feed whether a newer version is out. `quiet` skips the toasts (the launch check). */
 export async function checkForUpdate(quiet = false) {
+  // iOS apps can't update themselves; a new build is installed from Xcode (docs/ios.md).
+  if (isIOS) return;
   if (state.status !== "idle" && state.status !== "available") return;
   // GitHub's API, which Android checks, allows 60 unauthenticated requests an hour.
   if (quiet && isAndroid && Date.now() - lastChecked < 60 * 60 * 1000) return;

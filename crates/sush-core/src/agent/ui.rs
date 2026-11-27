@@ -156,13 +156,24 @@ fn str_at<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 /// Token usage a message's earlier steps reported. Each step re-reads the whole
 /// conversation, so `inputTokens` (what was billed) grows with every step, while
 /// `contextTokens` (the last step's input) is how big the conversation is.
+///
+/// Some providers (xAI) bill a whole request at a higher rate once its prompt
+/// reaches [`LONG_CONTEXT`] tokens, so the steps that did are also counted on
+/// their own (`longInputTokens`, `longOutputTokens`, `longCachedInputTokens`,
+/// part of the totals) for the UI to price.
 #[derive(Debug, Default, Clone, Copy)]
 struct Tally {
     input: u64,
     output: u64,
     cached: u64,
     steps: u64,
+    long_input: u64,
+    long_output: u64,
+    long_cached: u64,
 }
+
+/// The prompt size from which long-context pricing applies to a request.
+const LONG_CONTEXT: u64 = 200_000;
 
 impl Tally {
     fn metadata(self, input: Option<u64>, output: Option<u64>, cached: Option<u64>) -> Value {
@@ -176,6 +187,17 @@ impl Tally {
         }
         if cached.is_some() || self.cached > 0 {
             m.insert("cachedInputTokens".into(), json!(self.cached + cached.unwrap_or(0)));
+        }
+        let long = input.is_some_and(|n| n >= LONG_CONTEXT);
+        let this = |n: Option<u64>| if long { n.unwrap_or(0) } else { 0 };
+        for (key, prior, step) in [
+            ("longInputTokens", self.long_input, this(input)),
+            ("longOutputTokens", self.long_output, this(output)),
+            ("longCachedInputTokens", self.long_cached, this(cached)),
+        ] {
+            if prior + step > 0 {
+                m.insert(key.into(), json!(prior + step));
+            }
         }
         m.insert("steps".into(), json!(self.steps + 1));
         Value::Object(m)
@@ -222,7 +244,15 @@ impl StepBuilder {
         let tokens = |key: &str| metadata.and_then(|m| m[key].as_u64()).unwrap_or(0);
         // Messages saved before steps were counted had at least one if they have usage.
         let steps = metadata.and_then(|m| m["steps"].as_u64()).unwrap_or(u64::from(tokens("outputTokens") > 0));
-        self.prior = Tally { input: tokens("inputTokens"), output: tokens("outputTokens"), cached: tokens("cachedInputTokens"), steps };
+        self.prior = Tally {
+            input: tokens("inputTokens"),
+            output: tokens("outputTokens"),
+            cached: tokens("cachedInputTokens"),
+            steps,
+            long_input: tokens("longInputTokens"),
+            long_output: tokens("longOutputTokens"),
+            long_cached: tokens("longCachedInputTokens"),
+        };
         self
     }
 
@@ -831,6 +861,25 @@ mod tests {
         assert_eq!(
             messages[0]["metadata"],
             json!({ "inputTokens": 30, "contextTokens": 20, "outputTokens": 12, "cachedInputTokens": 8, "steps": 2 })
+        );
+    }
+
+    #[test]
+    fn long_context_steps_are_counted_apart() {
+        let mut messages = assistant();
+        for (input, output, cached) in [(150_000, 5, None), (200_000, 7, Some(100_000)), (210_000, 3, None)] {
+            let mut b = StepBuilder::new(0).after(messages[0].get("metadata"));
+            b.handle(ChatEvent::Usage { input_tokens: Some(input), output_tokens: Some(output), cached_input_tokens: cached });
+            for op in b.finish().0 {
+                apply(&mut messages, &op);
+            }
+        }
+        assert_eq!(
+            messages[0]["metadata"],
+            json!({
+                "inputTokens": 560_000, "contextTokens": 210_000, "outputTokens": 15, "cachedInputTokens": 100_000, "steps": 3,
+                "longInputTokens": 410_000, "longOutputTokens": 10, "longCachedInputTokens": 100_000,
+            })
         );
     }
 

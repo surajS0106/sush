@@ -301,9 +301,9 @@ impl WorkspaceFs {
         if meta.is_dir() {
             return Err(format!("{rel} is a folder; only files can be deleted."));
         }
-        #[cfg(not(target_os = "android"))]
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
         return trash::delete(self.root.join(rel)).map_err(|e| format!("{rel}: couldn't move it to the trash: {e}"));
-        #[cfg(target_os = "android")]
+        #[cfg(any(target_os = "android", target_os = "ios"))]
         Err(format!("{rel}: this device has no trash to move it to"))
     }
 

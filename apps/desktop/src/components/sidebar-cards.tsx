@@ -12,7 +12,7 @@ import { openSettings, useConnectors, useSettings, useSkills } from "@/lib/libra
 import { useConversations, createStore } from "@/lib/store";
 import { api } from "@/lib/tauri";
 import { useWorkspaces } from "@/lib/workspaces";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 interface CardsState {
   /** The release whose cards were dismissed, and which of them (indexes into its changes). */
@@ -260,7 +260,7 @@ function GettingStarted({ onNew, onCowork, onAutomations }: GettingStartedProps)
   const complete =
     hasProvider === true &&
     chatted &&
-    (isAndroid || workspaces.length > 0) &&
+    (isMobile || workspaces.length > 0) &&
     connectors.length > 0 &&
     automations.length > 0 &&
     skills.length > 0;
@@ -287,7 +287,7 @@ function GettingStarted({ onNew, onCowork, onAutomations }: GettingStartedProps)
   const steps: Step[] = [
     { id: "provider", label: "Add a model provider", done: hasProvider, run: () => openSettings({ section: "providers" }) },
     { id: "chat", label: "Start a chat", done: chatted, run: onNew },
-    ...(isAndroid ? [] : [{ id: "cowork", label: "Give Sush a folder in Cowork", done: workspaces.length > 0, run: onCowork }]),
+    ...(isMobile ? [] : [{ id: "cowork", label: "Give Sush a folder in Cowork", done: workspaces.length > 0, run: onCowork }]),
     { id: "connector", label: "Connect an app", done: connectors.length > 0, run: () => openSettings({ section: "connectors" }) },
     { id: "automation", label: "Set up an automation", done: automations.length > 0, run: onAutomations },
     { id: "skill", label: "Teach Sush a skill", done: skills.length > 0, run: () => openSettings({ section: "skills" }) },

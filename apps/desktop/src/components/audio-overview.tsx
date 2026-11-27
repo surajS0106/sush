@@ -18,7 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { answerOnAir } from "@/lib/audio-join";
 import { openSettings } from "@/lib/library";
 import { api, errorMessage, type AudioOverviewData, type AudioTurn, type NotebookNote } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 import { DELIVERY, systemVoiceFor, useVoiceSettings, voicesKey, type VoiceSettings } from "@/lib/voices";
 
 const RATES = [0.75, 1, 1.25, 1.5, 2];
@@ -53,7 +53,7 @@ export function AudioOverviewView({ note, guest, notebookId }: { note: Pick<Note
       {!configured ? (
         <div className="flex flex-col items-start gap-2 rounded-xl border bg-card p-4 text-sm">
           <p className="font-medium">Choose the voices</p>
-          <p className="text-muted-foreground">Pick a provider, model and two voices in Settings → Speech, or use {isAndroid ? "this phone’s" : "this computer’s"} voices.</p>
+          <p className="text-muted-foreground">Pick a provider, model and two voices in Settings → Speech, or use {isMobile ? "this phone’s" : "this computer’s"} voices.</p>
           <Button variant="outline" size="sm" onClick={() => openSettings({ section: "speech" })}>
             Open Settings
           </Button>
@@ -293,7 +293,7 @@ function Player({
           <div className="ml-1 min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{chapters[current.chapter]}</p>
             <p className="text-xs text-muted-foreground">
-              {elapsed} of about {minutes} min · {provider ? settings.model : isAndroid ? "this phone’s voices" : "this computer’s voices"}
+              {elapsed} of about {minutes} min · {provider ? settings.model : isMobile ? "this phone’s voices" : "this computer’s voices"}
             </p>
           </div>
           {notebookId && (

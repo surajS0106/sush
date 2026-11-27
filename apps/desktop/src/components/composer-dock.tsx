@@ -7,7 +7,7 @@ import { ConnectorMark } from "@/components/composer-menu";
 import { FolderMenu } from "@/components/session-options";
 import { availableConnectors, openSettings, useConnectors } from "@/lib/library";
 import { useWorkspaces } from "@/lib/workspaces";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 /** Shown as examples while nothing is connected. */
 const SUGGESTED = ["notion", "github", "linear", "clickup"];
@@ -31,7 +31,7 @@ export function ComposerDock({
   const current = workspaces.find((w) => w.id === workspaceId);
   const connected = availableConnectors().filter((c) => c.enabled);
   // Cowork already shows its folder above the composer; only a plain, untouched chat offers to pick one.
-  const showFolder = !!conversationId && !current && !started && !isAndroid;
+  const showFolder = !!conversationId && !current && !started && !isMobile;
   const marks = connected.length > 0 ? connected.slice(0, SHOWN).map((c) => ({ key: c.id, item: c })) : SUGGESTED.map((id) => ({ key: id, item: { id } }));
 
   return (

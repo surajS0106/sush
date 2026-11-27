@@ -8,7 +8,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 
 import { Group, Page, Segmented, Setting } from "@/components/settings-layout";
 import { Button } from "@/components/ui/button";
-import { isAndroid } from "@/lib/utils";
+import { isMobile } from "@/lib/utils";
 import { openYammer, useYammerStatus } from "@/components/yammer-setup-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,7 +28,7 @@ import {
 import { api, type ModelInfo, type ProviderView, type TranscribeApi } from "@/lib/tauri";
 import { setVoiceSettings, systemVoices, useVoiceSettings, type VoiceSettings } from "@/lib/voices";
 
-const PROVIDER_HINT = `${isAndroid ? "" : "Built-in Whisper runs offline. "}Claude models don't accept audio, so Anthropic providers can't transcribe.`;
+const PROVIDER_HINT = `${isMobile ? "" : "Built-in Whisper runs offline. "}Claude models don't accept audio, so Anthropic providers can't transcribe.`;
 const API_HINT = "Ollama audio chat for local Gemma 4. The transcription endpoint for OpenAI, Azure Foundry and Groq.";
 
 const modelHint = (api: TranscribeApi) =>
@@ -81,7 +81,7 @@ function ProviderSelect({ form, providers }: { form: Form; providers: ProviderVi
       value={form.providerId}
       onChange={form.pickProvider}
       items={[
-        ...(isAndroid ? [] : [{ value: BUILTIN, label: "Built-in Whisper", hint: "142 MB, offline" }]),
+        ...(isMobile ? [] : [{ value: BUILTIN, label: "Built-in Whisper", hint: "142 MB, offline" }]),
         ...providers.map((p) => ({
           value: p.id,
           label: p.name,
@@ -179,7 +179,7 @@ export function SpeechSection({ providers }: { providers: ProviderView[] }) {
   const engine = dictationEngine(useSpeechSettings());
   return (
     <Page>
-      {!isAndroid && (
+      {!isMobile && (
       <Group title="Dictation">
         <Setting title="Dictate with" description="Yammer is Sush's dictation app and works everywhere. Sush's built-in dictation needs nothing else installed.">
           <Segmented<DictationEngine>
@@ -219,13 +219,13 @@ function SushSpeech({ form, providers }: { form: Form; providers: ProviderView[]
           </>
         )}
         {/* A phone dictates with the mic button; it has no keyboard shortcut. */}
-        {!isAndroid && (
+        {!isMobile && (
           <Setting title="Shortcut" description="Press once to start dictating, again to finish. Local models transcribe live as you speak. Esc cancels.">
             <kbd className="rounded border px-1.5 py-0.5 font-sans text-xs">Ctrl+D</kbd>
           </Setting>
         )}
       </Group>
-      {form.builtin && !isAndroid && (
+      {form.builtin && !isMobile && (
         <p className="text-sm text-muted-foreground">
           Whisper base.en runs on this computer. It downloads once (142 MB) the first time you dictate.
         </p>
@@ -294,14 +294,14 @@ function OverviewVoices({ providers }: { providers: ProviderView[] }) {
     <Group title="Audio overviews">
       <Setting
         title="Voices"
-        description={`${isAndroid ? "Your phone's" : "Your computer's"} voices read an overview aloud as it plays: free, offline, nothing saved. A provider's voices sound far more natural and are made once, then kept.`}
+        description={`${isMobile ? "Your phone's" : "Your computer's"} voices read an overview aloud as it plays: free, offline, nothing saved. A provider's voices sound far more natural and are made once, then kept.`}
       >
         <Segmented<VoiceSettings["engine"]>
           label="Voices for audio overviews"
           value={v.engine}
           onChange={(engine) => setVoiceSettings({ engine })}
           options={[
-            { value: "system", label: isAndroid ? "This phone" : "This computer" },
+            { value: "system", label: isMobile ? "This phone" : "This computer" },
             { value: "provider", label: "A provider" },
           ]}
         />

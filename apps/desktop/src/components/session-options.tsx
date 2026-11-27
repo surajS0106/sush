@@ -27,7 +27,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { setConversationWorkspace } from "@/lib/store";
 import { errorMessage } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 import {
   addWorkspace,
   finishRebase,
@@ -44,7 +44,7 @@ const CHIP =
 
 export function SessionOptions(props: { conversationId: string; workspaceId?: string }) {
   // A phone has no folders to pick.
-  return isAndroid ? null : <FolderOptions {...props} />;
+  return isMobile ? null : <FolderOptions {...props} />;
 }
 
 function FolderOptions({ conversationId, workspaceId }: { conversationId: string; workspaceId?: string }) {

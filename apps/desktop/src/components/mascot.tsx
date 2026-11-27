@@ -24,7 +24,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
 import { DEFAULT_MASCOT, mascotSounds, useMascot } from "@/lib/mascot";
 import { audio, fallSounds } from "@/lib/sfx";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 // One character per pixel; "." is transparent. Eyes and legs are drawn
 // separately so they can move: the body below has rice where the eyes go.
@@ -1558,9 +1558,9 @@ function MascotBody({
           style={{ transformOrigin: "50% 100%" }}
           // No endless breathing on a phone: a loop that never stops keeps the screen at its
           // highest refresh rate for as long as the chat is open.
-          animate={reduceMotion || moving || isAndroid ? { scaleY: 1 } : { scaleY: asleep ? [1, 1.05, 1] : [1, 1.03, 1] }}
+          animate={reduceMotion || moving || isMobile ? { scaleY: 1 } : { scaleY: asleep ? [1, 1.05, 1] : [1, 1.03, 1] }}
           transition={
-            reduceMotion || moving || isAndroid
+            reduceMotion || moving || isMobile
               ? { duration: 0.2 }
               : { duration: asleep ? 3.6 : 2.8, repeat: Infinity, ease: "easeInOut" }
           }

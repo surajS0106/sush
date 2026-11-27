@@ -59,7 +59,10 @@ export function DropdownMenu<T extends string>({
   const [open, setOpen] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
   const [up, setUp] = useState(false);
+  /** The side the list lines up with: `align`, unless that would run it off the screen. */
+  const [side, setSide] = useState(align);
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const shouldReduceMotion = useReducedMotion();
   const selected = items.find((item) => item.value === value);
@@ -93,6 +96,12 @@ export function DropdownMenu<T extends string>({
     const needed = Math.min(MAX_LIST_HEIGHT, items.length * 36 + 8) + 4;
     const below = bounds.bottom - trigger.bottom;
     setUp(below < needed && trigger.top - bounds.top > below);
+    // A stacked settings row (a phone) puts an end-aligned trigger at the left, where the list would run off the screen.
+    const width = menuRef.current?.offsetWidth ?? 0;
+    const margin = 8;
+    if (align === "end" && trigger.right - width < margin && trigger.left + width <= window.innerWidth - margin) setSide("start");
+    else if (align === "start" && trigger.left + width > window.innerWidth - margin && trigger.right - width >= margin) setSide("end");
+    else setSide(align);
   }, [open]);
 
   const select = (item: DropdownMenuItem<T>) => {
@@ -167,20 +176,21 @@ export function DropdownMenu<T extends string>({
       <AnimatePresence>
         {open && (
           <motion.div
+            ref={menuRef}
             role="menu"
             aria-label={label}
             initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: up ? 4 : -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0 }}
-            style={{ transformOrigin: `${up ? "bottom" : "top"} ${align === "end" ? "right" : "left"}` }}
+            style={{ transformOrigin: `${up ? "bottom" : "top"} ${side === "end" ? "right" : "left"}` }}
             transition={shouldReduceMotion ? { duration: 0 } : { duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
               "absolute z-50 overflow-hidden rounded-lg border bg-popover text-popover-foreground shadow-md",
               up ? "bottom-full mb-1" : "top-full mt-1",
               // At least as wide as the trigger (a field) or 11rem; wider when a label needs it.
-              "w-max max-w-80",
+              "w-max max-w-[min(20rem,calc(100vw-1rem))]",
               field ? "min-w-full" : "min-w-44",
-              align === "end" ? "right-0" : "left-0",
+              side === "end" ? "right-0" : "left-0",
             )}
           >
             <div ref={listRef} className="relative max-h-72 overflow-y-auto overscroll-contain p-1">

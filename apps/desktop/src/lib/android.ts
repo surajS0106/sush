@@ -2,10 +2,9 @@
 
 import { api } from "@/lib/tauri";
 
-/** Marks the page for index.css, and keeps the system bars in step with Sush's theme. Call once, on Android. */
+/** Keeps the system bars in step with Sush's theme. Call once, on Android. */
 export function initAndroid() {
   const html = document.documentElement;
-  html.dataset.android = "";
   let last: boolean | null = null;
   const sync = () => {
     const dark = html.classList.contains("dark");

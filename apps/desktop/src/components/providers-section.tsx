@@ -20,7 +20,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { providerLogo } from "@/lib/logos";
 import { api, errorMessage, type ProviderConfig, type ProviderView, type WireFormat } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 interface ProvidersSectionProps {
   providers: ProviderView[];
@@ -52,7 +52,7 @@ export function ProvidersSection({ providers, onChanged }: ProvidersSectionProps
       <div className="mx-6 border-b pt-6 pr-8 pb-5 max-md:mx-4 max-md:pt-2">
         <h2 className="text-lg font-semibold tracking-tight">Providers</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Connect model providers. API keys are {isAndroid ? "encrypted on this phone" : "stored in your OS keychain"}.
+          Connect model providers. API keys are {isMobile ? "encrypted on this phone" : "stored in your OS keychain"}.
         </p>
       </div>
       <div className="flex min-h-0 flex-1 max-md:flex-col">

@@ -94,7 +94,7 @@ import { checkForUpdate, upgradeNow, useUpdate } from "@/lib/updater";
 import { useCoworkStatus, useSessionStatus } from "@/lib/sessions";
 import { addWorkspace, useWorkspaces } from "@/lib/workspaces";
 import type { Conversation } from "@/lib/store";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 /** Sessions listed before the "More" toggle. */
 const RECENT_LIMIT = 8;
@@ -119,7 +119,7 @@ type NavItem = (typeof ALL_NAV)[number];
 
 /** These work in a folder on this computer, which a phone doesn't have. */
 const FOLDER_NAV: readonly string[] = ["cowork", "folders", "security", "review", "wiki"];
-const NAV: readonly NavItem[] = isAndroid ? ALL_NAV.filter((n) => !FOLDER_NAV.includes(n.id)) : ALL_NAV;
+const NAV: readonly NavItem[] = isMobile ? ALL_NAV.filter((n) => !FOLDER_NAV.includes(n.id)) : ALL_NAV;
 
 const comingSoon = (what: string) => toast(`${what} is coming soon`);
 
@@ -260,7 +260,7 @@ export function AppSidebar({
       <div data-tauri-drag-region className={cn("flex h-12 shrink-0 items-center gap-0.5 px-2 select-none", trafficLights && "pl-20")}>
         <NavControls nav={nav} />
         <span data-tauri-drag-region className="flex-1 self-stretch" />
-        {!isAndroid && <ModeToggle mode={mode} onChange={onSwitchMode} />}
+        {!isMobile && <ModeToggle mode={mode} onChange={onSwitchMode} />}
       </div>
 
       <div className="flex flex-col gap-1.5 px-2 pb-2">
@@ -284,7 +284,7 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton onClick={onNew} className="h-9 rounded-lg">
               <PlusIcon /> <span>New</span>
-              {!isAndroid && <kbd className="ml-auto font-sans text-xs text-muted-foreground">{NEW_SHORTCUT_LABEL}</kbd>}
+              {!isMobile && <kbd className="ml-auto font-sans text-xs text-muted-foreground">{NEW_SHORTCUT_LABEL}</kbd>}
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -399,14 +399,14 @@ export function AppSidebar({
           <SidebarMenuItem>
             <ProfileMenu
               name={session?.user.name || "Sush"}
-              email={session?.user.email ?? (isAndroid ? "On this phone" : "Local workspace")}
+              email={session?.user.email ?? (isMobile ? "On this phone" : "Local workspace")}
               image={session?.user.image}
               onOpenSettings={onOpenSettings}
             />
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
-      {!isAndroid && <SidebarResizer />}
+      {!isMobile && <SidebarResizer />}
     </Sidebar>
   );
 }
@@ -810,7 +810,7 @@ function ProfileMenu({
           <SettingsIcon /> <span>Settings</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        {!isAndroid && (
+        {!isMobile && (
           <>
             <DropdownMenuItem onSelect={() => void checkForUpdate()}>
               <DownloadIcon /> <span>Check for updates</span>

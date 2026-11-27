@@ -6,7 +6,7 @@
 
 import { createAuthClient } from "better-auth/react";
 
-import { isAndroid } from "@/lib/utils";
+import { isMobile } from "@/lib/utils";
 
 const TOKEN_KEY = "sush.authToken";
 
@@ -34,7 +34,7 @@ export const AUTH_URL = import.meta.env.VITE_AUTH_URL ?? "http://localhost:3000"
  * Whether this build signs in. The Android app has no server of its own to sign in to, so unless
  * it's built with one (`VITE_AUTH_URL`) it runs without an account: chats are on the phone anyway.
  */
-export const HAS_ACCOUNTS = !isAndroid || !!import.meta.env.VITE_AUTH_URL;
+export const HAS_ACCOUNTS = !isMobile || !!import.meta.env.VITE_AUTH_URL;
 
 /** This app's session token, to share through the same server without signing in again (`lib/share.ts`). */
 export const getAuthToken = readToken;

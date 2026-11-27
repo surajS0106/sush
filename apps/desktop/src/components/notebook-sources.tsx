@@ -62,7 +62,7 @@ import { useConversations } from "@/lib/store";
 import { useWorkspaces } from "@/lib/workspaces";
 import { toast } from "sonner";
 import { api, errorMessage, type Notebook, type NotebookSource, type SourceKind, type WebKeySource, type WebSearchResult } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 // --- shared bits ---------------------------------------------------------------------
 
@@ -882,7 +882,7 @@ export function NotebookComposerMenu({ notebook, onOpenSettings }: { notebook: N
         <Section>This message</Section>
         <PromptInputActionMenuItem onSelect={() => attachments.openFileDialog()}>
           <PaperclipIcon /> <Label hint="Read with this message only, not kept as a source">Attach a file</Label>
-          {!isAndroid && <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>}
+          {!isMobile && <DropdownMenuShortcut>Ctrl+U</DropdownMenuShortcut>}
         </PromptInputActionMenuItem>
 
         <DropdownMenuSeparator />

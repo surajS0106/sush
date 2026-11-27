@@ -40,12 +40,12 @@ import { openSettings } from "@/lib/library";
 import { MASCOTS, setMascot, useMascot } from "@/lib/mascot";
 import { finishOnboarding, useOnboardingOpen } from "@/lib/onboarding";
 import { useBackKey } from "@/lib/back";
-import { cn, focusComposer, isAndroid } from "@/lib/utils";
+import { cn, focusComposer, isMobile } from "@/lib/utils";
 
 const ALL_STEPS = ["welcome", "look", "modes", "tour", "model"] as const;
 type Step = (typeof ALL_STEPS)[number];
 /** A phone has no folders or desktop pages to show around. */
-const STEPS: readonly Step[] = isAndroid ? ["welcome", "look", "model"] : ALL_STEPS;
+const STEPS: readonly Step[] = isMobile ? ["welcome", "look", "model"] : ALL_STEPS;
 
 /** How many characters the look step offers; the rest are in Settings → Sushi. */
 const CHARACTERS_SHOWN = 10;
@@ -124,7 +124,7 @@ export function Onboarding({ hasProviders }: { hasProviders: boolean | null }) {
           {/* Doubles as the title bar, so the window can still be moved. */}
           <header
             data-tauri-drag-region
-            className={cn("relative flex h-12 shrink-0 items-center px-4 select-none", IS_MAC ? "pl-24" : !isAndroid && "pr-36")}
+            className={cn("relative flex h-12 shrink-0 items-center px-4 select-none", IS_MAC ? "pl-24" : !isMobile && "pr-36")}
           >
             <span data-tauri-drag-region className="text-sm font-semibold tracking-tight">
               Sush
@@ -230,7 +230,7 @@ function WelcomeStep() {
       </div>
       <h2 className="text-3xl font-semibold tracking-tight">Welcome to Sush{first ? `, ${first}` : ""}</h2>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">
-        {isAndroid
+        {isMobile
           ? "Your AI workspace that lives on your phone. Chat with any model, connect your apps, and keep your data on your own device."
           : "Your AI workspace that lives on your computer. Chat with any model, let it work in your folders, and keep your data on your own machine."}
       </p>
@@ -239,17 +239,17 @@ function WelcomeStep() {
           OpenAI, Anthropic, OpenRouter, or a local model through Ollama. Bring your own key.
         </Highlight>
         <Highlight icon={LockIcon} title="Private by default">
-          {isAndroid
+          {isMobile
             ? "Chats are stored on this phone. API keys are encrypted with its Keystore."
             : "Chats are stored on this computer. API keys go to your system keychain."}
         </Highlight>
         <Highlight icon={SparklesIcon} title="Gets work done">
-          {isAndroid
+          {isMobile
             ? "Searches the web, writes docs and slides, and uses your apps."
             : "Edits files, runs commands in a sandbox, searches the web and uses your apps."}
         </Highlight>
       </div>
-      <p className="mt-6 text-xs text-muted-foreground">Psst: {isAndroid ? "tap" : "click"} the little one above to say hi.</p>
+      <p className="mt-6 text-xs text-muted-foreground">Psst: {isMobile ? "tap" : "click"} the little one above to say hi.</p>
     </div>
   );
 }
@@ -477,7 +477,7 @@ function ModelStep({ hasProviders }: { hasProviders: boolean | null }) {
     <>
       <StepHeading eyebrow="Last step" title="Connect a model">
         Sush talks to the model you choose. Add a provider with your API key, or point it at a model running on{" "}
-        {isAndroid ? "your computer" : "this computer"}. Keys stay {isAndroid ? "encrypted on this phone" : "in your system keychain"}.
+        {isMobile ? "your computer" : "this computer"}. Keys stay {isMobile ? "encrypted on this phone" : "in your system keychain"}.
       </StepHeading>
       <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
         <ProviderOption title="OpenAI" text="GPT models with your OpenAI API key." />

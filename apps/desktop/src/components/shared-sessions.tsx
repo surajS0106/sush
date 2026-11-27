@@ -39,7 +39,7 @@ import {
 } from "@/lib/share";
 import { createStore, useConversations, type Conversation } from "@/lib/store";
 import { errorMessage, type RunStatus, type ShareView } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 /** Images a guest may attach, as the host takes them. */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -261,7 +261,7 @@ export function ShareButton({ conversation }: { conversation: Conversation }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <Button variant="ghost" size="sm" aria-label="Share" className="h-7 gap-1.5 rounded-full px-2.5 text-xs" onClick={() => openShare(conversation.id)}>
-          <RadioIcon className="size-3.5" /> <span className={cn(isAndroid && "max-md:hidden")}>Share</span>
+          <RadioIcon className="size-3.5" /> <span className={cn(isMobile && "max-md:hidden")}>Share</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom">Share this session live: others watch, chat, suggest or drive</TooltipContent>

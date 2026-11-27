@@ -12,17 +12,20 @@
 //! itself wrapped by a key the Android Keystore holds and never lets out
 //! (`Vault.kt`); Kotlin unwraps it as the app starts and hands it over with
 //! `unlock` before anything reads a secret.
+//!
+//! iOS uses its Keychain in every build: each app has its own there, so a
+//! rebuild never asks for a password.
 
 use crate::error::AppResult;
 
-#[cfg(all(desktop, not(debug_assertions)))]
+#[cfg(any(all(desktop, not(debug_assertions)), target_os = "ios"))]
 const SERVICE: &str = "com.sush.app";
 
 /// Called once at startup with the app config dir; debug builds and Android use it.
 pub fn init(config_dir: &std::path::Path) {
     #[cfg(all(desktop, debug_assertions))]
     let _ = dev::PATH.set(config_dir.join("dev-secrets.json"));
-    #[cfg(all(desktop, not(debug_assertions)))]
+    #[cfg(any(all(desktop, not(debug_assertions)), target_os = "ios"))]
     let _ = config_dir;
     #[cfg(target_os = "android")]
     vault::init(config_dir);
@@ -34,7 +37,7 @@ pub fn unlock(key: [u8; 32]) {
     vault::unlock(key);
 }
 
-#[cfg(all(desktop, not(debug_assertions)))]
+#[cfg(any(all(desktop, not(debug_assertions)), target_os = "ios"))]
 mod backend {
     use super::SERVICE;
     use crate::error::AppResult;

@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
 import { api, errorMessage, type ToolSpec } from "@/lib/tauri";
+import { isMac } from "@/lib/utils";
 
 export const LOCATION_GET = "location_get";
 
@@ -69,7 +70,6 @@ function webviewPosition() {
 
 /** Read the device's position. Rejects with a message for the user. */
 export async function readLocation(temporary = false): Promise<LocationOutput> {
-  const isMac = navigator.userAgent.includes("Mac");
   // A command rejects with a plain string, and the card shows `message`.
   const position = await (isMac ? api.locationRead() : webviewPosition()).catch((e: unknown) => {
     throw new Error(errorMessage(e));

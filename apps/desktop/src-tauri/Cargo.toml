@@ -54,6 +54,11 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 # The secrets file is encrypted with a key the Android Keystore wraps (secrets.rs).
 aes-gcm = "0.10"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# The iOS Keychain holds the secrets, as the macOS one does (secrets.rs).
+keyring = { version = "3", features = ["apple-native"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSResponder", "NSImage"] }

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged into the iOS app's Info.plist by the Tauri CLI (docs/ios.md). -->
+<plist version="1.0">
+<dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sush listens while you dictate a message or talk in voice mode.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Sush uses your location when you ask about places, directions or weather near you.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Sush uses the camera when you take a photo to attach to a chat.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Sush opens your photos when you attach one to a chat.</string>
+	<!-- Files Sush saves (exports, downloads) show in the Files app under On My iPhone → Sush. -->
+	<key>UIFileSharingEnabled</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
+</dict>
+</plist>

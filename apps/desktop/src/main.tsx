@@ -20,7 +20,7 @@ import { initWorkspaces } from "./lib/workspaces";
 import { initSelectAll } from "./lib/select-all";
 import { initZoom } from "./lib/zoom";
 import { initAndroid } from "./lib/android";
-import { isAndroid } from "./lib/utils";
+import { isAndroid, isIOS, isMobile } from "./lib/utils";
 import { initStore } from "./lib/store";
 import { errorMessage } from "./lib/tauri";
 
@@ -44,8 +44,15 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Marks the page for index.css's phone rules.
+if (isMobile) document.documentElement.dataset.mobile = "";
+if (isIOS) {
+  document.documentElement.dataset.ios = "";
+  // iOS zooms the page into any field with text under 16px when it's focused, and doesn't zoom back.
+  document.querySelector('meta[name="viewport"]')?.setAttribute("content", "width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover");
+}
 if (isAndroid) initAndroid();
-else initZoom();
+else if (!isIOS) initZoom();
 initSelectAll();
 
 const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);

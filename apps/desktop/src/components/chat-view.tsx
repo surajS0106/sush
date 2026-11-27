@@ -1028,7 +1028,7 @@ const ChatMessage = memo(function ChatMessage({
     );
   }
   const { inputTokens, outputTokens, cachedInputTokens, contextTokens, steps, model } = message.metadata ?? {};
-  const cost = formatCost(model, inputTokens, outputTokens, local, cachedInputTokens);
+  const cost = formatCost(model, inputTokens, outputTokens, local, cachedInputTokens, message.metadata);
 
   const renderPart = (part: SushUIMessage["parts"][number], i: number) => {
     const key = `${message.id}-${i}`;

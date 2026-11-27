@@ -474,7 +474,7 @@ export function Composer({
           <ComposerDock conversationId={conversationId} workspaceId={workspaceId} started={started} />
         )}
       </div>
-      <p className="px-1 text-right text-[11px] text-muted-foreground in-data-android:hidden opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
+      <p className="px-1 text-right text-[11px] text-muted-foreground in-data-mobile:hidden opacity-0 transition-opacity duration-200 group-focus-within/composer:opacity-100">
         <kbd className="rounded border px-1 py-0.5 font-sans">Enter</kbd> to send ·{" "}
         <kbd className="rounded border px-1 py-0.5 font-sans">Shift+Enter</kbd> for new line ·{" "}
         {!notebook && (

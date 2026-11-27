@@ -856,29 +856,36 @@ button.doc-code-lang:hover, .doc-code-copy:hover { background: var(--accent); co
   .orb-float, .orb-reflect { animation: none; }
 }
 
-/* Android (lib/android.ts sets data-android). The activity keeps the page clear of the system bars. */
-html[data-android] {
+/* Phones (main.tsx sets data-mobile on Android and iOS). On Android the activity keeps the page clear of the system bars; on iOS the rules below do. */
+html[data-mobile] {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
+/* iOS lays the page under the status bar and the home indicator (viewport-fit=cover in index.html), so pad them away and shrink full-height layouts to match. */
+html[data-ios] body {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-text-size-adjust: 100%;
+}
+html[data-ios] .h-svh { height: calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
+html[data-ios] .min-h-svh { min-height: calc(100svh - env(safe-area-inset-top) - env(safe-area-inset-bottom)); }
 /* Controls shown on hover have no hover to show them. */
 @media (hover: none) {
-  html[data-android] button[class*="opacity-0"][class*="group-hover"],
-  html[data-android] [class*="opacity-0"][class*="group-hover"]:has(button):not([data-hover-overlay]) {
+  html[data-mobile] button[class*="opacity-0"][class*="group-hover"],
+  html[data-mobile] [class*="opacity-0"][class*="group-hover"]:has(button):not([data-hover-overlay]) {
     opacity: 1;
   }
-  html[data-android] [data-sidebar="menu-action"] { opacity: 1; }
+  html[data-mobile] [data-sidebar="menu-action"] { opacity: 1; }
 }
 /* A tooltip follows a hover; after a tap it would only get stuck. */
-html[data-android] [data-slot="tooltip-content"] { display: none; }
+html[data-mobile] [data-slot="tooltip-content"] { display: none; }
 /* Touch-sized rows in the drawer, menus and title bar. */
-html[data-android] [data-sidebar="menu-button"] { min-height: 2.75rem; }
-html[data-android] [data-sidebar="menu-action"] { top: 50%; translate: 0 -50%; }
-html[data-android] [data-slot="dropdown-menu-item"] { min-height: 2.5rem; }
-html[data-android] header[data-tauri-drag-region] > button { min-width: 2.5rem; min-height: 2.5rem; }
+html[data-mobile] [data-sidebar="menu-button"] { min-height: 2.75rem; }
+html[data-mobile] [data-sidebar="menu-action"] { top: 50%; translate: 0 -50%; }
+html[data-mobile] [data-slot="dropdown-menu-item"] { min-height: 2.5rem; }
+html[data-mobile] header[data-tauri-drag-region] > button { min-width: 2.5rem; min-height: 2.5rem; }
 /* Side panels (docs, slides, files, a shared session's) cover the chat on a phone. */
 @media (max-width: 767px) {
-  html[data-android] .side-panel {
+  html[data-mobile] .side-panel {
     position: fixed;
     inset: 0;
     z-index: 40;

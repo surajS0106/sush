@@ -55,7 +55,7 @@ import {
 import { useShare } from "@/lib/share";
 import { errorMessage, type ShareView } from "@/lib/tauri";
 import { useBackKey } from "@/lib/back";
-import { cn, focusComposer, isAndroid, isPhone } from "@/lib/utils";
+import { cn, focusComposer, isMobile, isPhone } from "@/lib/utils";
 import { startPriceAlerts } from "@/lib/price-alerts";
 import { whenLeader } from "@/lib/windows";
 import { addWorkspace, getWorkspaces, openFile } from "@/lib/workspaces";
@@ -81,14 +81,14 @@ export default function App() {
     if (page === "shared" && !watched) setPage("session");
   }, [page, watched]);
   const tabs = useTabs(activeId, ids, setActiveId);
-  const phone = useIsMobile() && isAndroid;
+  const phone = useIsMobile() && isMobile;
   // A phone moves between the dock's tabs; a chat or a page from Home opens over the last one.
   const lastTab = useRef<Page>("home");
   if (isDockTab(page)) lastTab.current = page;
   const goBack = () => setPage(isDockTab(page) ? "home" : lastTab.current);
   // Android's Back: a phone goes back toward Home, then out of the app (MainActivity.kt); a tablet
   // leaves a page for the session.
-  useBackKey(phone ? (page === "home" ? 0 : 1) : isAndroid && page !== "session" ? 1 : 0, () => (phone ? goBack() : setPage("session")));
+  useBackKey(phone ? (page === "home" ? 0 : 1) : isMobile && page !== "session" ? 1 : 0, () => (phone ? goBack() : setPage("session")));
   const { motion } = useAppearance();
   const layout = useLayout();
 
@@ -428,7 +428,7 @@ function AppHeader({
       className={cn(
         "flex h-12 shrink-0 items-center gap-0.5 px-2 select-none",
         // Clear the custom window controls, or the macOS traffic lights once the sidebar is hidden.
-        isAndroid ? "h-14" : IS_MAC ? trafficLights && sidebarHidden && "pl-20" : "pr-36",
+        isMobile ? "h-14" : IS_MAC ? trafficLights && sidebarHidden && "pl-20" : "pr-36",
       )}
     >
       {onBack ? (
@@ -438,11 +438,11 @@ function AppHeader({
       ) : sidebarHidden && (
         <>
           <NavControls nav={nav} coworkStatus />
-          {!isAndroid && <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />}
+          {!isMobile && <Separator orientation="vertical" className="mx-2 data-vertical:h-4 data-vertical:self-auto" />}
         </>
       )}
       {children}
-      <span data-tauri-drag-region className={cn("flex-1 self-stretch", isAndroid ? "max-md:hidden" : "min-w-8")} />
+      <span data-tauri-drag-region className={cn("flex-1 self-stretch", isMobile ? "max-md:hidden" : "min-w-8")} />
       {session && !sharedId && <DocsButton threadId={session.id} />}
       {session && !sharedId && <ShareButton conversation={session} />}
       {/* Who's watching: a session shared from here, or the one being watched. */}

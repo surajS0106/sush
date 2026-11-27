@@ -32,6 +32,7 @@ import { ArrowLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 
 import { CurrencySelect } from "@/components/currency-select";
+import { Mascot } from "@/components/mascot";
 import { ChangelogSection, VersionRow } from "@/components/changelog";
 import { DesignSection, PluginsSection, SkillsSection } from "@/components/customize-sections";
 import { FlightsSection } from "@/components/flights-section";
@@ -70,7 +71,7 @@ import { closeSettings, openSettings, useSettings, type SettingsSection } from "
 import { openOnboarding, setOnboardingAtLaunch, useOnboardingAtLaunch } from "@/lib/onboarding";
 import type { ProviderView } from "@/lib/tauri";
 import { useBackKey } from "@/lib/back";
-import { cn, focusComposer, isAndroid } from "@/lib/utils";
+import { cn, focusComposer, isAndroid, isMobile } from "@/lib/utils";
 import { setTemperatureUnit, TEMPERATURE_UNITS, useTemperatureUnit } from "@/lib/weather";
 
 interface NavItem {
@@ -79,46 +80,49 @@ interface NavItem {
   icon: ComponentType<{ className?: string }>;
   /** Extra words the nav search matches, e.g. the settings on the page. */
   keywords: string;
+  /** A phone's bento tile: a line of what's there, and the tile's colour. */
+  hint: string;
+  tint: string;
 }
 
 const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Settings",
     items: [
-      { id: "general", label: "General", icon: SettingsIcon, keywords: "appearance theme dark light accent color colour font text size width glass blur frosted composer motion animation units temperature celsius fahrenheit weather onboarding welcome tour intro getting started" },
-      { id: "account", label: "Account", icon: CircleUserIcon, keywords: "profile email name photo picture avatar password sign out log out delete account" },
-      { id: "sushi", label: "Sushi", icon: FishIcon, keywords: "mascot character pet buddy companion avatar nigiri" },
-      { id: "providers", label: "Providers", icon: KeyRoundIcon, keywords: "models api key openai anthropic azure bedrock local" },
-      { id: "usage", label: "Usage", icon: GaugeIcon, keywords: "tokens cost spend billing price money storage calculation" },
-      { id: "search", label: "Search", icon: GlobeIcon, keywords: "web search internet browse fetch pages research ollama api key sources citations" },
-      { id: "speech", label: "Speech", icon: MicIcon, keywords: "dictation voice microphone transcribe whisper ollama gemma" },
-      { id: "voice", label: "Voice mode", icon: AudioLinesIcon, keywords: "voice mode conversation talk hands-free realtime openai grok xai sarvam elevenlabs voices male female speak" },
-      { id: "images", label: "Images", icon: ImageIcon, keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
-      { id: "maps", label: "Maps", icon: MapIcon, keywords: "google directions route location address home api key travel" },
-      { id: "flights", label: "Flights", icon: PlaneIcon, keywords: "flight fares booking airline ticket ignav api key travel" },
-      { id: "memory", label: "Memory", icon: BrainIcon, keywords: "remember facts profile import past chats sensitive" },
-      { id: "sharing", label: "Sharing", icon: UsersIcon, keywords: "share live multiplayer relay invite watch team guests lan" },
-      { id: "design", label: "Design systems", icon: PaletteIcon, keywords: "brand style guidelines" },
+      { id: "general", label: "General", icon: SettingsIcon, hint: "Theme, text and motion", tint: "var(--brand)", keywords: "appearance theme dark light accent color colour font text size width glass blur frosted composer motion animation units temperature celsius fahrenheit weather onboarding welcome tour intro getting started" },
+      { id: "account", label: "Account", icon: CircleUserIcon, hint: "Profile and sign-in", tint: "oklch(0.6 0.18 255)", keywords: "profile email name photo picture avatar password sign out log out delete account" },
+      { id: "sushi", label: "Sushi", icon: FishIcon, hint: "Pick your mascot", tint: "var(--coral)", keywords: "mascot character pet buddy companion avatar nigiri" },
+      { id: "providers", label: "Providers", icon: KeyRoundIcon, hint: "Models and API keys", tint: "oklch(0.72 0.14 50)", keywords: "models api key openai anthropic azure bedrock local" },
+      { id: "usage", label: "Usage", icon: GaugeIcon, hint: "Tokens and cost", tint: "oklch(0.63 0.15 150)", keywords: "tokens cost spend billing price money storage calculation" },
+      { id: "search", label: "Search", icon: GlobeIcon, hint: "Searching the web", tint: "oklch(0.6 0.18 255)", keywords: "web search internet browse fetch pages research ollama api key sources citations" },
+      { id: "speech", label: "Speech", icon: MicIcon, hint: "Dictation", tint: "oklch(0.66 0.2 355)", keywords: "dictation voice microphone transcribe whisper ollama gemma" },
+      { id: "voice", label: "Voice mode", icon: AudioLinesIcon, hint: "Talk hands-free", tint: "oklch(0.6 0.2 293)", keywords: "voice mode conversation talk hands-free realtime openai grok xai sarvam elevenlabs voices male female speak" },
+      { id: "images", label: "Images", icon: ImageIcon, hint: "Image generation", tint: "oklch(0.7 0.15 75)", keywords: "image generation picture draw art gpt-image dall-e openrouter gemini" },
+      { id: "maps", label: "Maps", icon: MapIcon, hint: "Directions and places", tint: "oklch(0.63 0.15 150)", keywords: "google directions route location address home api key travel" },
+      { id: "flights", label: "Flights", icon: PlaneIcon, hint: "Fare search", tint: "oklch(0.6 0.15 230)", keywords: "flight fares booking airline ticket ignav api key travel" },
+      { id: "memory", label: "Memory", icon: BrainIcon, hint: "What Sush remembers", tint: "oklch(0.6 0.2 293)", keywords: "remember facts profile import past chats sensitive" },
+      { id: "sharing", label: "Sharing", icon: UsersIcon, hint: "Live shared sessions", tint: "var(--coral)", keywords: "share live multiplayer relay invite watch team guests lan" },
+      { id: "design", label: "Design systems", icon: PaletteIcon, hint: "Brand styles", tint: "oklch(0.66 0.2 355)", keywords: "brand style guidelines" },
     ],
   },
   {
     group: "Customize",
     items: [
-      { id: "skills", label: "Skills", icon: ScrollTextIcon, keywords: "instructions" },
-      { id: "plugins", label: "Plugins", icon: BlocksIcon, keywords: "extensions install" },
+      { id: "skills", label: "Skills", icon: ScrollTextIcon, hint: "Instructions on demand", tint: "oklch(0.48 0.08 195)", keywords: "instructions" },
+      { id: "plugins", label: "Plugins", icon: BlocksIcon, hint: "Extensions", tint: "oklch(0.6 0.18 255)", keywords: "extensions install" },
     ],
   },
   {
     group: "About",
     items: [
-      { id: "changelog", label: "What's new", icon: ConfettiIcon, keywords: "changelog release notes version updates upgrade" },
+      { id: "changelog", label: "What's new", icon: ConfettiIcon, hint: "Release notes", tint: "var(--brand)", keywords: "changelog release notes version updates upgrade" },
     ],
   },
 ];
 
 /** Not in this build: signing in where there's no server for it, and the desktop's release notes on Android. */
 // A phone has no folders, so no plugins to install from one.
-const absent = (id: SettingsSection) => (id === "account" && !HAS_ACCOUNTS) || ((id === "changelog" || id === "plugins") && isAndroid);
+const absent = (id: SettingsSection) => (id === "account" && !HAS_ACCOUNTS) || ((id === "changelog" || id === "plugins") && isMobile);
 
 interface SettingsDialogProps {
   providers: ProviderView[];
@@ -177,7 +181,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
       >
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <DialogDescription className="sr-only">App preferences, account, providers and customizations.</DialogDescription>
-        <SectionBack active={inSection && isAndroid} onBack={() => setListed(true)} />
+        <SectionBack active={inSection && isMobile} onBack={() => setListed(true)} />
         {phone && !inSection && (
           <p aria-hidden className="absolute top-2 left-4 z-10 flex h-9 items-center text-base font-semibold">
             Settings
@@ -209,6 +213,15 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
               />
             </div>
           </div>
+          {phone ? (
+            <SettingsBento
+              groups={groups}
+              onOpen={(id) => {
+                openSettings({ section: id });
+                setListed(false);
+              }}
+            />
+          ) : (
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
             <HoverHighlight className="flex flex-col gap-4" highlightClassName="rounded-lg bg-sidebar-accent">
               <MotionHighlight target={activeItem} revision={revision} className="rounded-lg bg-sidebar-accent" />
@@ -239,6 +252,7 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
               {groups.length === 0 && <p className="px-2.5 text-sm text-muted-foreground">No matching settings</p>}
             </HoverHighlight>
           </div>
+          )}
         </nav>
         {/* Keyed by section: each one starts at the top and fades in instead of inheriting the last one's scroll.
             Starts below the close button so its scrollbar doesn't run underneath it. */}
@@ -269,6 +283,63 @@ export function SettingsDialog({ providers, onProvidersChanged }: SettingsDialog
         </motion.div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Settings on a phone: a bento of tiles like Home's, Sushi's own tile tall with the mascot on it. */
+function SettingsBento({ groups, onOpen }: { groups: { group: string; items: NavItem[] }[]; onOpen: (id: SettingsSection) => void }) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-2 pb-8">
+      {groups.map(({ group, items }) => (
+        <section key={group} className="mb-5">
+          <h2 className="px-1 pb-2 text-xs font-medium text-muted-foreground">{group}</h2>
+          <div className="grid grid-flow-row-dense grid-cols-2 gap-3">
+            {items.map((item) => (
+              <SettingsTile key={item.id} item={item} onOpen={onOpen} />
+            ))}
+          </div>
+        </section>
+      ))}
+      {groups.length === 0 && <p className="px-1 text-sm text-muted-foreground">No matching settings</p>}
+    </div>
+  );
+}
+
+function SettingsTile({ item: { id, label, hint, tint, icon: Icon }, onOpen }: { item: NavItem; onOpen: (id: SettingsSection) => void }) {
+  const tall = id === "sushi";
+  return (
+    <motion.button
+      type="button"
+      onClick={() => onOpen(id)}
+      whileTap={{ scale: 0.97 }}
+      transition={{ type: "spring", stiffness: 520, damping: 34 }}
+      className={cn(
+        "relative flex min-h-28 min-w-0 flex-col items-start rounded-3xl border bg-card p-4 text-left shadow-xs outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+        tall && "row-span-2",
+      )}
+    >
+      {tall ? (
+        <span
+          aria-hidden
+          className="pointer-events-none flex w-full flex-1 items-end justify-center rounded-2xl pb-2"
+          style={{ backgroundColor: `color-mix(in oklch, ${tint} 14%, transparent)` }}
+        >
+          <span className="origin-bottom scale-[1.6]">
+            <Mascot busy={false} draft="" still />
+          </span>
+        </span>
+      ) : (
+        <span
+          aria-hidden
+          className="flex size-10 items-center justify-center rounded-2xl"
+          style={{ backgroundColor: `color-mix(in oklch, ${tint} 14%, transparent)`, color: tint }}
+        >
+          <Icon className="size-5" />
+        </span>
+      )}
+      <span className="mt-auto pt-3 text-[15px] font-semibold">{label}</span>
+      <span className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">{hint}</span>
+    </motion.button>
   );
 }
 

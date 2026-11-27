@@ -34,6 +34,8 @@ export const UNRELEASED_SUMMARY = "Maps show up the first time you ask for direc
 export const UNRELEASED: Change[] = [
   { kind: "fixed", text: "Asking for directions shows the map the first time, instead of only after you ask again." },
   { kind: "improved", text: "Long replies stream with less work for your computer." },
+  { kind: "improved", text: "On a phone, Settings opens as a grid of tiles like Home." },
+  { kind: "fixed", text: "Grok models now show their cost on each reply and count toward your monthly budget." },
 ];
 
 /** Released versions, newest first. */

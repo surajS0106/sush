@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
 
 import { createStore } from "@/lib/store";
 import type { ProviderView, TranscribeApi } from "@/lib/tauri";
-import { isAndroid } from "@/lib/utils";
+import { isMac, isMobile } from "@/lib/utils";
 
 /** The built-in Whisper model, which isn't a configured provider. */
 export const BUILTIN = "builtin";
@@ -38,13 +38,13 @@ export const setSpeechSettings = (patch: Partial<SpeechSettings>) => speech.set(
  * Android's Yammer is a bubble over every app, so it dictates into Sush by itself; Sush's own
  * button is for its own dictation.
  */
-export const dictationEngine = (s: SpeechSettings): DictationEngine => (isAndroid ? "sush" : (s.engine ?? "yammer"));
+export const dictationEngine = (s: SpeechSettings): DictationEngine => (isMobile ? "sush" : (s.engine ?? "yammer"));
 
 // --- Yammer --------------------------------------------------------------------------
 
 export const YAMMER_DOWNLOAD_URL = "https://github.com/surajS0106/yammer/releases/latest";
 
-const IS_MAC = navigator.userAgent.includes("Mac");
+const IS_MAC = isMac;
 
 /** A Tauri accelerator ("CommandOrControl+Shift+Space") as the keys to press. */
 export function hotkeyLabel(accelerator: string | null | undefined) {
@@ -73,7 +73,7 @@ export type SpeechTarget =
 /** The configured speech target; the built-in model unless a provider is picked. */
 export function resolveSpeechTarget(settings: SpeechSettings, providers: ProviderView[]): SpeechTarget | null {
   // Whisper isn't built for Android.
-  if (!settings.providerId || settings.providerId === BUILTIN) return isAndroid ? null : { kind: "builtin" };
+  if (!settings.providerId || settings.providerId === BUILTIN) return isMobile ? null : { kind: "builtin" };
   // An explicit choice never silently falls back to something else.
   const picked = providers.find((p) => p.id === settings.providerId);
   return picked && canTranscribe(picked) && settings.model.trim()

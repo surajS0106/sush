@@ -67,7 +67,7 @@ import {
   type ConnectorStatus,
 } from "@/lib/library";
 import { api, CUSTOM_CLIENT_REDIRECT, errorMessage } from "@/lib/tauri";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 
 // --- logo ----------------------------------------------------------------------------
 
@@ -896,7 +896,7 @@ function Connectors() {
                 </div>
               </DropdownMenuItem>
               {/* A phone can't run other programs. */}
-              {!isAndroid && (
+              {!isMobile && (
                 <DropdownMenuItem onSelect={() => setEditing(newLocal())}>
                   <TerminalIcon />
                   <div>

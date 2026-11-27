@@ -60,7 +60,7 @@ import {
 } from "@/lib/board";
 import { useConversations, type Conversation } from "@/lib/store";
 import { HoverHighlight } from "@/components/ui/motion-highlight";
-import { cn, isAndroid } from "@/lib/utils";
+import { cn, isMobile } from "@/lib/utils";
 import { useWorkspaces } from "@/lib/workspaces";
 import type { Workspace } from "@/lib/tauri";
 
@@ -841,7 +841,7 @@ function TaskDialog({
               />
             </div>
             {/* Status gets the widest column: "Needs attention" is the longest fixed label. Android has no folders. */}
-            <div className={cn("grid gap-3", isAndroid ? "grid-cols-2" : "grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_minmax(0,1fr)]")}>
+            <div className={cn("grid gap-3", isMobile ? "grid-cols-2" : "grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)_minmax(0,1fr)]")}>
               <div className="flex min-w-0 flex-col gap-1.5">
                 <Label>Priority</Label>
                 <Select value={draft.priority} onValueChange={(v) => setDraft({ ...draft, priority: v as Priority })}>
@@ -874,7 +874,7 @@ function TaskDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div className={cn("flex min-w-0 flex-col gap-1.5", isAndroid && "hidden")}>
+              <div className={cn("flex min-w-0 flex-col gap-1.5", isMobile && "hidden")}>
                 <Label>Folder</Label>
                 <Select
                   value={draft.workspaceId ?? NO_FOLDER}

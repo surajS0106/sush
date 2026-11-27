@@ -36,7 +36,9 @@ zip = { version = "9.4.1", default-features = false, features = ["deflate-flate2
 # TLS is picked per target: native-tls would need OpenSSL on Android.
 [target.'cfg(not(target_os = "android"))'.dependencies]
 reqwest = { workspace = true, features = ["native-tls"] }
-# Android has no trash.
+
+# Phones have no trash.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 trash = "5.2.9"
 
 [target.'cfg(target_os = "android")'.dependencies]
