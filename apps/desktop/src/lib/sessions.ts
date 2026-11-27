@@ -76,16 +76,48 @@ export interface ThreadView {
   error?: string;
 }
 
-/** Threads with a run this session. Others are read from the saved conversation. */
-const views = createStore<ReadonlyMap<string, ThreadView>>("sush.threads", new Map(), false);
+/**
+ * Threads with a run this session. Others are read from the saved conversation. Reads are always
+ * current; a streamed `op` only tells subscribers within `STREAM_MS` (`setLazy`), since a model can
+ * send hundreds of deltas a second and each one re-rendered the chat and re-parsed its Markdown,
+ * which kept a phone's CPU busy (and hot) for the whole reply.
+ */
+const views = (() => {
+  let state: ReadonlyMap<string, ThreadView> = new Map();
+  const listeners = new Set<() => void>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const notify = () => {
+    clearTimeout(timer);
+    timer = undefined;
+    listeners.forEach((l) => l());
+  };
+  const update = (next: (prev: ReadonlyMap<string, ThreadView>) => ReadonlyMap<string, ThreadView>) => void (state = next(state));
+  return {
+    get: () => state,
+    set(next: (prev: ReadonlyMap<string, ThreadView>) => ReadonlyMap<string, ThreadView>) {
+      update(next);
+      notify();
+    },
+    setLazy(next: (prev: ReadonlyMap<string, ThreadView>) => ReadonlyMap<string, ThreadView>) {
+      update(next);
+      timer ??= setTimeout(notify, STREAM_MS);
+    },
+    subscribe(l: () => void) {
+      listeners.add(l);
+      return () => void listeners.delete(l);
+    },
+  };
+})();
+/** How often a streaming reply re-renders, at most. */
+const STREAM_MS = 50;
 /** Messages sent while a thread's run worked, until the run adds them to the thread. */
 const queues = createStore<ReadonlyMap<string, SushUIMessage[]>>("sush.queued", new Map(), false);
 /** Per-conversation model and research choice, for its next request. */
 const targets = new Map<string, ModelTarget>();
 const research = new Map<string, boolean>();
 
-function setView(id: string, change: (v: ThreadView) => ThreadView) {
-  views.set((prev) => new Map(prev).set(id, change(prev.get(id) ?? saved(id))));
+function setView(id: string, change: (v: ThreadView) => ThreadView, lazy = false) {
+  (lazy ? views.setLazy : views.set)((prev) => new Map(prev).set(id, change(prev.get(id) ?? saved(id))));
 }
 
 const EMPTY: SushUIMessage[] = [];
@@ -179,7 +211,8 @@ function dequeue(id: string, op: ThreadOp) {
 function onFrame(frame: RunFrame) {
   switch (frame.type) {
     case "op":
-      setView(frame.threadId, (v) => ({ ...v, messages: applyOp(v.messages, frame.op) }));
+      // Deltas re-render at most every STREAM_MS; a new message or part shows at once.
+      setView(frame.threadId, (v) => ({ ...v, messages: applyOp(v.messages, frame.op) }), frame.op.type !== "push" && frame.op.type !== "reset" && frame.op.type !== "push-part");
       dequeue(frame.threadId, frame.op);
       break;
     case "status": {

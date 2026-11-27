@@ -430,8 +430,10 @@ export const TOOLS_LOAD = "tools_load";
  * prompt lists them by name and first sentence. Connector tools are deferred too, unless the
  * user @-mentioned the connector in the conversation.
  */
-// image_generate is always offered (not here) so "draw me…" starts drawing on the first step.
-const DEFERRED = new Set([SLIDES_WRITE, DOCX_EDIT, AUTOMATION_SAVE, SKILL_SAVE, MAP_SHOW, FLIGHTS_SEARCH, WEATHER_SHOW, LOCATION_GET, BOARD_SEARCH, BOARD_WRITE, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN, ...APP_TOOL_NAMES]);
+// image_generate is always offered (not here) so "draw me…" starts drawing on the first step, and so are
+// map_show and location_get: deferred, a model asked for directions would search the web and promise "the map
+// below" without loading them, and the map only appeared once the user asked again.
+const DEFERRED = new Set([SLIDES_WRITE, DOCX_EDIT, AUTOMATION_SAVE, SKILL_SAVE, FLIGHTS_SEARCH, WEATHER_SHOW, BOARD_SEARCH, BOARD_WRITE, CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG, WORKFLOW_LIST, WORKFLOW_RUN, ...APP_TOOL_NAMES]);
 
 /** The CRM tools, offered from the start where the CRM is the subject (its page, an @crm message). */
 export const CRM_UNDEFERRED: ReadonlySet<string> = new Set([CRM_SEARCH, CRM_READ, CRM_WRITE, CRM_LOG]);

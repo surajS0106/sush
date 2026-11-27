@@ -14,6 +14,13 @@ desktop app's (lib/changelog.ts).
   workflow stops if that heading is missing.
 -->
 
+## Unreleased
+
+### Fixed
+
+- Asking for directions shows the map the first time, instead of only after you ask again.
+- Sush runs cooler: replies stream with far less work for your phone, and Sushi stops moving when it's off screen or the app is in the background.
+
 ## 0.2.0 — 2026-11-26
 
 ### New

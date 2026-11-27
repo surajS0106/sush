@@ -18,13 +18,13 @@
 // dancing with music notes, a nap, a workout with a dumbbell, juggling,
 // meditating in a floating glow, or a handheld game. Purely decorative.
 
-import { AnimatePresence, motion, useAnimationControls, useReducedMotion, type TargetAndTransition } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion, MotionConfig, MotionConfigContext, useAnimationControls, useInView, usePageInView, useReducedMotion, type TargetAndTransition } from "motion/react";
+import { useContext, useEffect, useRef, useState } from "react";
 
 import { AVATARS, avatarPalette, type AvatarDef } from "@/lib/avatars";
 import { DEFAULT_MASCOT, mascotSounds, useMascot } from "@/lib/mascot";
 import { audio, fallSounds } from "@/lib/sfx";
-import { cn } from "@/lib/utils";
+import { cn, isAndroid } from "@/lib/utils";
 
 // One character per pixel; "." is transparent. Eyes and legs are drawn
 // separately so they can move: the body below has rice where the eyes go.
@@ -685,9 +685,15 @@ function MascotBody({
   const laptopOut = mood === "tools" || mood === "writing";
   const activity = busy ? null : (act ?? null);
   const dancing = activity === "dance";
-  const reduceMotion = useReducedMotion();
-  const hopControls = useAnimationControls();
   const rootRef = useRef<HTMLDivElement>(null);
+  // Off screen (a Home tile scrolled away) or in the background, Sushi holds still: its loops
+  // and frame timers otherwise run for nothing, and on a phone keep the CPU and screen busy.
+  const inView = useInView(rootRef, { initial: true });
+  const pageVisible = usePageInView();
+  const paused = !inView || !pageVisible;
+  const reduceMotion = useReducedMotion() || paused;
+  const motionConfig = useContext(MotionConfigContext).reducedMotion;
+  const hopControls = useAnimationControls();
 
   const [blink, setBlink] = useState(false);
   const [pointerLook, setPointerLook] = useState<Look>({ x: 0, y: 0 });
@@ -1174,6 +1180,8 @@ function MascotBody({
   const heldAt = (w: number) => ({ x: laptop.x + ((LAPTOP_W - w) * laptop.scale) / 2 });
 
   return (
+    // Paused, the props' own loops (a whiteboard's marker, a lamp's flicker) stop moving too.
+    <MotionConfig reducedMotion={paused ? "always" : motionConfig}>
     <motion.div
       ref={rootRef}
       aria-hidden
@@ -1548,9 +1556,11 @@ function MascotBody({
           height={height * px}
           shapeRendering="crispEdges"
           style={{ transformOrigin: "50% 100%" }}
-          animate={reduceMotion || moving ? { scaleY: 1 } : { scaleY: asleep ? [1, 1.05, 1] : [1, 1.03, 1] }}
+          // No endless breathing on a phone: a loop that never stops keeps the screen at its
+          // highest refresh rate for as long as the chat is open.
+          animate={reduceMotion || moving || isAndroid ? { scaleY: 1 } : { scaleY: asleep ? [1, 1.05, 1] : [1, 1.03, 1] }}
           transition={
-            reduceMotion || moving
+            reduceMotion || moving || isAndroid
               ? { duration: 0.2 }
               : { duration: asleep ? 3.6 : 2.8, repeat: Infinity, ease: "easeInOut" }
           }
@@ -1786,5 +1796,6 @@ function MascotBody({
       </motion.div>
       {activity === "study" && <StudyDesk width={width * px} eyesFromFloor={(height - laptop.y) * px} reduceMotion={!!reduceMotion} />}
     </motion.div>
+    </MotionConfig>
   );
 }

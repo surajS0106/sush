@@ -28,10 +28,13 @@ export interface Release {
 }
 
 /** One line on what the version main is building is about. */
-export const UNRELEASED_SUMMARY = "";
+export const UNRELEASED_SUMMARY = "Maps show up the first time you ask for directions.";
 
 /** Landed since the last release: the notes of the version main is building (`__APP_VERSION__`). */
-export const UNRELEASED: Change[] = [];
+export const UNRELEASED: Change[] = [
+  { kind: "fixed", text: "Asking for directions shows the map the first time, instead of only after you ask again." },
+  { kind: "improved", text: "Long replies stream with less work for your computer." },
+];
 
 /** Released versions, newest first. */
 const RELEASED: Release[] = [
