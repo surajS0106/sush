@@ -64,6 +64,16 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # Gradle itself and the Android Gradle plugin's dependencies, downloaded afresh each run otherwise
+      # (about a minute). Keyed on the files that decide them. Only main writes caches this job can read.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('apps/desktop/src-tauri/gen/android/**/*.gradle.kts', 'apps/desktop/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'apps/desktop/src-tauri/gen/android/buildSrc/**') }}
+          restore-keys: gradle-${{ runner.os }}-
+
       - name: Decode the signing keystore
         shell: bash
         env:
@@ -75,7 +85,8 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/sush-release.jks"
 
-      # arm64 only, which is every current phone. tauri.android.conf.json leaves out the updater, which
+      # arm64 only, which is every current phone. The Tauri CLI compiles the Rust library before it runs
+      # Gradle; SUSH_RUST_PREBUILT stops Gradle's rust task compiling it a second time (BuildTask.kt). tauri.android.conf.json leaves out the updater, which
       # Android doesn't have, so this job needs no updater signing key.
       - name: Build the APK
         shell: bash
@@ -84,6 +95,7 @@ jobs:
           SUSH_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           SUSH_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           SUSH_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          SUSH_RUST_PREBUILT: "1"
         run: bun --filter desktop tauri android build --apk --target aarch64
 
       - name: Check the APK
@@ -93,6 +105,8 @@ jobs:
           test -f "$apk" || { echo "::error::No signed release APK was produced (unsigned builds are named app-universal-release-unsigned.apk)."; ls -R "$(dirname "$apk")/.."; exit 1; }
           bt="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | grep -v rc | sort -V | tail -1)"
           "$bt/apksigner" verify --verbose --min-sdk-version 26 "$apk"
+          # The Rust library comes from the CLI's own build (see Build the APK); an APK without it can't start.
+          unzip -l "$apk" | grep -q 'lib/arm64-v8a/libsush_lib.so' || { echo "::error::The APK has no lib/arm64-v8a/libsush_lib.so."; exit 1; }
           # A release must not be debuggable or allow cleartext traffic.
           manifest=$("$bt/aapt2" dump xmltree --file AndroidManifest.xml "$apk")
           if echo "$manifest" | grep -qE 'debuggable.*(true|0xffffffff)'; then

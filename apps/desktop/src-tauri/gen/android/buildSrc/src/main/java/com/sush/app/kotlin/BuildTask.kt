@@ -23,6 +23,14 @@ abstract class BuildTask : DefaultTask() {
 
     @TaskAction
     fun assemble() {
+        // `tauri android build` compiles the library and links it into jniLibs before it starts Gradle, so
+        // this second build has nothing to add. In CI it recompiled wry, tauri and Sush anyway (fresh
+        // checkouts give their build scripts' watched files new mtimes), more than two minutes a release.
+        // release-android.yml sets this; Android Studio and `build:android` still build here.
+        if (System.getenv("SUSH_RUST_PREBUILT") == "1") {
+            logger.lifecycle("Skipping the Rust build: SUSH_RUST_PREBUILT=1, the library is already in jniLibs")
+            return
+        }
         val executable = """bunx""";
         try {
             runTauriCli(executable)
